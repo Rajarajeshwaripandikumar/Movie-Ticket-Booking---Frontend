@@ -1,42 +1,35 @@
 // src/api/api.js
 import axios from "axios";
 
-/* -------------------------------------------------------------------------- */
-/*                              Environment / Debug                           */
-/* -------------------------------------------------------------------------- */
-
-const envBase = import.meta.env.VITE_API_BASE_URL; // e.g. "http://localhost:8080"
+/* ------------------------------ Env & Debug ------------------------------ */
+const isProd = import.meta.env.PROD;
+const envBase = (import.meta.env.VITE_API_BASE_URL || "").trim(); // e.g. https://movie-ticket-booking-backend-o1m2.onrender.com
 const debug = String(import.meta.env.VITE_DEBUG || "").toLowerCase() === "true";
 
-/* -------------------------------------------------------------------------- */
-/*                            Base URL Normalization                          */
-/* -------------------------------------------------------------------------- */
-
-let baseURL = String(envBase ?? "").trim().replace(/\/+$/, "");
-
-if (!baseURL) {
-  baseURL = "/api";
-} else if (!baseURL.endsWith("/api")) {
-  baseURL = `${baseURL}/api`;
+/* --------------------------- Strict base URL rule ------------------------ */
+// In production we REQUIRE VITE_API_BASE_URL. Fail fast if missing.
+if (isProd && !envBase) {
+  throw new Error("❌ VITE_API_BASE_URL is missing in production build!");
 }
 
-if (debug) console.log("[API] Base URL =", baseURL);
+// In dev, default to local backend if not provided.
+let baseURL = envBase || "http://localhost:8080";
 
-/* -------------------------------------------------------------------------- */
-/*                             Axios Instance Setup                           */
-/* -------------------------------------------------------------------------- */
+// Normalize and ensure trailing /api
+baseURL = baseURL.replace(/\/+$/, "");
+if (!baseURL.endsWith("/api")) baseURL += "/api";
 
+console.info(`[API] Base URL = ${baseURL} (mode=${isProd ? "prod" : "dev"})`);
+
+/* ------------------------------ Axios setup ----------------------------- */
 const api = axios.create({
-  baseURL, // e.g. http://localhost:8080/api
-  withCredentials: false,
+  baseURL,                // e.g. https://...onrender.com/api
+  withCredentials: false, // set true only if you use cookies
   headers: { "Content-Type": "application/json" },
   timeout: 15000,
 });
 
-/* -------------------------------------------------------------------------- */
-/*                   Interceptor: Normalize + Inject Token                    */
-/* -------------------------------------------------------------------------- */
-
+/* ---------------------- Interceptor: path + token ----------------------- */
 api.interceptors.request.use(
   (config) => {
     try {
@@ -45,7 +38,6 @@ api.interceptors.request.use(
       if (typeof config.url === "string" && baseEndsWithApi && config.url.startsWith("/api/")) {
         config.url = config.url.replace(/^\/api/, "");
       }
-
       const token = localStorage.getItem("token");
       if (token) {
         config.headers = config.headers || {};
@@ -53,23 +45,16 @@ api.interceptors.request.use(
           config.headers.Authorization = `Bearer ${token}`;
         }
       }
-
-      if (debug) {
-        const full = `${config.baseURL}${config.url}`;
-        console.log("[api] →", config.method?.toUpperCase(), full);
-      }
-    } catch (err) {
-      if (debug) console.warn("[api] request interceptor error", err);
+      if (debug) console.log("[api] →", config.method?.toUpperCase(), `${config.baseURL}${config.url}`);
+    } catch (e) {
+      if (debug) console.warn("[api] request interceptor error", e);
     }
     return config;
   },
   (err) => Promise.reject(err)
 );
 
-/* -------------------------------------------------------------------------- */
-/*                      Interceptor: Handle 401 + Logging                     */
-/* -------------------------------------------------------------------------- */
-
+/* ---------------------- Interceptor: 401 handling ----------------------- */
 api.interceptors.response.use(
   (res) => res,
   (err) => {
@@ -79,7 +64,6 @@ api.interceptors.response.use(
       localStorage.removeItem("user");
       if (debug) console.warn("[api] 401 — cleared stored token");
     }
-
     if (debug) {
       console.error("[api] response error", {
         status,
@@ -87,33 +71,16 @@ api.interceptors.response.use(
         data: err?.response?.data,
       });
     }
-
     return Promise.reject(err);
   }
 );
 
-/* -------------------------------------------------------------------------- */
-/*                         Export Helper Constants                            */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Export a clean API base URL (no trailing slash)
- * e.g. "http://localhost:8080/api"
- */
+/* ----------------------------- Exports ---------------------------------- */
 export const API_BASE_URL = baseURL.replace(/\/+$/, "");
-
-/**
- * Utility: build SSE stream URL for current user
- * Returns e.g. "http://localhost:8080/api/notifications/stream?token=<jwt>"
- */
 export const getSSEUrl = () => {
   const token = localStorage.getItem("token");
   if (!token) return null;
   return `${API_BASE_URL.replace(/\/api$/, "")}/api/notifications/stream?token=${token}`;
 };
-
-/* -------------------------------------------------------------------------- */
-/*                                Export Default                              */
-/* -------------------------------------------------------------------------- */
 
 export default api;
