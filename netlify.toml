@@ -1,7 +1,9 @@
+# netlify.toml
 [build]
   command = "npm ci && npm run build"
   publish = "dist"
 
 [build.environment]
-  NODE_VERSION = "20.11.1"
-  NPM_FLAGS = "--include=optional"
+  NODE_VERSION = "20.11.1"         # match your local if different
+  NPM_FLAGS = "--include=optional" # force install optional deps
+  NPM_CONFIG_OPTIONAL = "true"     # belt-and-suspenders
