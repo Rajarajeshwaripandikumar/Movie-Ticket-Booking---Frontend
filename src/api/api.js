@@ -3,7 +3,7 @@
 import axios from "axios";
 
 // *** FIX 1: Use the live Render URL, not localhost ***
-const BASE_URL = "https://movie-ticket-booking-backend-o1m2.onrender.com/api";
+const BASE_URL = "https://movie-ticket-booking-backend-o1m2.onrender.com";
 
 export const api = axios.create({
   baseURL: BASE_URL,
