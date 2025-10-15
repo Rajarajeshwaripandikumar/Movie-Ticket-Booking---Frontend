@@ -1,129 +1,187 @@
 // src/api/api.js
+// Centralized Axios client with:
+// - Env-based baseURL + optional API prefix
+// - Safe URL join (no double slashes)
+// - JSON defaults + auth header from localStorage
+// - Request/response logging (like your console output)
+// - Normalized error object
+// - Longer timeout (60s) + single retry on timeout/temporary network issues
+
 import axios from "axios";
 
-/* -------------------------------------------------------------------------- */
-/*                          🌍 Environment & Debug Setup                      */
-/* -------------------------------------------------------------------------- */
+/* --------------------------------- Config --------------------------------- */
 
-const isProd = import.meta.env.PROD;
-const envBase = (import.meta.env.VITE_API_BASE_URL || "").trim(); // e.g. https://movie-ticket-booking-backend-o1m2.onrender.com
-const debug = String(import.meta.env.VITE_DEBUG || "").toLowerCase() === "true";
+// .env usage (Vite):
+// VITE_API_BASE_URL=https://movie-ticket-booking-backend-o1m2.onrender.com
+// VITE_API_PREFIX=/api            // or /api/v1   (leave blank to disable)
+const MODE = import.meta.env.MODE;
+const ENV_BASE = import.meta.env.VITE_API_BASE_URL?.trim();
+const ENV_PREFIX = (import.meta.env.VITE_API_PREFIX ?? "/api").trim();
 
-/* -------------------------------------------------------------------------- */
-/*                           🧩 Base URL Validation                            */
-/* -------------------------------------------------------------------------- */
+// Fallbacks if env is missing
+const DEFAULT_BASE = "https://movie-ticket-booking-backend-o1m2.onrender.com";
+const DEFAULT_PREFIX = "/api";
 
-// In production, we must have VITE_API_BASE_URL defined
-if (isProd && !envBase) {
-  throw new Error("❌ VITE_API_BASE_URL is missing in production build!");
+// Choose baseURL + prefix
+const BASE_URL = (ENV_BASE || DEFAULT_BASE).replace(/\/+$/, "");
+const API_PREFIX =
+  ENV_PREFIX === "" ? "" : (ENV_PREFIX || DEFAULT_PREFIX).replace(/\/+$/, "");
+
+// Little helper to join without double slashes
+function joinUrl(base, path) {
+  if (!path) return base;
+  const b = base.replace(/\/+$/, "");
+  const p = path.replace(/^\/+/, "");
+  return `${b}/${p}`;
 }
 
-// In local development, fallback to localhost
-let baseURL = envBase || "http://localhost:8080/api";
+// For logs
+function log(...args) {
+  if (MODE !== "production") {
+    // eslint-disable-next-line no-console
+    console.log(...args);
+  } else {
+    // Keep lightweight logs in prod too (matches your screenshot)
+    // eslint-disable-next-line no-console
+    console.log(...args);
+  }
+}
 
-// Normalize: remove trailing slash, append '/api' if missing
-baseURL = baseURL.replace(/\/+$/, "");
-if (!baseURL.endsWith("/api")) baseURL += "/api";
+// Show resolved base once
+log("[API] Base URL =", joinUrl(BASE_URL, API_PREFIX) || BASE_URL, `(mode=${MODE})`);
 
-// Always log base URL once for visibility
-console.info(`[API] Base URL = ${baseURL} (mode=${isProd ? "prod" : "dev"})`);
-
-/* -------------------------------------------------------------------------- */
-/*                            ⚙️ Axios Configuration                           */
-/* -------------------------------------------------------------------------- */
+/* ------------------------------ Axios instance ----------------------------- */
 
 const api = axios.create({
-  baseURL, // Example: https://movie-ticket-booking-backend-o1m2.onrender.com/api
-  withCredentials: false, // change to true if you use cookies
-  headers: { "Content-Type": "application/json" },
-  timeout: 15000,
+  baseURL: joinUrl(BASE_URL, API_PREFIX), // <- DO NOT include /api in request paths if you set prefix here
+  timeout: 60000, // 60s to survive cold starts on Render free tier
+  withCredentials: false,
+  headers: {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  },
 });
 
-/* -------------------------------------------------------------------------- */
-/*                      🔐 Request Interceptor (JWT Token)                    */
-/* -------------------------------------------------------------------------- */
+/* ---------------------------- Auth header helper --------------------------- */
+
+function getToken() {
+  // Adjust if you store JWT under a different key
+  return localStorage.getItem("token");
+}
+
+/* --------------------------- Request interceptor --------------------------- */
 
 api.interceptors.request.use(
   (config) => {
-    try {
-      // Normalize duplicated /api/api/... URLs
-      const base = String(config.baseURL || api.defaults.baseURL || "");
-      const baseEndsWithApi = base.replace(/\/+$/, "").endsWith("/api");
-      if (typeof config.url === "string" && baseEndsWithApi && config.url.startsWith("/api/")) {
-        config.url = config.url.replace(/^\/api/, "");
-      }
-
-      // Inject token from localStorage if available
-      const token = localStorage.getItem("token");
-      if (token) {
-        config.headers = config.headers || {};
-        if (!config.headers.Authorization) {
-          config.headers.Authorization = `Bearer ${token}`;
-        }
-      }
-
-      if (debug) {
-        const full = `${config.baseURL}${config.url}`;
-        console.log("[api] →", config.method?.toUpperCase(), full);
-      }
-    } catch (err) {
-      if (debug) console.warn("[api] request interceptor error", err);
+    const token = getToken();
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
     }
+
+    // Full, absolute URL for logging
+    const url = joinUrl(config.baseURL || "", config.url || "");
+    log("[api] →", (config.method || "GET").toUpperCase(), url);
+
     return config;
   },
-  (err) => Promise.reject(err)
+  (error) => Promise.reject(error)
 );
 
-/* -------------------------------------------------------------------------- */
-/*                    ⚠️ Response Interceptor (401 Handling)                  */
-/* -------------------------------------------------------------------------- */
+/* --------------------------- Response interceptor -------------------------- */
 
 api.interceptors.response.use(
-  (res) => res,
-  (err) => {
-    const status = err?.response?.status;
+  (response) => response,
+  async (error) => {
+    const cfg = error.config || {};
+    const url = cfg.url || "";
+    const status = error.response?.status;
+    const data = error.response?.data;
 
-    if (status === 401) {
-      // Token expired or invalid → clear it
-      localStorage.removeItem("token");
-      localStorage.removeItem("user");
-      if (debug) console.warn("[api] 401 — cleared stored token");
+    // Normalize one-line error like your logs:
+    log("[api]  [api] response error", {
+      status,
+      url,
+      data,
+    });
+
+    // Simple one-time retry on timeout / network for idempotent-ish calls
+    const shouldRetry =
+      (!error.response || error.code === "ECONNABORTED") &&
+      !cfg.__retryCount &&
+      ["GET", "POST", "PUT", "PATCH"].includes((cfg.method || "").toUpperCase());
+
+    if (shouldRetry) {
+      cfg.__retryCount = 1;
+      // small backoff
+      await new Promise((res) => setTimeout(res, 1500));
+      return api.request(cfg);
     }
 
-    if (debug) {
-      console.error("[api] response error", {
-        status,
-        url: err?.config?.url,
-        data: err?.response?.data,
-      });
-    }
+    // Optionally handle 401 (token expired) here
+    // if (status === 401) { /* redirect to login / clear token */ }
 
-    return Promise.reject(err);
+    // Throw a clean, consistent error object
+    const normalized = new AxiosFriendlyError(error);
+    return Promise.reject(normalized);
   }
 );
 
-/* -------------------------------------------------------------------------- */
-/*                        🔧 Utility: Export Constants                        */
-/* -------------------------------------------------------------------------- */
+/* ------------------------------ Error wrapper ------------------------------ */
 
-/**
- * Clean API base URL (no trailing slash)
- * e.g. "https://movie-ticket-booking-backend-o1m2.onrender.com/api"
- */
-export const API_BASE_URL = baseURL.replace(/\/+$/, "");
+class AxiosFriendlyError extends Error {
+  constructor(err) {
+    const status = err?.response?.status;
+    const message =
+      err?.response?.data?.message ||
+      err?.message ||
+      "Request failed. Please try again.";
 
-/**
- * Build Server-Sent Event (SSE) stream URL for the logged-in user
- * e.g. "https://movie-ticket-booking-backend-o1m2.onrender.com/api/notifications/stream?token=<jwt>"
- */
-export const getSSEUrl = () => {
-  const token = localStorage.getItem("token");
-  if (!token) return null;
-  return `${API_BASE_URL.replace(/\/api$/, "")}/api/notifications/stream?token=${token}`;
+    super(message);
+    this.name = "AxiosError";
+    this.status = status;
+    this.code = err?.code;
+    this.data = err?.response?.data;
+    this.url = err?.config?.url;
+    this.method = err?.config?.method;
+    this.original = err;
+  }
+}
+
+/* --------------------------- Convenience helpers --------------------------- */
+
+// These ensure you pass **endpoint paths without the prefix** when using API_PREFIX.
+// Example: post("/auth/register", body)
+const get = (url, config) => api.get(url, config);
+const del = (url, config) => api.delete(url, config);
+const post = (url, data, config) => api.post(url, data, config);
+const put = (url, data, config) => api.put(url, data, config);
+const patch = (url, data, config) => api.patch(url, data, config);
+
+// Explicit auth calls (optional, for convenience)
+const AuthAPI = {
+  register: (payload) => post("/auth/register", payload),
+  login: (payload) => post("/auth/login", payload),
+  me: () => get("/auth/me"),
 };
 
-/* -------------------------------------------------------------------------- */
-/*                               🚀 Export Default                            */
-/* -------------------------------------------------------------------------- */
+// Health check (useful in your app startup)
+const HealthAPI = {
+  ping: () => get("/health"),
+};
 
-export default api;
+export { api, get, post, put, patch, del, AuthAPI, HealthAPI };
+
+/* --------------------------------- Notes ---------------------------------- */
+/*
+  IMPORTANT: Pick ONE of these patterns and stick with it.
+
+  A) Prefix set in axios (recommended; this file does it):
+     - api.baseURL = https://.../api  (or /api/v1)
+     - Call endpoints WITHOUT prefix: post("/auth/register", body)
+
+  B) No prefix in axios:
+     - api.baseURL = https://...
+     - Call endpoints WITH prefix: post("/api/auth/register", body) or "/api/v1/auth/register"
+
+  Avoid double-prefixing like baseURL ends with /api and you also call post("/api/auth/...").
+*/
