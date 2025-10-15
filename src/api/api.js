@@ -19,7 +19,7 @@ if (isProd && !envBase) {
 }
 
 // In local development, fallback to localhost
-let baseURL = envBase || "http://localhost:8080";
+let baseURL = envBase || "http://localhost:8080/api";
 
 // Normalize: remove trailing slash, append '/api' if missing
 baseURL = baseURL.replace(/\/+$/, "");
