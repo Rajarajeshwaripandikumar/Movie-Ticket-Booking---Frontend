@@ -1,8 +1,7 @@
-
 [build]
-  command = "npm run build"
+  command = "npm ci && npm run build"
   publish = "dist"
 
 [build.environment]
-  NODE_VERSION = "20"
-  NPM_CONFIG_OPTIONAL = "true"
+  NODE_VERSION = "20.11.1"
+  NPM_FLAGS = "--include=optional"
