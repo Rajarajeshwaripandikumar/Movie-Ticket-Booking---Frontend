@@ -12,6 +12,8 @@
     "@fontsource/inter": "^5.2.8",
     "@stripe/react-stripe-js": "^2.9.0",
     "@stripe/stripe-js": "^1.54.2",
+    "lucide-react": "^0.471.0",
+
     "axios": "^1.6.0",
     "framer-motion": "^12.23.24",
     "qrcode": "^1.5.4",
