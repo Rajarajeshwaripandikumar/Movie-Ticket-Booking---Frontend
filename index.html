@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>Movie Booking</title>
+
+    <!-- ✅ Proxima Nova font -->
+    <link rel="preconnect" href="https://fonts.cdnfonts.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=League+Spartan:wght@800;900&display=swap" rel="stylesheet">
+
+
+    <!-- ✅ Razorpay Checkout script (must be loaded before app starts) -->
+    <!-- Do NOT put secret key here; frontend will use import.meta.env.VITE_RAZORPAY_KEY -->
+    <script src="https://checkout.razorpay.com/v1/checkout.js" async></script>
+
+    <!-- ✅ Favicon (optional) -->
+    <link rel="icon" type="image/png" href="/favicon.png" />
+
+    <!-- (Optional) SEO -->
+    <meta name="description" content="Book movie tickets easily and securely." />
+    <meta name="theme-color" content="#0071CE" />
+  </head>
+
+  <body>
+    <div id="root"></div>
+
+    <!-- ✅ Load React app entry -->
+    <script type="module" src="/src/main.jsx"></script>
+
+    <noscript>
+      <p style="text-align: center; color: #555; margin-top: 2rem">
+        This app requires JavaScript to run. Please enable JavaScript in your
+        browser.
+      </p>
+    </noscript>
+  </body>
+</html>
