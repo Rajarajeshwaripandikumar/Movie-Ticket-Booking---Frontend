@@ -12,6 +12,32 @@ const BASE_URL = (
 ).replace(/\/+$/, ""); // trim trailing slashes
 
 /* -------------------------------------------------------------------------- */
+/* Helpers                                                                    */
+/* -------------------------------------------------------------------------- */
+function getAuthFromStorage() {
+  // Try structured auth object first
+  try {
+    const raw = localStorage.getItem("auth");
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") {
+        const token = parsed.token || parsed.accessToken || parsed.jwt;
+        const role =
+          parsed.role ||
+          (Array.isArray(parsed.roles) ? parsed.roles[0] : undefined);
+        if (token) return { token, role };
+      }
+    }
+  } catch {
+    /* noop */
+  }
+  // Fallback: plain token string
+  const tokenStr = localStorage.getItem("token");
+  if (tokenStr) return { token: tokenStr, role: undefined };
+  return { token: null, role: undefined };
+}
+
+/* -------------------------------------------------------------------------- */
 /* Axios Instance                                                             */
 /* -------------------------------------------------------------------------- */
 const api = axios.create({
@@ -26,7 +52,6 @@ const api = axios.create({
 /* -------------------------------------------------------------------------- */
 api.interceptors.request.use((config) => {
   // ---- URL NORMALIZER ------------------------------------------------------
-  // If baseURL ends with /api, strip a leading /api from the request URL to avoid /api/api/...
   if (typeof config.url === "string") {
     let u = config.url;
 
@@ -38,40 +63,36 @@ api.interceptors.request.use((config) => {
       u = u.replace(/^\/api(\/|$)/i, "/");
     }
 
-    // Ensure we always have a single leading slash for axios to join correctly
+    // Ensure single leading slash so axios joins correctly
     if (!u.startsWith("/")) u = `/${u}`;
 
     config.url = u;
   }
 
   // ---- AUTH HEADER ---------------------------------------------------------
-  try {
-    const raw = localStorage.getItem("auth"); // { token, role, ... }
-    if (raw) {
-      const { token } = JSON.parse(raw) || {};
-      if (token) config.headers.Authorization = `Bearer ${token}`;
-    }
-  } catch {
-    /* noop */
+  const { token, role } = getAuthFromStorage();
+  if (token) {
+    config.headers = config.headers || {};
+    config.headers.Authorization = `Bearer ${token}`;
+    // Optional: send role if your backend wants it for debugging/metrics
+    if (role) config.headers["X-Role"] = role;
   }
 
   // ---- DEBUG LOG -----------------------------------------------------------
   const method = (config.method || "GET").toUpperCase();
-  // Build a safe preview URL (don’t mutate config):
   const previewPath = typeof config.url === "string" ? config.url : "";
   const previewUrl =
-    (config.baseURL || "") +
-    (previewPath.startsWith("/") ? "" : "/") +
-    previewPath;
+    (config.baseURL || "") + (previewPath.startsWith("/") ? "" : "/") + previewPath;
   console.log(`[API] ${method} → ${previewUrl}`, config.params || "");
 
   // Rogue POST detector (interceptor-level)
   const isPost = method === "POST";
   const urlLower = (config.url || "").toLowerCase();
-  const isTheaterPost = /(^|\/)theaters(?:$|\?)/.test(urlLower);
+  const isTheaterPost = /(^|\/)theaters(?:$|\/|\?)/.test(urlLower);
   const isTagged = config.headers?.["X-Intent"] === "create-theater";
   if (isPost && isTheaterPost && !isTagged) {
     console.warn("⚠️  Rogue POST /theaters detected (no X-Intent). Stack:");
+    // eslint-disable-next-line no-console
     console.trace();
   }
 
@@ -87,6 +108,15 @@ api.interceptors.response.use(
     const cfg = error?.config || {};
     const method = (cfg.method || "").toUpperCase();
     const status = error?.response?.status;
+
+    // 🔒 Handle 401s explicitly (optional auto-logout hook)
+    if (status === 401) {
+      // Broadcast so your AuthContext can listen and sign out if desired
+      try {
+        window.dispatchEvent(new CustomEvent("api:unauthorized", { detail: cfg?.url }));
+      } catch {}
+      return Promise.reject(error);
+    }
 
     // Don't retry client errors (4xx)
     if (typeof status === "number" && status >= 400 && status < 500) {
