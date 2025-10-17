@@ -293,17 +293,25 @@ const fmtDay = (d) => {
 };
 
 const toRevenueDaily = (arr = []) =>
-  arr.map((d, i) => ({
-    day: fmtDay(d.date?.slice?.(0, 10) || `D${i + 1}`),
-    revenue: Number(d.totalRevenue ?? 0),
-    bookings: Number(d.bookings ?? 0),
-  }));
+  arr.map((d, i) => {
+    const iso = d?.date?.slice?.(0, 10) || "";
+    return {
+      day: fmtDay(iso || `D${i + 1}`), // pretty label for charts
+      dayISO: iso,                     // raw ISO for CSV
+      revenue: Number(d.totalRevenue ?? 0),
+      bookings: Number(d.bookings ?? 0),
+    };
+  });
 
 const toDauDaily = (arr = []) =>
-  arr.map((d, i) => ({
-    day: fmtDay(d.date?.slice?.(0, 10) || `D${i + 1}`),
-    users: Number(d.dau ?? 0),
-  }));
+  arr.map((d, i) => {
+    const iso = d?.date?.slice?.(0, 10) || "";
+    return {
+      day: fmtDay(iso || `D${i + 1}`),
+      dayISO: iso,
+      users: Number(d.dau ?? 0),
+    };
+  });
 
 const toMovies = (arr = []) =>
   arr.map((m) => ({
@@ -333,8 +341,7 @@ function buildSummary(summaryData = [], dauData = [], revenue7 = 0) {
     : 0;
   const avgDau = dauData.length
     ? Math.round(
-        dauData.reduce((s, d) => s + (Number(d.dau ?? 0)), 0) /
-          dauData.length
+        dauData.reduce((s, d) => s + (Number(d.dau ?? 0)), 0) / dauData.length
       )
     : 0;
 
@@ -422,6 +429,9 @@ export default function AdminAnalyticsDashboard() {
       const s = String(v);
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
+    // Wrap text so Excel shows it immediately and never hides as ####
+    const excelText = (s) => (s ? `="${String(s)}"` : "");
+
     const makeCSV = (title, headers, rows) => {
       let csv = `${title}\n${headers.join(",")}\n`;
       csv += rows
@@ -430,11 +440,31 @@ export default function AdminAnalyticsDashboard() {
       csv += "\n\n";
       return csv;
     };
+
+    // Build sections with ISO date column for Excel
+    const revForCsv = revenueDaily.map((r) => ({
+      day: excelText(r.dayISO || r.day),
+      revenue: r.revenue,
+      bookings: r.bookings,
+    }));
+    const dauForCsv = dauDaily.map((r) => ({
+      day: excelText(r.dayISO || r.day),
+      users: r.users,
+    }));
+
     const sections = [];
-    sections.push(makeCSV("Revenue (Daily)", ["day", "revenue", "bookings"], revenueDaily));
-    sections.push(makeCSV("Active Users (Daily)", ["day", "users"], dauDaily));
-    sections.push(makeCSV("Theater Occupancy", ["name", "occupancy"], theaterOcc));
-    sections.push(makeCSV("Top Movies", ["title", "bookings", "revenue", "seatsBooked"], topMovies));
+    sections.push(
+      makeCSV("Revenue (Daily)", ["day", "revenue", "bookings"], revForCsv)
+    );
+    sections.push(
+      makeCSV("Active Users (Daily)", ["day", "users"], dauForCsv)
+    );
+    sections.push(
+      makeCSV("Theater Occupancy", ["name", "occupancy"], theaterOcc)
+    );
+    sections.push(
+      makeCSV("Top Movies", ["title", "bookings", "revenue", "seatsBooked"], topMovies)
+    );
 
     const blob = new Blob(sections, { type: "text/csv;charset=utf-8;" });
     const link = document.createElement("a");
