@@ -1,5 +1,5 @@
 // src/pages/AdminTheaters.jsx — Walmart Style (clean, rounded, blue accents)
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import api from "../api/api";
 import { useAuth } from "../context/AuthContext";
 import {
@@ -55,9 +55,10 @@ function Field({ as = "input", icon: Icon, className = "", label, ...props }) {
   );
 }
 
-function PrimaryBtn({ children, className = "", ...props }) {
+function PrimaryBtn({ children, className = "", type = "button", ...props }) {
   return (
     <button
+      type={type}  // default to button to avoid accidental submits
       className={`inline-flex items-center justify-center gap-2 rounded-full px-5 py-2 font-semibold text-white bg-[#0071DC] hover:bg-[#0654BA] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071DC] disabled:opacity-60 ${className}`}
       {...props}
     >
@@ -66,9 +67,10 @@ function PrimaryBtn({ children, className = "", ...props }) {
   );
 }
 
-function SecondaryBtn({ children, className = "", ...props }) {
+function SecondaryBtn({ children, className = "", type = "button", ...props }) {
   return (
     <button
+      type={type}  // default to button to avoid accidental submits
       className={`inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 font-semibold border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071DC] ${className}`}
       {...props}
     >
@@ -132,6 +134,7 @@ export default function AdminTheaters() {
   // Image upload
   const [preview, setPreview] = useState("");
   const [previewKey, setPreviewKey] = useState(0);
+  const fileInputRef = useRef(null);
 
   // UI state
   const [loading, setLoading] = useState(false);
@@ -378,7 +381,12 @@ export default function AdminTheaters() {
               <PlusCircle className="h-5 w-5" /> Add / Edit Theater
             </h2>
 
-            <form onSubmit={createTheater} className="space-y-4">
+            <form
+              onSubmit={createTheater}
+              className="space-y-4"
+              data-netlify="false"
+              onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); }}
+            >
               {selectedId && (
                 <div className="text-xs text-slate-600">
                   Editing ID: <span className="font-mono">{selectedId}</span>
@@ -433,12 +441,22 @@ export default function AdminTheaters() {
                     />
                   </div>
                   <div className="flex flex-col gap-1">
-                    <label className="inline-flex items-center gap-2 cursor-pointer">
-                      <input type="file" accept="image/*" onChange={onPickFile} className="hidden" />
-                      <SecondaryBtn className="px-3 py-1.5">
-                        <ImageIcon className="h-4 w-4" /> Choose Image
-                      </SecondaryBtn>
-                    </label>
+                    {/* Hidden input + button triggers it (no label-wrapping) */}
+                    <input
+                      ref={fileInputRef}
+                      id="theaterImage"
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/gif"
+                      onChange={onPickFile}
+                      className="hidden"
+                    />
+                    <SecondaryBtn
+                      type="button"
+                      className="px-3 py-1.5"
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      <ImageIcon className="h-4 w-4" /> Choose Image
+                    </SecondaryBtn>
                     <span className="text-xs text-slate-500">JPG/PNG/WEBP/GIF · up to 3MB.</span>
                   </div>
                 </div>
@@ -476,7 +494,10 @@ export default function AdminTheaters() {
             ) : (
               <ul className="space-y-3 max-h-[60vh] overflow-auto pr-1">
                 {theaters.map((t) => (
-                  <li key={t._id} className={`flex justify-between items-center border border-slate-200 bg-white rounded-2xl p-3 shadow-sm ${selectedId === t._id ? "ring-2 ring-[#0071DC]" : ""}`}>
+                  <li
+                    key={t._id}
+                    className={`flex justify-between items-center border border-slate-200 bg-white rounded-2xl p-3 shadow-sm ${selectedId === t._id ? "ring-2 ring-[#0071DC]" : ""}`}
+                  >
                     <div className="flex items-center gap-3">
                       <div className="w-14 h-14 rounded-xl overflow-hidden bg-slate-200 border border-slate-200 shadow-sm">
                         <img
@@ -489,7 +510,9 @@ export default function AdminTheaters() {
                       <div>
                         <div className="font-extrabold text-slate-900">{t.name}</div>
                         <div className="text-sm text-slate-700">{t.city} — {t.address || "No address"}</div>
-                        <div className="text-xs text-slate-500 mt-0.5">{Array.isArray(t.amenities) && t.amenities.length ? t.amenities.join(" • ") : "No amenities"}</div>
+                        <div className="text-xs text-slate-500 mt-0.5">
+                          {Array.isArray(t.amenities) && t.amenities.length ? t.amenities.join(" • ") : "No amenities"}
+                        </div>
                       </div>
                     </div>
                     <div className="flex gap-2">
