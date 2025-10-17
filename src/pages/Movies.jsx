@@ -3,28 +3,43 @@ import { Link, useSearchParams } from "react-router-dom";
 import api from "../api/api";
 
 /* ---------- Shared media helpers ---------- */
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8080/api";
+// If VITE_API_BASE is missing on Netlify, auto-fallback to Render in prod.
+const inferredApiBase =
+  typeof window !== "undefined" &&
+  window.location &&
+  window.location.protocol === "https:" &&
+  !/^(localhost|127\.0\.0\.1)/.test(window.location.hostname)
+    ? "https://movie-ticket-booking-backend-o1m2.onrender.com/api"
+    : "http://localhost:8080/api";
+
+const API_BASE = (import.meta.env.VITE_API_BASE || inferredApiBase).replace(/\/+$/, "");
 const FILES_BASE = API_BASE.replace(/\/api\/?$/, "");
+
+// Debug aid (remove later)
+if (typeof window !== "undefined") {
+  // eslint-disable-next-line no-console
+  console.debug("[Movies] API_BASE:", API_BASE, "FILES_BASE:", FILES_BASE);
+}
 
 /* ---------- Robust URL resolver: converts localhost -> FILES_BASE ---------- */
 function resolvePosterUrl(u) {
   if (!u) return null;
 
-  // Allow SVG fallback data URLs
+  // Allow SVG/base64 fallback
   if (/^data:/i.test(u)) return u;
 
-  // Absolute URLs (http or https)
+  // Absolute URLs
   if (/^https?:\/\//i.test(u)) {
     try {
       const abs = new URL(u);
 
-      // ✅ Rewrite any localhost URL to production FILES_BASE
+      // Rewrite dev hosts → production files base
       if (abs.hostname === "localhost" || abs.hostname === "127.0.0.1") {
         const path = abs.pathname.replace(/^\/+/, "");
         return `${FILES_BASE}/${path}`;
       }
 
-      // ✅ If same origin as API_BASE but contains /api/, clean it
+      // If same origin as API_BASE but has /api in path, normalize to files base
       try {
         const api = new URL(API_BASE);
         if (abs.origin === api.origin) {
@@ -35,7 +50,7 @@ function resolvePosterUrl(u) {
         /* ignore */
       }
 
-      // External or CDN image → keep as is
+      // External/CDN → keep
       return u;
     } catch {
       // invalid URL → fall through
@@ -236,7 +251,12 @@ export default function Movies() {
         }
       })();
       if (!mounted) return;
-      setMovies(list.map(normalizeMovie));
+      // force-rewrite every poster URL after normalizing
+      const normalized = list.map(normalizeMovie).map(m => ({
+        ...m,
+        posterUrl: resolvePosterUrl(m.posterUrl),
+      }));
+      setMovies(normalized);
       if (debouncedQ) setParams({ q: debouncedQ }); else setParams({});
       setLoading(false);
     };
@@ -372,6 +392,7 @@ function SearchBar({ value, onChange, onClear, placeholder = "Search", className
 
 /* ---------- PosterBox ---------- */
 function PosterBox({ movie }) {
+  // movie.posterUrl is already rewritten in the fetch effect, but keep resolver here too
   const src = resolvePosterUrl(movie.posterUrl) || DEFAULT_POSTER;
   return (
     <div className="w-full aspect-[2/3] overflow-hidden rounded-xl border border-slate-200 bg-white">
