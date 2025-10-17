@@ -6,25 +6,25 @@ import api from "../api/api";
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8080/api";
 const FILES_BASE = API_BASE.replace(/\/api\/?$/, "");
 
-/* ---------- Robust URL resolver (fixes localhost + stray /api) ---------- */
+/* ---------- Robust URL resolver: converts localhost -> FILES_BASE ---------- */
 function resolvePosterUrl(u) {
   if (!u) return null;
 
-  // keep data URLs
+  // Allow SVG fallback data URLs
   if (/^data:/i.test(u)) return u;
 
-  // absolute URL?
+  // Absolute URLs (http or https)
   if (/^https?:\/\//i.test(u)) {
     try {
       const abs = new URL(u);
 
-      // if saved from dev, rewrite to production file host
+      // ✅ Rewrite any localhost URL to production FILES_BASE
       if (abs.hostname === "localhost" || abs.hostname === "127.0.0.1") {
         const path = abs.pathname.replace(/^\/+/, "");
         return `${FILES_BASE}/${path}`;
       }
 
-      // if it's the same origin as API_BASE but path includes /api/, rewrite to FILES_BASE
+      // ✅ If same origin as API_BASE but contains /api/, clean it
       try {
         const api = new URL(API_BASE);
         if (abs.origin === api.origin) {
@@ -32,21 +32,22 @@ function resolvePosterUrl(u) {
           return `${FILES_BASE}/${cleaned}`;
         }
       } catch {
-        /* ignore parse errors */
+        /* ignore */
       }
 
-      // external/CDN absolute URL → leave as-is
+      // External or CDN image → keep as is
       return u;
     } catch {
-      // fall through to relative handling
+      // invalid URL → fall through
     }
   }
 
-  // relative path: strip any leading / or 'api/' that slipped in
+  // Relative path → prepend backend host
   const clean = String(u).replace(/^\/+/, "").replace(/^api\/+/, "");
   return `${FILES_BASE}/${clean}`;
 }
 
+/* ---------- Default fallback poster ---------- */
 const DEFAULT_POSTER =
   "data:image/svg+xml;utf8," +
   encodeURIComponent(`
@@ -144,6 +145,7 @@ function normalizeMovie(m = {}) {
   return { ...m, _id: id, posterUrl, genre: genreStr, runtime, languages, castPreview };
 }
 
+/* ---------- Try multiple endpoints ---------- */
 async function tryGet(candidates, params = {}) {
   for (const ep of candidates) {
     try {
@@ -244,12 +246,10 @@ export default function Movies() {
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-900">
-      {/* Header + Search */}
       <div className="max-w-6xl mx-auto px-3 sm:px-4 md:px-6 lg:px-8 pt-4 pb-3">
         <header className="mb-3 flex items-center justify-between">
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Only in Theatres</h1>
         </header>
-
         <div className="mt-2 max-w-[640px]">
           <SearchBar
             value={q}
@@ -261,7 +261,6 @@ export default function Movies() {
         </div>
       </div>
 
-      {/* Movie Cards */}
       <section className="pb-10">
         <div className="max-w-6xl mx-auto px-3 sm:px-4 md:px-6 lg:px-8">
           {err && (
