@@ -35,9 +35,8 @@
     "depcheck": "^1.4.7"
   },
   "optionalDependencies": {
-  "@rollup/rollup-linux-x64-gnu": "^4.21.2"
-}
-
+    "@rollup/rollup-linux-x64-gnu": "^4.21.2"
+  },
   "engines": {
     "node": "20.x"
   }
