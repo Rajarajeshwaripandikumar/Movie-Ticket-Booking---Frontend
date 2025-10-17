@@ -6,11 +6,44 @@ import api from "../api/api";
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8080/api";
 const FILES_BASE = API_BASE.replace(/\/api\/?$/, "");
 
-/* ---------- Proper URL join fix ---------- */
-function resolvePosterUrl(url) {
-  if (!url) return null;
-  if (/^https?:\/\//i.test(url) || /^data:/i.test(url)) return url; // already absolute or base64
-  const clean = String(url).replace(/^\/+/, ""); // remove leading slashes
+/* ---------- Robust URL resolver (fixes localhost + stray /api) ---------- */
+function resolvePosterUrl(u) {
+  if (!u) return null;
+
+  // keep data URLs
+  if (/^data:/i.test(u)) return u;
+
+  // absolute URL?
+  if (/^https?:\/\//i.test(u)) {
+    try {
+      const abs = new URL(u);
+
+      // if saved from dev, rewrite to production file host
+      if (abs.hostname === "localhost" || abs.hostname === "127.0.0.1") {
+        const path = abs.pathname.replace(/^\/+/, "");
+        return `${FILES_BASE}/${path}`;
+      }
+
+      // if it's the same origin as API_BASE but path includes /api/, rewrite to FILES_BASE
+      try {
+        const api = new URL(API_BASE);
+        if (abs.origin === api.origin) {
+          const cleaned = abs.pathname.replace(/^\/?api\/?/, "").replace(/^\/+/, "");
+          return `${FILES_BASE}/${cleaned}`;
+        }
+      } catch {
+        /* ignore parse errors */
+      }
+
+      // external/CDN absolute URL → leave as-is
+      return u;
+    } catch {
+      // fall through to relative handling
+    }
+  }
+
+  // relative path: strip any leading / or 'api/' that slipped in
+  const clean = String(u).replace(/^\/+/, "").replace(/^api\/+/, "");
   return `${FILES_BASE}/${clean}`;
 }
 
@@ -84,7 +117,7 @@ function parseCast(anyCast) {
   return [];
 }
 
-/* ---------- Fixed normalizeMovie with all field options ---------- */
+/* ---------- normalizeMovie ---------- */
 function normalizeMovie(m = {}) {
   const id = m._id || m.id;
 
