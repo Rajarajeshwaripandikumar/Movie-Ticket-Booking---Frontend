@@ -19,7 +19,8 @@ import {
 /* -------------------------------------------------------------------------- */
 /* Constants                                                                  */
 /* -------------------------------------------------------------------------- */
-const API_BASE = (import.meta.env.VITE_API_BASE || "http://localhost:8080/api").replace(/\/+$/, "");
+const API_BASE =
+  (import.meta.env.VITE_API_BASE || "https://movie-ticket-booking-backend-o1m2.onrender.com/api").replace(/\/+$/, "");
 const FILES_BASE = API_BASE.replace(/\/api$/, "");
 
 // Inline fallback image
