@@ -6,9 +6,10 @@ import axios from "axios";
 /* -------------------------------------------------------------------------- */
 /* Base URL Setup                                                             */
 /* -------------------------------------------------------------------------- */
-const BASE_URL =
-  (import.meta.env.VITE_API_BASE || "https://movie-ticket-booking-backend-o1m2.onrender.com/api")
-    .replace(/\/+$/, ""); // trim trailing slashes
+const BASE_URL = (
+  import.meta.env.VITE_API_BASE ||
+  "https://movie-ticket-booking-backend-o1m2.onrender.com/api"
+).replace(/\/+$/, ""); // trim trailing slashes
 
 /* -------------------------------------------------------------------------- */
 /* Axios Instance                                                             */
@@ -24,18 +25,45 @@ const api = axios.create({
 /* Request Interceptor                                                        */
 /* -------------------------------------------------------------------------- */
 api.interceptors.request.use((config) => {
+  // ---- URL NORMALIZER ------------------------------------------------------
+  // If baseURL ends with /api, strip a leading /api from the request URL to avoid /api/api/...
+  if (typeof config.url === "string") {
+    let u = config.url;
+
+    // Remove any accidental double leading slashes on the path (keep protocol in baseURL intact)
+    u = u.replace(/^\/+/, "/");
+
+    // If baseURL already includes /api, drop a leading /api from the path
+    if (config.baseURL?.endsWith("/api")) {
+      u = u.replace(/^\/api(\/|$)/i, "/");
+    }
+
+    // Ensure we always have a single leading slash for axios to join correctly
+    if (!u.startsWith("/")) u = `/${u}`;
+
+    config.url = u;
+  }
+
+  // ---- AUTH HEADER ---------------------------------------------------------
   try {
     const raw = localStorage.getItem("auth"); // { token, role, ... }
     if (raw) {
       const { token } = JSON.parse(raw) || {};
       if (token) config.headers.Authorization = `Bearer ${token}`;
     }
-  } catch { /* noop */ }
+  } catch {
+    /* noop */
+  }
 
-  // Debug: print every request
+  // ---- DEBUG LOG -----------------------------------------------------------
   const method = (config.method || "GET").toUpperCase();
-  const url = `${config.baseURL}${config.url?.startsWith("/") ? "" : "/"}${config.url}`;
-  console.log(`[API] ${method} → ${url}`, config.params || "");
+  // Build a safe preview URL (don’t mutate config):
+  const previewPath = typeof config.url === "string" ? config.url : "";
+  const previewUrl =
+    (config.baseURL || "") +
+    (previewPath.startsWith("/") ? "" : "/") +
+    previewPath;
+  console.log(`[API] ${method} → ${previewUrl}`, config.params || "");
 
   // Rogue POST detector (interceptor-level)
   const isPost = method === "POST";
@@ -109,8 +137,9 @@ api.post = function patchedPost(url, ...rest) {
 /* -------------------------------------------------------------------------- */
 export async function wakeBackend() {
   try {
-    await fetch(`${BASE_URL}/health`, { method: "GET", cache: "no-store" }).catch(() =>
-      fetch(`${BASE_URL}/theaters?page=1&limit=1`, { cache: "no-store" })
+    // Try /api/health first; fall back to a cheap list call.
+    await fetch(`${BASE_URL}/health`, { method: "GET", cache: "no-store" }).catch(
+      () => fetch(`${BASE_URL}/theaters?page=1&limit=1`, { cache: "no-store" })
     );
   } catch {
     // ignore
