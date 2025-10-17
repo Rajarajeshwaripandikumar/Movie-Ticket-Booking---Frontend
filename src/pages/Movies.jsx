@@ -6,9 +6,12 @@ import api from "../api/api";
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8080/api";
 const FILES_BASE = API_BASE.replace(/\/api\/?$/, "");
 
+/* ---------- Proper URL join fix ---------- */
 function resolvePosterUrl(url) {
   if (!url) return null;
-  return /^https?:\/\//i.test(url) ? url : `${FILES_BASE}${url}`;
+  if (/^https?:\/\//i.test(url) || /^data:/i.test(url)) return url; // already absolute or base64
+  const clean = String(url).replace(/^\/+/, ""); // remove leading slashes
+  return `${FILES_BASE}/${clean}`;
 }
 
 const DEFAULT_POSTER =
@@ -81,9 +84,18 @@ function parseCast(anyCast) {
   return [];
 }
 
+/* ---------- Fixed normalizeMovie with all field options ---------- */
 function normalizeMovie(m = {}) {
   const id = m._id || m.id;
-  const posterUrl = m.posterUrl || m.poster || "";
+
+  const posterUrl =
+    m.posterUrl ||
+    m.poster ||
+    m.image ||
+    m.imageUrl ||
+    m.poster_path ||
+    "";
+
   const genresArr = toArray(m.genres?.length ? m.genres : m.genre);
   const genreStr = genresArr.join(", ");
   const runtime =
@@ -120,7 +132,6 @@ const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
   </Tag>
 );
 
-/* polymorphic buttons (Link-compatible) */
 const cx = (...a) => a.filter(Boolean).join(" ");
 const PrimaryBtn = ({ as: As = "button", to, href, className = "", children, ...props }) => (
   <As
@@ -136,6 +147,7 @@ const PrimaryBtn = ({ as: As = "button", to, href, className = "", children, ...
     {children}
   </As>
 );
+
 const GhostBtn = ({ as: As = "button", to, href, className = "", children, ...props }) => (
   <As
     {...(to ? { to } : {})}
@@ -199,7 +211,7 @@ export default function Movies() {
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-900">
-      {/* Centered header + search */}
+      {/* Header + Search */}
       <div className="max-w-6xl mx-auto px-3 sm:px-4 md:px-6 lg:px-8 pt-4 pb-3">
         <header className="mb-3 flex items-center justify-between">
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Only in Theatres</h1>
@@ -216,7 +228,7 @@ export default function Movies() {
         </div>
       </div>
 
-      {/* Centered cards area, left-aligned inside */}
+      {/* Movie Cards */}
       <section className="pb-10">
         <div className="max-w-6xl mx-auto px-3 sm:px-4 md:px-6 lg:px-8">
           {err && (
@@ -285,7 +297,7 @@ export default function Movies() {
   );
 }
 
-/* ---------- SearchBar (Walmart) ---------- */
+/* ---------- SearchBar ---------- */
 function SearchBar({ value, onChange, onClear, placeholder = "Search", className = "" }) {
   const inputRef = useRef(null);
 
