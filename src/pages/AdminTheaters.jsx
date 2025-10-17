@@ -19,8 +19,12 @@ import {
 /* -------------------------------------------------------------------------- */
 /* Constants                                                                  */
 /* -------------------------------------------------------------------------- */
-const API_BASE =
-  (import.meta.env.VITE_API_BASE || "https://movie-ticket-booking-backend-o1m2.onrender.com/api").replace(/\/+$/, "");
+const API_BASE = (
+  api?.defaults?.baseURL ||
+  import.meta.env.VITE_API_BASE ||
+  "https://movie-ticket-booking-backend-o1m2.onrender.com/api"
+).replace(/\/+$/, "");
+
 const FILES_BASE = API_BASE.replace(/\/api$/, "");
 
 // Inline fallback image
@@ -57,7 +61,7 @@ function Field({ as = "input", icon: Icon, className = "", label, ...props }) {
 function PrimaryBtn({ children, className = "", type = "button", ...props }) {
   return (
     <button
-      type={type} // default button
+      type={type}
       className={`inline-flex items-center justify-center gap-2 rounded-full px-5 py-2 font-semibold text-white bg-[#0071DC] hover:bg-[#0654BA] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071DC] disabled:opacity-60 ${className}`}
       {...props}
     >
@@ -69,7 +73,7 @@ function PrimaryBtn({ children, className = "", type = "button", ...props }) {
 function SecondaryBtn({ children, className = "", type = "button", ...props }) {
   return (
     <button
-      type={type} // default button
+      type={type}
       className={`inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 font-semibold border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071DC] ${className}`}
       {...props}
     >
@@ -144,15 +148,13 @@ export default function AdminTheaters() {
   /* Load theaters */
   useEffect(() => {
     if (token && role?.toLowerCase() === "admin") loadTheaters();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, role]);
 
   async function loadTheaters() {
     try {
       const { data } = await api.get("theaters", { params: { page: 1, limit: 500, ts: Date.now() } });
       const arr = Array.isArray(data?.theaters) ? data.theaters : Array.isArray(data) ? data : [];
-      const normalized = arr.map(normalizeTheater);
-      setTheaters(normalized);
+      setTheaters(arr.map(normalizeTheater));
       setMsg("");
     } catch (err) {
       console.error("loadTheaters error:", err);
@@ -175,19 +177,22 @@ export default function AdminTheaters() {
     setPreviewKey((k) => k + 1);
   }
 
-  /* ------------------- Upload Handler (outside form) ------------------- */
+  /* ------------------- Upload Handler ------------------- */
   async function onPickFile(e) {
-    const file = e.target.files?.[0];
+    const fileInput = e.target;
+    const file = fileInput.files?.[0];
     if (!file) return;
 
     if (!["image/jpeg", "image/png", "image/webp", "image/gif"].includes(file.type)) {
       setMsg("Only JPG/PNG/WEBP/GIF allowed");
       setMsgType("error");
+      fileInput.value = "";
       return;
     }
     if (file.size > 3 * 1024 * 1024) {
       setMsg("Max file size is 3MB");
       setMsgType("error");
+      fileInput.value = "";
       return;
     }
 
@@ -196,9 +201,25 @@ export default function AdminTheaters() {
     setLoading(true);
 
     try {
+      // match Axios auth
+      let authHeader = {};
+      try {
+        const raw = localStorage.getItem("auth");
+        if (raw) {
+          const { token } = JSON.parse(raw) || {};
+          if (token) authHeader = { Authorization: `Bearer ${token}` };
+        }
+      } catch {}
+
       const formData = new FormData();
       formData.append("image", file);
-      const res = await fetch(`${API_BASE}/upload`, { method: "POST", body: formData });
+
+      const res = await fetch(`${API_BASE}/upload`, {
+        method: "POST",
+        body: formData,
+        headers: { ...authHeader }, // do not set Content-Type for FormData
+      });
+
       if (!res.ok) throw new Error(`Upload failed (${res.status})`);
       const data = await res.json();
       setPreview(data.url);
@@ -210,44 +231,23 @@ export default function AdminTheaters() {
       setMsgType("error");
     } finally {
       setLoading(false);
+      fileInput.value = ""; // allow selecting the same file again
     }
   }
 
-  /* Amenities helpers */
-  function addAmenity(value) {
-    const items = String(value || "")
-      .split(",")
-      .map((x) => x.trim())
-      .filter(Boolean);
-    if (!items.length) return;
-    setAmenitiesList((list) => {
-      const set = new Set(list);
-      items.forEach((i) => set.add(i));
-      const next = Array.from(set);
-      setAmenitiesDirty(!sameStringArray(next, originalAmenities));
-      return next;
-    });
-  }
-  function removeAmenity(value) {
-    setAmenitiesList((list) => {
-      const next = list.filter((x) => x !== value);
-      setAmenitiesDirty(!sameStringArray(next, originalAmenities));
-      return next;
-    });
-  }
-
-  /* ------------------- Create / Update / Delete ------------------- */
+  /* ------------------- CRUD ------------------- */
   async function createTheater() {
-    if (submittingRef.current) return; // prevent double-submits
-
+    if (submittingRef.current) return;
     if (!name.trim() || !city.trim()) {
-      setMsg("Name and City are required"); setMsgType("error"); return;
+      setMsg("Name and City are required");
+      setMsgType("error");
+      return;
     }
 
-    // Client-side duplicate guard
-    const exists = theaters.some(t =>
-      (t.name || "").trim().toLowerCase() === name.trim().toLowerCase() &&
-      (t.city || "").trim().toLowerCase() === city.trim().toLowerCase()
+    const exists = theaters.some(
+      (t) =>
+        (t.name || "").trim().toLowerCase() === name.trim().toLowerCase() &&
+        (t.city || "").trim().toLowerCase() === city.trim().toLowerCase()
     );
     if (exists) {
       setMsg("A theater with this Name + City already exists.");
@@ -265,11 +265,9 @@ export default function AdminTheaters() {
         amenities: amenitiesList,
         imageUrl: preview,
       };
-      const res = await api.post(
-        "theaters", // relative — baseURL already includes /api
-        payload,
-        { params: { ts: Date.now() }, headers: { "X-Intent": "create-theater" } } // tag legit create
-      );
+      const res = await api.post("theaters", payload, {
+        params: { ts: Date.now() },
+      });
       const created = normalizeTheater(res.data?.data || res.data);
       setTheaters((s) => [created, ...s]);
       setMsg("✅ Theater created!");
@@ -287,7 +285,7 @@ export default function AdminTheaters() {
 
   async function updateTheaterById() {
     if (!selectedId) {
-      setMsg("Pick a theater from the list first.");
+      setMsg("Pick a theater first.");
       setMsgType("error");
       return;
     }
@@ -331,46 +329,31 @@ export default function AdminTheaters() {
     }
   }
 
-  /* Selection */
-  const names = useMemo(() => [...new Set(theaters.map((t) => t.name))], [theaters]);
-  const cities = useMemo(() => [...new Set(theaters.map((t) => t.city))], [theaters]);
-  const addresses = useMemo(() => [...new Set(theaters.map((t) => t.address || "").filter(Boolean))], [theaters]);
-
-  function fillFromTheater(raw) {
-    const t = normalizeTheater(raw);
+  function fillFromTheater(tRaw) {
+    const t = normalizeTheater(tRaw);
     setSelectedId(t._id);
     setName(t.name || "");
     setCity(t.city || "");
     setAddress(t.address || "");
-    setAmenitiesList(Array.isArray(t.amenities) ? t.amenities : []);
-    setOriginalAmenities(Array.isArray(t.amenities) ? t.amenities : []);
-    setAmenitiesDirty(false);
-    const url = t.imageUrl || "";
-    if (preview?.startsWith("blob:")) URL.revokeObjectURL(preview);
-    setPreview(url);
+    setAmenitiesList(t.amenities || []);
+    setOriginalAmenities(t.amenities || []);
+    setPreview(t.imageUrl || "");
     setPreviewKey((k) => k + 1);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  /* Submit gate — only honor Create button submits */
-  const onFormSubmit = (e) => {
-    e.preventDefault();
-    const action = e.nativeEvent?.submitter?.dataset?.action;
-    if (action === "create") createTheater();
-  };
-
   /* ------------------- Render ------------------- */
   return (
-    <main className="min-h-screen w-screen [margin-inline:calc(50%-50vw)] bg-slate-50 text-slate-900 py-8 px-4 md:px-6">
+    <main className="min-h-screen w-screen bg-slate-50 text-slate-900 py-8 px-4 md:px-6">
       <div className="max-w-7xl mx-auto space-y-5">
         <Card className="p-5 flex items-center justify-between">
           <div>
-            <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight flex items-center gap-2">
+            <h1 className="text-2xl md:text-3xl font-extrabold flex items-center gap-2">
               <Building2 className="h-6 w-6" /> Manage Theaters
             </h1>
             <p className="text-sm text-slate-600 mt-1">Add, edit, or remove theaters.</p>
           </div>
-          <SecondaryBtn onClick={loadTheaters}>
+        <SecondaryBtn onClick={loadTheaters}>
             <RefreshCcw className="h-4 w-4" /> Refresh
           </SecondaryBtn>
         </Card>
@@ -390,9 +373,9 @@ export default function AdminTheaters() {
         )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          {/* ---------------- Image picker (OUTSIDE the form) ---------------- */}
+          {/* Image upload */}
           <Card className="p-5">
-            <h2 className="text-lg font-extrabold tracking-tight border-b border-slate-200 pb-2 mb-4 flex items-center gap-2">
+            <h2 className="text-lg font-extrabold border-b border-slate-200 pb-2 mb-4 flex items-center gap-2">
               <ImageIcon className="h-5 w-5" /> Theater Image
             </h2>
             <div className="flex items-center gap-4">
@@ -408,39 +391,38 @@ export default function AdminTheaters() {
               <div className="flex flex-col gap-1">
                 <input
                   ref={fileInputRef}
-                  id="theaterImage"
                   type="file"
-                  accept="image/png,image/jpeg,image/webp,image/gif"
-                  onChange={onPickFile}
+                  accept="image/*"
                   className="hidden"
+                  onChange={onPickFile}
                 />
                 <button
                   type="button"
                   className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 font-semibold border border-slate-300 bg-white hover:bg-slate-50"
                   onClick={(e) => {
                     e.preventDefault();
-                    e.stopPropagation(); // ensure never submits
                     fileInputRef.current?.click();
                   }}
                 >
                   <ImageIcon className="h-4 w-4" /> Choose Image
                 </button>
-                <span className="text-xs text-slate-500">JPG/PNG/WEBP/GIF · up to 3MB.</span>
+                <span className="text-xs text-slate-500">JPG/PNG/WEBP/GIF · up to 3MB</span>
               </div>
             </div>
           </Card>
 
-          {/* ---------------- Form ---------------- */}
+          {/* Form */}
           <Card className="p-5">
-            <h2 className="text-lg font-extrabold tracking-tight border-b border-slate-200 pb-2 mb-4 flex items-center gap-2">
+            <h2 className="text-lg font-extrabold border-b border-slate-200 pb-2 mb-4 flex items-center gap-2">
               <PlusCircle className="h-5 w-5" /> Add / Edit Theater
             </h2>
 
             <form
-              onSubmit={onFormSubmit}
+              onSubmit={(e) => {
+                e.preventDefault();
+                createTheater();
+              }}
               className="space-y-4"
-              data-netlify="false"
-              onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); }}
             >
               {selectedId && (
                 <div className="text-xs text-slate-600">
@@ -448,7 +430,6 @@ export default function AdminTheaters() {
                 </div>
               )}
 
-              {/* Fields */}
               <Field label="Theater Name" value={name} onChange={(e) => setName(e.target.value)} icon={Building2} required />
               <Field label="City" value={city} onChange={(e) => setCity(e.target.value)} icon={MapPin} required />
               <Field label="Address" value={address} onChange={(e) => setAddress(e.target.value)} icon={Home} />
@@ -461,7 +442,15 @@ export default function AdminTheaters() {
                     <span key={a} className="inline-flex items-center gap-1 text-xs border border-slate-300 rounded-lg bg-white px-2 py-1">
                       <Check className="h-3.5 w-3.5 text-emerald-600" />
                       {a}
-                      <button type="button" onClick={() => removeAmenity(a)} className="ml-1 rounded-full hover:bg-slate-100 p-0.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = amenitiesList.filter((x) => x !== a);
+                          setAmenitiesList(next);
+                          setAmenitiesDirty(!sameStringArray(next, originalAmenities));
+                        }}
+                        className="ml-1 rounded-full hover:bg-slate-100 p-0.5"
+                      >
                         <X className="h-3.5 w-3.5 text-slate-600" />
                       </button>
                     </span>
@@ -476,9 +465,7 @@ export default function AdminTheaters() {
                       e.preventDefault();
                       const v = amenityInput.trim();
                       if (v) {
-                        const set = new Set(amenitiesList);
-                        set.add(v);
-                        const next = Array.from(set);
+                        const next = Array.from(new Set([...amenitiesList, v]));
                         setAmenitiesList(next);
                         setAmenitiesDirty(!sameStringArray(next, originalAmenities));
                         setAmenityInput("");
@@ -492,7 +479,7 @@ export default function AdminTheaters() {
               {/* Buttons */}
               <div className="flex gap-2 justify-between items-center pt-1">
                 <div className="flex gap-2">
-                  <PrimaryBtn disabled={loading} type="submit" data-action="create">
+                  <PrimaryBtn disabled={loading} type="submit">
                     {loading ? "Saving..." : (<><PlusCircle className="h-4 w-4" /> Create Theater</>)}
                   </PrimaryBtn>
                   <PrimaryBtn
@@ -511,9 +498,9 @@ export default function AdminTheaters() {
             </form>
           </Card>
 
-          {/* ---------------- List ---------------- */}
+          {/* List */}
           <Card className="p-5">
-            <h2 className="text-lg font-extrabold tracking-tight border-b border-slate-200 pb-2 mb-4 flex items-center gap-2">
+            <h2 className="text-lg font-extrabold border-b border-slate-200 pb-2 mb-4 flex items-center gap-2">
               <Building2 className="h-5 w-5" /> Existing Theaters
             </h2>
             {theaters.length === 0 ? (
