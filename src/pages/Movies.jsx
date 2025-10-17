@@ -1,79 +1,83 @@
-import { useEffect, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
-import api from "../api/api";
+// backend/src/routes/movies.routes.js
+import { Router } from "express";
+import mongoose from "mongoose";
+import path from "path";
+import fs from "fs";
+import multer from "multer";
+import Movie from "../models/Movie.js";
 
-/* ---------- Shared media helpers ---------- */
-// If VITE_API_BASE is missing on Netlify, auto-fallback to Render in prod.
-const inferredApiBase =
-  typeof window !== "undefined" &&
-  window.location &&
-  window.location.protocol === "https:" &&
-  !/^(localhost|127\.0\.0\.1)/.test(window.location.hostname)
-    ? "https://movie-ticket-booking-backend-o1m2.onrender.com/api"
-    : "http://localhost:8080/api";
+const router = Router();
 
-const API_BASE = (import.meta.env.VITE_API_BASE || inferredApiBase).replace(/\/+$/, "");
-const FILES_BASE = API_BASE.replace(/\/api\/?$/, "");
+/* --------------------------- BASE URL for Render --------------------------- */
+const BASE_URL =
+  process.env.BASE_URL ||
+  "https://movie-ticket-booking-backend-o1m2.onrender.com";
 
-// Debug aid (remove later)
-if (typeof window !== "undefined") {
-  // eslint-disable-next-line no-console
-  console.debug("[Movies] API_BASE:", API_BASE, "FILES_BASE:", FILES_BASE);
-}
+/* ------------------------------ Paths & Multer ----------------------------- */
+const uploadDir = path.resolve("uploads");
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
-/* ---------- Robust URL resolver: converts localhost -> FILES_BASE ---------- */
-function resolvePosterUrl(u) {
-  if (!u) return null;
+const storage = multer.diskStorage({
+  destination: (_, __, cb) => cb(null, uploadDir),
+  filename: (_, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    const base = path
+      .basename(file.originalname, ext)
+      .replace(/\s+/g, "-")
+      .replace(/[^a-zA-Z0-9-_]/g, "");
+    cb(null, `${base}-${Date.now()}${ext}`);
+  },
+});
+const fileFilter = (_, file, cb) => {
+  const ok = ["image/jpeg", "image/png", "image/webp", "image/gif"].includes(
+    file.mimetype
+  );
+  ok
+    ? cb(null, true)
+    : cb(new Error("Only image files (jpg, png, webp, gif) are allowed"));
+};
+const upload = multer({
+  storage,
+  fileFilter,
+  limits: { fileSize: 3 * 1024 * 1024 }, // 3 MB
+});
 
-  // Allow SVG/base64 fallback
-  if (/^data:/i.test(u)) return u;
+/* ------------------------------ Helpers ----------------------------------- */
+const isValidId = (id) => mongoose.isValidObjectId(id);
 
-  // Absolute URLs
-  if (/^https?:\/\//i.test(u)) {
-    try {
-      const abs = new URL(u);
-
-      // Rewrite dev hosts → production files base
-      if (abs.hostname === "localhost" || abs.hostname === "127.0.0.1") {
-        const path = abs.pathname.replace(/^\/+/, "");
-        return `${FILES_BASE}/${path}`;
-      }
-
-      // If same origin as API_BASE but has /api in path, normalize to files base
-      try {
-        const api = new URL(API_BASE);
-        if (abs.origin === api.origin) {
-          const cleaned = abs.pathname.replace(/^\/?api\/?/, "").replace(/^\/+/, "");
-          return `${FILES_BASE}/${cleaned}`;
-        }
-      } catch {
-        /* ignore */
-      }
-
-      // External/CDN → keep
-      return u;
-    } catch {
-      // invalid URL → fall through
+function toRelativePoster(u) {
+  // Normalize anything (absolute localhost, absolute prod, or relative) to a RELATIVE path
+  if (!u) return "";
+  try {
+    if (/^https?:\/\//i.test(u)) {
+      const a = new URL(u);
+      return a.pathname; // keep just /uploads/...
     }
+  } catch {
+    /* not a URL */
   }
-
-  // Relative path → prepend backend host
-  const clean = String(u).replace(/^\/+/, "").replace(/^api\/+/, "");
-  return `${FILES_BASE}/${clean}`;
+  return u.startsWith("/") ? u : `/${u}`;
 }
 
-/* ---------- Default fallback poster ---------- */
-const DEFAULT_POSTER =
-  "data:image/svg+xml;utf8," +
-  encodeURIComponent(`
-    <svg xmlns='http://www.w3.org/2000/svg' width='240' height='360'>
-      <rect width='100%' height='100%' fill='#f1f5f9'/>
-      <text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle'
-            font-family='Arial' font-size='18' fill='#94a3b8'>No Image</text>
-    </svg>
-  `);
+function toPublicUrl(u) {
+  // Ensure the client always receives an ABSOLUTE URL
+  if (!u) return "";
+  const rel = toRelativePoster(u);
+  return `${BASE_URL}${rel}`;
+}
 
-/* ----------------------------- Helpers -------------------------------- */
+function safeUnlink(anyUrlOrPath) {
+  try {
+    if (!anyUrlOrPath) return;
+    const rel = toRelativePoster(anyUrlOrPath);
+    const abs = path.join(process.cwd(), rel.replace(/^\/+/, "")); // /uploads/.. -> uploads/..
+    // Only delete inside our uploads directory
+    if (abs.startsWith(uploadDir) && fs.existsSync(abs)) fs.unlinkSync(abs);
+  } catch {
+    /* ignore */
+  }
+}
+
 const toArray = (v) =>
   Array.isArray(v)
     ? v
@@ -81,338 +85,247 @@ const toArray = (v) =>
     ? v.split(",").map((s) => s.trim()).filter(Boolean)
     : [];
 
-function fromPerCharObject(objLike) {
-  if (!objLike || typeof objLike !== "object" || Array.isArray(objLike)) return null;
-  const vals = Object.values(objLike).filter(Boolean);
-  const perChar = vals.length > 5 && vals.every((v) => typeof v === "string" && v.length === 1);
-  if (!perChar) return null;
-  const joined = vals.join("");
-  try {
-    return JSON.parse(joined);
-  } catch {
-    return joined;
-  }
-}
-
-function normalizeCastItem(item) {
-  if (!item) return null;
-  if (typeof item === "string") {
-    const s = item.trim();
-    return s ? { actorName: s } : null;
-  }
-  if (typeof item === "object") {
-    if (item.actorName || item.name) {
-      return { actorName: (item.actorName || item.name).trim(), character: item.character || undefined };
-    }
-    const maybe = fromPerCharObject(item);
-    if (maybe !== null) return normalizeCastItem(maybe);
-    const v = Object.values(item).find((x) => typeof x === "string" && x.trim());
-    return v ? { actorName: v.trim() } : null;
-  }
-  const s = String(item).trim();
-  return s ? { actorName: s } : null;
-}
-
-function parseCast(anyCast) {
+/* ------------------------ Cast Normalization ------------------------------ */
+function castToStringArray(anyCast) {
   if (!anyCast) return [];
-  if (Array.isArray(anyCast)) return anyCast.map(normalizeCastItem).filter(Boolean);
+  if (Array.isArray(anyCast)) {
+    return anyCast
+      .map((c) => {
+        if (typeof c === "string") return c.trim();
+        if (c && typeof c === "object") {
+          return (c.actorName || c.name || c.character || "").toString().trim();
+        }
+        return String(c).trim();
+      })
+      .filter(Boolean);
+  }
   if (typeof anyCast === "object") {
-    const reconstructed = fromPerCharObject(anyCast);
-    if (reconstructed !== null) return parseCast(reconstructed);
-    return Object.values(anyCast).map(normalizeCastItem).filter(Boolean);
+    return Object.values(anyCast).map((v) => String(v).trim()).filter(Boolean);
   }
   if (typeof anyCast === "string") {
     const s = anyCast.trim();
     if (!s) return [];
     try {
-      return parseCast(JSON.parse(s));
+      return castToStringArray(JSON.parse(s));
     } catch {
-      return s.split(",").map((x) => x.trim()).filter(Boolean).map((name) => ({ actorName: name }));
+      return s.split(",").map((x) => x.trim()).filter(Boolean);
     }
   }
   return [];
 }
 
-/* ---------- normalizeMovie ---------- */
-function normalizeMovie(m = {}) {
-  const id = m._id || m.id;
+const castResponseObjects = (anyCast) =>
+  castToStringArray(anyCast).map((name) => ({ actorName: name }));
 
-  const posterUrl =
-    m.posterUrl ||
-    m.poster ||
-    m.image ||
-    m.imageUrl ||
-    m.poster_path ||
-    "";
+/* ------------------------------ GET: list ---------------------------------- */
+router.get("/", async (req, res) => {
+  try {
+    const limit = Math.min(100, Number(req.query.limit) || 20);
+    const skip = Number(req.query.skip) || 0;
 
-  const genresArr = toArray(m.genres?.length ? m.genres : m.genre);
-  const genreStr = genresArr.join(", ");
-  const runtime =
-    typeof m.runtime === "number"
-      ? m.runtime
-      : typeof m.durationMins === "number"
-      ? m.durationMins
-      : undefined;
-  const languages = toArray(m.languages ?? m.language);
-  const castObjs = parseCast(m.cast);
-  const castPreview = castObjs.map((c) => c.actorName).filter(Boolean).slice(0, 2);
+    const [docs, count] = await Promise.all([
+      Movie.find()
+        .sort({ releaseDate: -1, createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      Movie.countDocuments(),
+    ]);
 
-  return { ...m, _id: id, posterUrl, genre: genreStr, runtime, languages, castPreview };
-}
+    const movies = docs.map((m) => ({
+      ...m,
+      // Always send absolute, frontend-safe URL
+      posterUrl: toPublicUrl(m.posterUrl || m.image || m.poster || m.imageUrl || ""),
+      cast: castResponseObjects(m.cast),
+    }));
 
-/* ---------- Try multiple endpoints ---------- */
-async function tryGet(candidates, params = {}) {
-  for (const ep of candidates) {
-    try {
-      const { data } = await api.get(ep, { params });
-      if (Array.isArray(data)) return data;
-      if (Array.isArray(data?.movies)) return data.movies;
-      if (Array.isArray(data?.data)) return data.data;
-    } catch {
-      /* continue */
-    }
+    res.json({ movies, count });
+  } catch (err) {
+    console.error("[Movies] GET / error:", err);
+    res.status(500).json({ message: "Failed to load movies", error: err.message });
   }
-  return [];
-}
+});
 
-/* --------------------------- Walmart Primitives --------------------------- */
-const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
-  <Tag className={`bg-white border border-slate-200 rounded-2xl shadow-sm ${className}`} {...rest}>
-    {children}
-  </Tag>
-);
+/* ----------------------------- GET: search --------------------------------- */
+router.get("/search", async (req, res) => {
+  try {
+    const { q, genre, date, limit = 50 } = req.query;
+    const filter = {};
 
-const cx = (...a) => a.filter(Boolean).join(" ");
-const PrimaryBtn = ({ as: As = "button", to, href, className = "", children, ...props }) => (
-  <As
-    {...(to ? { to } : {})}
-    {...(href ? { href } : {})}
-    {...props}
-    className={cx(
-      "inline-flex items-center justify-center gap-2 rounded-full px-4 py-1.5 text-xs font-semibold",
-      "text-white bg-[#0071DC] hover:bg-[#0654BA] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071DC]",
-      className
-    )}
-  >
-    {children}
-  </As>
-);
+    if (q) {
+      const rx = new RegExp(q, "i");
+      filter.$or = [
+        { title: rx },
+        { description: rx },
+        { director: rx },
+        { cast: rx },
+        { genre: rx },
+      ];
+    }
 
-const GhostBtn = ({ as: As = "button", to, href, className = "", children, ...props }) => (
-  <As
-    {...(to ? { to } : {})}
-    {...(href ? { href } : {})}
-    {...props}
-    className={cx(
-      "inline-flex items-center justify-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold",
-      "border border-slate-300 text-slate-800 bg-white hover:bg-slate-50",
-      className
-    )}
-  >
-    {children}
-  </As>
-);
+    if (genre) {
+      const g = toArray(genre);
+      if (g.length) filter.$or = [...(filter.$or || []), { genre: { $in: g } }];
+    }
 
-const IconSearch = ({ className = "w-5 h-5" }) => (
-  <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" />
-  </svg>
-);
-const IconArrow = ({ className = "w-4 h-4" }) => (
-  <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M5 12h14" /><path d="M13 5l7 7-7 7" />
-  </svg>
-);
+    if (date) {
+      const d = new Date(date);
+      if (!isNaN(d)) filter.releaseDate = { $lte: d };
+    }
 
-/* -------------------------- Movies Page --------------------------- */
-export default function Movies() {
-  const [params, setParams] = useSearchParams();
-  const [q, setQ] = useState(params.get("q") ?? "");
-  const [movies, setMovies] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState("");
+    const docs = await Movie.find(filter)
+      .sort({ releaseDate: -1, createdAt: -1 })
+      .limit(Math.min(200, Number(limit)))
+      .lean();
 
-  const debouncedQ = useDebounce(q, 400);
-  const today = new Date().toISOString().slice(0, 10);
+    const movies = docs.map((m) => ({
+      ...m,
+      posterUrl: toPublicUrl(m.posterUrl || m.image || m.poster || m.imageUrl || ""),
+      cast: castResponseObjects(m.cast),
+    }));
 
-  useEffect(() => {
-    let mounted = true;
-    const fetchMovies = async () => {
-      setLoading(true);
-      setErr("");
-      const list = await (async () => {
-        try {
-          if (debouncedQ) return await tryGet(["/api/movies/search", "/movies/search"], { q: debouncedQ });
-          return await tryGet(["/api/movies", "/movies"]);
-        } catch (e) {
-          console.error("Movies fetch failed:", e);
-          setErr(e?.response?.data?.message || "Failed to fetch movies");
-          return [];
-        }
-      })();
-      if (!mounted) return;
-      // force-rewrite every poster URL after normalizing
-      const normalized = list.map(normalizeMovie).map(m => ({
-        ...m,
-        posterUrl: resolvePosterUrl(m.posterUrl),
-      }));
-      setMovies(normalized);
-      if (debouncedQ) setParams({ q: debouncedQ }); else setParams({});
-      setLoading(false);
+    res.json({ movies, count: movies.length });
+  } catch (err) {
+    console.error("[Movies] GET /search error:", err);
+    res.status(500).json({ message: "Failed to search movies", error: err.message });
+  }
+});
+
+/* ---------------------------- GET: single by id ---------------------------- */
+router.get("/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!isValidId(id)) return res.status(400).json({ message: "Invalid movie id" });
+
+    const movie = await Movie.findById(id).lean();
+    if (!movie) return res.status(404).json({ message: "Movie not found" });
+
+    movie.posterUrl = toPublicUrl(movie.posterUrl || movie.image || movie.poster || movie.imageUrl || "");
+    movie.cast = castResponseObjects(movie.cast);
+    res.json(movie);
+  } catch (err) {
+    console.error("[Movies] GET /:id error:", err);
+    res.status(500).json({ message: "Failed to fetch movie", error: err.message });
+  }
+});
+
+/* ------------------------- POST: create (with poster) ---------------------- */
+router.post("/", upload.single("poster"), async (req, res) => {
+  try {
+    const payload = req.body || {};
+
+    if (!payload.title || typeof payload.title !== "string") {
+      if (req.file) safeUnlink(`/uploads/${req.file.filename}`);
+      return res.status(400).json({ message: "Title is required" });
+    }
+
+    if (
+      typeof payload.durationMins !== "undefined" &&
+      Number.isNaN(Number(payload.durationMins))
+    ) {
+      if (req.file) safeUnlink(`/uploads/${req.file.filename}`);
+      return res.status(400).json({ message: "durationMins must be a number" });
+    }
+
+    payload.cast = castToStringArray(payload.cast);
+
+    // ✅ Store RELATIVE path; never localhost
+    if (req.file) {
+      payload.posterUrl = `/uploads/${req.file.filename}`;
+    } else if (payload.posterUrl || payload.image || payload.imageUrl || payload.poster) {
+      // Normalize any absolute URL (including localhost) to relative
+      const raw = payload.posterUrl || payload.image || payload.imageUrl || payload.poster;
+      payload.posterUrl = toRelativePoster(raw);
+    }
+
+    if (typeof payload.genre === "string") payload.genre = payload.genre.trim();
+    if (typeof payload.language === "string") payload.language = payload.language.trim();
+
+    const movie = await Movie.create(payload);
+    const out = movie.toObject();
+    out.posterUrl = toPublicUrl(out.posterUrl);
+    out.cast = castResponseObjects(out.cast);
+    res.status(201).json(out);
+  } catch (err) {
+    console.error("[Movies] POST / error:", err);
+    if (req.file) safeUnlink(`/uploads/${req.file.filename}`);
+    res.status(400).json({ message: "Failed to create movie", error: err.message });
+  }
+});
+
+/* -------------------------- PUT: full update (legacy) ---------------------- */
+router.put("/:id", upload.single("poster"), async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!isValidId(id)) {
+      if (req.file) safeUnlink(`/uploads/${req.file.filename}`);
+      return res.status(400).json({ message: "Invalid movie id" });
+    }
+
+    const existing = await Movie.findById(id).lean();
+    if (!existing) {
+      if (req.file) safeUnlink(`/uploads/${req.file.filename}`);
+      return res.status(404).json({ message: "Movie not found" });
+    }
+
+    const b = req.body || {};
+    const payload = {
+      title: typeof b.title !== "undefined" ? String(b.title).trim() : existing.title,
+      description: typeof b.description !== "undefined" ? b.description : existing.description,
+      genre: typeof b.genre !== "undefined" ? String(b.genre).trim() : existing.genre,
+      language: typeof b.language !== "undefined" ? String(b.language).trim() : existing.language,
+      director: typeof b.director !== "undefined" ? b.director : existing.director,
+      rating: typeof b.rating !== "undefined" ? Number(b.rating) : existing.rating,
+      durationMins: typeof b.durationMins !== "undefined" ? Number(b.durationMins) : existing.durationMins,
+      releaseDate: typeof b.releaseDate !== "undefined" ? b.releaseDate : existing.releaseDate,
+      cast: typeof b.cast !== "undefined" ? castToStringArray(b.cast) : existing.cast,
+      posterUrl: existing.posterUrl, // keep current by default
     };
-    fetchMovies();
-    return () => { mounted = false; };
-  }, [debouncedQ]);
 
-  return (
-    <main className="min-h-screen bg-slate-50 text-slate-900">
-      <div className="max-w-6xl mx-auto px-3 sm:px-4 md:px-6 lg:px-8 pt-4 pb-3">
-        <header className="mb-3 flex items-center justify-between">
-          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Only in Theatres</h1>
-        </header>
-        <div className="mt-2 max-w-[640px]">
-          <SearchBar
-            value={q}
-            onChange={setQ}
-            onClear={() => setQ("")}
-            placeholder="Search movies, cast, or genres"
-            className="w-full"
-          />
-        </div>
-      </div>
+    let oldPoster = null;
+    if (req.file) {
+      // ✅ new upload: store relative path
+      payload.posterUrl = `/uploads/${req.file.filename}`;
+      oldPoster = existing.posterUrl;
+    } else if (b.posterUrl || b.image || b.imageUrl || b.poster) {
+      // normalize any incoming value to relative
+      payload.posterUrl = toRelativePoster(b.posterUrl || b.image || b.imageUrl || b.poster);
+    }
 
-      <section className="pb-10">
-        <div className="max-w-6xl mx-auto px-3 sm:px-4 md:px-6 lg:px-8">
-          {err && (
-            <Card className="mb-6 p-4 bg-rose-50 border-rose-200 text-rose-700 font-semibold">{err}</Card>
-          )}
+    const updated = await Movie.findByIdAndUpdate(id, payload, {
+      new: true,
+      runValidators: true,
+    }).lean();
 
-          {loading && (
-            <div className="flex flex-wrap gap-4 justify-start">
-              {Array.from({ length: 16 }).map((_, i) => (
-                <div key={i} className="w-[240px]">
-                  <Card className="p-3 animate-pulse">
-                    <div className="bg-slate-200 aspect-[2/3] w-full mb-3 rounded-xl" />
-                    <div className="h-4 w-3/4 bg-slate-200 mb-2 rounded" />
-                    <div className="h-3 w-1/2 bg-slate-200 rounded" />
-                  </Card>
-                </div>
-              ))}
-            </div>
-          )}
+    if (updated && oldPoster && toRelativePoster(oldPoster) !== toRelativePoster(updated.posterUrl)) {
+      safeUnlink(oldPoster);
+    }
 
-          {!loading && movies.length > 0 && (
-            <ul className="flex flex-wrap gap-4 justify-start">
-              {movies.map((m) => (
-                <li key={m._id} className="group w-[240px]">
-                  <Card className="p-3 transition-transform duration-200 group-hover:-translate-y-0.5">
-                    <PosterBox movie={m} />
-                    <div className="mt-3">
-                      <h3 className="text-sm sm:text-base font-extrabold leading-snug line-clamp-2">{m.title}</h3>
-                      <p className="mt-1 text-xs text-slate-600 line-clamp-1">
-                        {m.genre || (m.languages?.length ? m.languages.slice(0, 3).join(", ") : " ")}
-                      </p>
-                      <div className="mt-3 flex items-center gap-2">
-                        <GhostBtn as={Link} to={`/movies/${m._id}`}>Details</GhostBtn>
-                        <PrimaryBtn
-                          as={Link}
-                          to={`/showtimes?movieId=${m._id}&date=${today}`}
-                          state={{ movieId: m._id, date: today }}
-                        >
-                          Book <IconArrow />
-                        </PrimaryBtn>
-                      </div>
-                    </div>
-                  </Card>
-                </li>
-              ))}
-            </ul>
-          )}
+    updated.posterUrl = toPublicUrl(updated.posterUrl);
+    updated.cast = castResponseObjects(updated.cast);
+    res.json(updated);
+  } catch (err) {
+    console.error("[Movies] PUT /:id error:", err);
+    res.status(400).json({ message: "Failed to update movie", error: err.message });
+  }
+});
 
-          {!loading && movies.length === 0 && !err && (
-            <div className="py-16 text-center">
-              <Card className="inline-flex flex-col items-center justify-center px-10 py-12">
-                <div className="mb-4 text-slate-600"><span className="text-4xl">🎬</span></div>
-                <h2 className="text-lg sm:text-xl font-extrabold text-slate-900">No movies found</h2>
-                <p className="mt-2 text-sm text-slate-600">Try searching a different title, cast, or genre.</p>
-                <div className="mt-5">
-                  <PrimaryBtn as={Link} to="/movies">
-                    Browse All Movies <IconArrow />
-                  </PrimaryBtn>
-                </div>
-              </Card>
-            </div>
-          )}
-        </div>
-      </section>
-    </main>
-  );
-}
+/* -------------------------- DELETE: movie (+ poster) ----------------------- */
+router.delete("/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!isValidId(id)) return res.status(400).json({ message: "Invalid movie id" });
 
-/* ---------- SearchBar ---------- */
-function SearchBar({ value, onChange, onClear, placeholder = "Search", className = "" }) {
-  const inputRef = useRef(null);
+    const removed = await Movie.findByIdAndDelete(id).lean();
+    if (!removed) return res.status(404).json({ message: "Movie not found" });
 
-  useEffect(() => {
-    const onKey = (e) => {
-      if (
-        e.key === "/" &&
-        document.activeElement?.tagName !== "INPUT" &&
-        document.activeElement?.tagName !== "TEXTAREA"
-      ) {
-        e.preventDefault();
-        inputRef.current?.focus();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+    if (removed.posterUrl) safeUnlink(removed.posterUrl);
 
-  return (
-    <div className={`w-full ${className}`}>
-      <Card className="px-4 py-2.5 flex items-center gap-3">
-        <span className="text-slate-500"><IconSearch className="w-5 h-5" /></span>
-        <input
-          ref={inputRef}
-          type="text"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={placeholder}
-          className="flex-1 px-2 py-1.5 outline-none bg-transparent text-sm sm:text-base placeholder:text-slate-400"
-        />
-        {value ? (
-          <GhostBtn type="button" onClick={onClear}>Clear</GhostBtn>
-        ) : (
-          <kbd className="select-none rounded-md border border-slate-300 px-2 py-1 text-[11px] text-slate-700 bg-white">/</kbd>
-        )}
-      </Card>
-    </div>
-  );
-}
+    res.json({ message: "Movie deleted", id: removed._id });
+  } catch (err) {
+    console.error("[Movies] DELETE /:id error:", err);
+    res.status(500).json({ message: "Failed to delete movie", error: err.message });
+  }
+});
 
-/* ---------- PosterBox ---------- */
-function PosterBox({ movie }) {
-  // movie.posterUrl is already rewritten in the fetch effect, but keep resolver here too
-  const src = resolvePosterUrl(movie.posterUrl) || DEFAULT_POSTER;
-  return (
-    <div className="w-full aspect-[2/3] overflow-hidden rounded-xl border border-slate-200 bg-white">
-      <img
-        src={src}
-        alt={movie.title}
-        loading="lazy"
-        className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.04]"
-        onError={(e) => (e.currentTarget.src = DEFAULT_POSTER)}
-      />
-    </div>
-  );
-}
-
-/* ---------- Debounce ---------- */
-function useDebounce(value, delay = 300) {
-  const [v, setV] = useState(value);
-  useEffect(() => {
-    const id = setTimeout(() => setV(value), delay);
-    return () => clearTimeout(id);
-  }, [value, delay]);
-  return v;
-}
+export default router;
