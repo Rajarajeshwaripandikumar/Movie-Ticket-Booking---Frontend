@@ -1,8 +1,18 @@
+# netlify.toml
 [build]
   command = "npm run build"
   publish = "dist"
 
 [build.environment]
   NODE_VERSION = "20"
-  # match your app’s code; use ONE variable only:
   VITE_API_BASE = "https://movie-ticket-booking-backend-o1m2.onrender.com/api"
+
+# If you ever add Netlify Functions later:
+#[functions]
+#  node_bundler = "esbuild"
+
+# Optional: force SPA-style routing for React/Vite apps
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
