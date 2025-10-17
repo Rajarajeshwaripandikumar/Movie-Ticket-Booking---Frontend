@@ -1,7 +1,6 @@
 // frontend/src/pages/AdminAnalytics.jsx — Walmart Style (Blue, Rounded, Clean)
 import React, { useState, useEffect, useRef } from "react";
 import {
-  CalendarRange,
   TrendingUp,
   TrendingDown,
   CircleDollarSign,
@@ -49,17 +48,13 @@ function resolveApiBase() {
 const API_BASE = resolveApiBase();
 
 /* ----------------------------- Walmart tokens ----------------------------- */
-const BLUE = "#0071DC";      // Walmart Blue
-const BLUE_DARK = "#0654BA"; // Hover/active
-const INK = "#0F172A";       // Slate-900
-const SOFT = "#94A3B8";      // Slate-400 for ticks/grid
+const BLUE = "#0071DC";
+const BLUE_DARK = "#0654BA";
+const SOFT = "#94A3B8";
 
 /* --------------------------- Walmart primitives --------------------------- */
 const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
-  <Tag
-    className={`bg-white border border-slate-200 rounded-2xl shadow-sm ${className}`}
-    {...rest}
-  >
+  <Tag className={`bg-white border border-slate-200 rounded-2xl shadow-sm ${className}`} {...rest}>
     {children}
   </Tag>
 );
@@ -127,14 +122,8 @@ const formatInt = (n) =>
   Number.isFinite(+n) ? Math.round(+n).toLocaleString("en-IN") : "0";
 
 function Stat({ icon: Icon, label, value, delta }) {
-  const DeltaIcon =
-    delta == null ? null : delta >= 0 ? TrendingUp : TrendingDown;
-  const deltaColor =
-    delta == null
-      ? ""
-      : delta >= 0
-      ? "text-emerald-600 bg-emerald-50"
-      : "text-rose-600 bg-rose-50";
+  const DeltaIcon = delta == null ? null : delta >= 0 ? TrendingUp : TrendingDown;
+  const deltaColor = delta == null ? "" : delta >= 0 ? "text-emerald-600 bg-emerald-50" : "text-rose-600 bg-rose-50";
   return (
     <Card className="p-4">
       <div className="flex items-center justify-between">
@@ -148,9 +137,7 @@ function Stat({ icon: Icon, label, value, delta }) {
           </div>
         </div>
         {DeltaIcon && (
-          <span
-            className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full ${deltaColor}`}
-          >
+          <span className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full ${deltaColor}`}>
             <DeltaIcon className="h-3.5 w-3.5" />
             <span className="font-semibold">{Math.abs(delta)}%</span>
           </span>
@@ -160,36 +147,17 @@ function Stat({ icon: Icon, label, value, delta }) {
   );
 }
 
-const HeaderBar = ({
-  range,
-  setRange,
-  onRefresh,
-  onExport,
-  onToggleAlerts,
-  onToggleFilters,
-}) => (
+const HeaderBar = ({ range, setRange, onRefresh, onExport, onToggleAlerts, onToggleFilters }) => (
   <div className="space-y-3">
-    <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">
-      Admin Analytics
-    </h1>
+    <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">Admin Analytics</h1>
     <Card className="p-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="text-sm text-slate-600">
-          Revenue, usage, and theater performance at a glance.
-        </div>
+        <div className="text-sm text-slate-600">Revenue, usage, and theater performance at a glance.</div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
-          <Pill onClick={onToggleAlerts}>
-            <Bell className="h-4 w-4" /> Alerts
-          </Pill>
-          <Pill onClick={onToggleFilters}>
-            <Filter className="h-4 w-4" /> Filter
-          </Pill>
-          <Primary onClick={onExport}>
-            <Download className="h-4 w-4" /> Export CSV
-          </Primary>
-          <Pill onClick={onRefresh}>
-            <RefreshCcw className="h-4 w-4" /> Refresh
-          </Pill>
+          <Pill onClick={onToggleAlerts}><Bell className="h-4 w-4" /> Alerts</Pill>
+          <Pill onClick={onToggleFilters}><Filter className="h-4 w-4" /> Filter</Pill>
+          <Primary onClick={onExport}><Download className="h-4 w-4" /> Export CSV</Primary>
+          <Pill onClick={onRefresh}><RefreshCcw className="h-4 w-4" /> Refresh</Pill>
           <Segments value={range} onChange={setRange} />
         </div>
       </div>
@@ -221,23 +189,21 @@ function SimpleTable({ title, rows, columns }) {
           <thead>
             <tr className="text-left text-slate-600">
               {columns.map((c) => (
-                <th key={c.key} className="py-2 font-semibold">
-                  {c.label}
-                </th>
+                <th key={c.key} className="py-2 font-semibold">{c.label}</th>
               ))}
             </tr>
           </thead>
-          <tbody>
-            {rows.map((r, i) => (
-              <tr key={i} className="border-t border-slate-200">
-                {columns.map((c) => (
-                  <td key={c.key} className="py-2">
-                    {c.render ? c.render(r[c.key], r) : r[c.key]}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i} className="border-t border-slate-200">
+              {columns.map((c) => (
+                <td key={c.key} className="py-2">
+                  {c.render ? c.render(r[c.key], r) : r[c.key]}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
         </table>
       </div>
     </Card>
@@ -255,8 +221,7 @@ const EmptyMini = ({ label }) => (
 
 /* ----------------------------- API helpers ---------------------------- */
 const authHeaders = () => {
-  const token =
-    localStorage.getItem("token") || localStorage.getItem("jwt") || "";
+  const token = localStorage.getItem("token") || localStorage.getItem("jwt") || "";
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
@@ -270,9 +235,7 @@ async function getJSON(path, params, signal) {
   });
   if (!res.ok) {
     let detail = "";
-    try {
-      detail = (await res.json())?.message || "";
-    } catch {}
+    try { detail = (await res.json())?.message || ""; } catch {}
     const base = `HTTP ${res.status} ${res.statusText}`;
     throw new Error(detail ? `${base} — ${detail}` : base);
   }
@@ -284,20 +247,17 @@ const fmtDay = (d) => {
   const dt = new Date(d);
   if (isNaN(dt)) return String(d || "");
   return dt
-    .toLocaleDateString("en-GB", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-    })
+    .toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })
     .replace(/ /g, "-");
 };
 
+// Keep both pretty label (for charts) and raw ISO day (for CSV)
 const toRevenueDaily = (arr = []) =>
   arr.map((d, i) => {
     const iso = d?.date?.slice?.(0, 10) || "";
     return {
-      day: fmtDay(iso || `D${i + 1}`), // pretty label for charts
-      dayISO: iso,                     // raw ISO for CSV
+      day: fmtDay(iso || `D${i + 1}`),
+      dayISO: iso,
       revenue: Number(d.totalRevenue ?? 0),
       bookings: Number(d.bookings ?? 0),
     };
@@ -336,22 +296,12 @@ function buildSummary(summaryData = [], dauData = [], revenue7 = 0) {
     },
     { revenue: 0, orders: 0 }
   );
-  const aov = totals.orders
-    ? Math.round(totals.revenue / totals.orders)
-    : 0;
+  const aov = totals.orders ? Math.round(totals.revenue / totals.orders) : 0;
   const avgDau = dauData.length
-    ? Math.round(
-        dauData.reduce((s, d) => s + (Number(d.dau ?? 0)), 0) / dauData.length
-      )
+    ? Math.round(dauData.reduce((s, d) => s + (Number(d.dau ?? 0)), 0) / dauData.length)
     : 0;
 
-  return {
-    revenue30d: totals.revenue,
-    orders: totals.orders,
-    aov,
-    revenue7d: revenue7,
-    dau: avgDau,
-  };
+  return { revenue30d: totals.revenue, orders: totals.orders, aov, revenue7d: revenue7, dau: avgDau };
 }
 
 /* -------------------------------- View -------------------------------- */
@@ -360,13 +310,7 @@ export default function AdminAnalyticsDashboard() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const [summary, setSummary] = useState({
-    revenue30d: 0,
-    orders: 0,
-    aov: 0,
-    revenue7d: 0,
-    dau: 0,
-  });
+  const [summary, setSummary] = useState({ revenue30d: 0, orders: 0, aov: 0, revenue7d: 0, dau: 0 });
   const [revenueDaily, setRevenueDaily] = useState([]);
   const [dauDaily, setDauDaily] = useState([]);
   const [topMovies, setTopMovies] = useState([]);
@@ -398,10 +342,7 @@ export default function AdminAnalyticsDashboard() {
       const dauDailyT = toDauDaily(dau);
       const moviesT = toMovies(movies);
       const occT = toTheaterOcc(occ);
-      const revenue7 = (bookSum7 || []).reduce(
-        (s, d) => s + Number(d.revenue ?? 0),
-        0
-      );
+      const revenue7 = (bookSum7 || []).reduce((s, d) => s + Number(d.revenue ?? 0), 0);
       const kpis = buildSummary(bookSum, dau, revenue7);
 
       setRevenueDaily(revenueDailyT);
@@ -429,50 +370,39 @@ export default function AdminAnalyticsDashboard() {
       const s = String(v);
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
-    // Wrap text so Excel shows it immediately and never hides as ####
-    const excelText = (s) => (s ? `="${String(s)}"` : "");
+    // Export date as TEXT so Excel shows it immediately (no ##### and no auto formatting)
+    const asExcelText = (s) => (s ? `'${String(s)}` : "");
 
     const makeCSV = (title, headers, rows) => {
       let csv = `${title}\n${headers.join(",")}\n`;
-      csv += rows
-        .map((r) => headers.map((h) => csvEscape(r[h] ?? "")).join(","))
-        .join("\n");
+      csv += rows.map((r) => headers.map((h) => csvEscape(r[h] ?? "")).join(",")).join("\n");
       csv += "\n\n";
       return csv;
     };
 
-    // Build sections with ISO date column for Excel
+    // Build sections with ISO date column (text) + pretty label
     const revForCsv = revenueDaily.map((r) => ({
-      day: excelText(r.dayISO || r.day),
+      date: asExcelText(r.dayISO || r.day),
+      day: r.day,
       revenue: r.revenue,
       bookings: r.bookings,
     }));
     const dauForCsv = dauDaily.map((r) => ({
-      day: excelText(r.dayISO || r.day),
+      date: asExcelText(r.dayISO || r.day),
+      day: r.day,
       users: r.users,
     }));
 
     const sections = [];
-    sections.push(
-      makeCSV("Revenue (Daily)", ["day", "revenue", "bookings"], revForCsv)
-    );
-    sections.push(
-      makeCSV("Active Users (Daily)", ["day", "users"], dauForCsv)
-    );
-    sections.push(
-      makeCSV("Theater Occupancy", ["name", "occupancy"], theaterOcc)
-    );
-    sections.push(
-      makeCSV("Top Movies", ["title", "bookings", "revenue", "seatsBooked"], topMovies)
-    );
+    sections.push(makeCSV("Revenue (Daily)", ["date", "day", "revenue", "bookings"], revForCsv));
+    sections.push(makeCSV("Active Users (Daily)", ["date", "day", "users"], dauForCsv));
+    sections.push(makeCSV("Theater Occupancy", ["name", "occupancy"], theaterOcc));
+    sections.push(makeCSV("Top Movies", ["title", "bookings", "revenue", "seatsBooked"], topMovies));
 
     const blob = new Blob(sections, { type: "text/csv;charset=utf-8;" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.setAttribute(
-      "download",
-      `analytics_${range}_${new Date().toISOString().slice(0, 10)}.csv`
-    );
+    link.setAttribute("download", `analytics_${range}_${new Date().toISOString().slice(0, 10)}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -491,36 +421,15 @@ export default function AdminAnalyticsDashboard() {
         />
 
         {error && (
-          <Card className="p-3 bg-rose-50 border-rose-200 text-rose-700 font-semibold">
-            {error}
-          </Card>
+          <Card className="p-3 bg-rose-50 border-rose-200 text-rose-700 font-semibold">{error}</Card>
         )}
 
         {/* KPIs */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-          <Stat
-            icon={CircleDollarSign}
-            label={`Revenue (${range})`}
-            value={formatCurrency(summary.revenue30d)}
-            delta={0}
-          />
-          <Stat
-            icon={ShoppingBag}
-            label="Orders"
-            value={formatInt(summary.orders)}
-            delta={0}
-          />
-          <Stat
-            icon={Gauge}
-            label="Avg. Order Value"
-            value={formatCurrency(summary.aov)}
-            delta={0}
-          />
-          <Stat
-            icon={BarChart3}
-            label="Revenue (7d)"
-            value={formatCurrency(summary.revenue7d)}
-          />
+          <Stat icon={CircleDollarSign} label={`Revenue (${range})`} value={formatCurrency(summary.revenue30d)} delta={0} />
+          <Stat icon={ShoppingBag} label="Orders" value={formatInt(summary.orders)} delta={0} />
+          <Stat icon={Gauge} label="Avg. Order Value" value={formatCurrency(summary.aov)} delta={0} />
+          <Stat icon={BarChart3} label="Revenue (7d)" value={formatCurrency(summary.revenue7d)} />
           <Stat icon={Users} label="Avg DAU" value={formatInt(summary.dau)} />
         </div>
 
@@ -530,20 +439,13 @@ export default function AdminAnalyticsDashboard() {
             <ChartCard
               title="Daily Revenue"
               subtitle="Aggregate revenue per day"
-              right={
-                <Pill onClick={() => loadData(range)}>
-                  <RefreshCcw className="h-3.5 w-3.5" /> Refresh
-                </Pill>
-              }
+              right={<Pill onClick={() => loadData(range)}><RefreshCcw className="h-3.5 w-3.5" /> Refresh</Pill>}
             >
               {loading ? (
                 <EmptyMini label="Loading revenue..." />
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart
-                    data={revenueDaily}
-                    margin={{ top: 10, right: 20, left: 0, bottom: 0 }}
-                  >
+                  <AreaChart data={revenueDaily} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
                     <defs>
                       <linearGradient id="revFill" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="0%" stopColor={BLUE} stopOpacity={0.18} />
@@ -552,24 +454,9 @@ export default function AdminAnalyticsDashboard() {
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke={SOFT} opacity={0.45} />
                     <XAxis dataKey="day" tick={{ fontSize: 12, fill: SOFT }} stroke={SOFT} />
-                    <YAxis
-                      tick={{ fontSize: 12, fill: SOFT }}
-                      domain={["dataMin", "auto"]}
-                      stroke={SOFT}
-                    />
-                    <Tooltip
-                      formatter={(v, k) =>
-                        k === "revenue" ? formatCurrency(v) : formatInt(v)
-                      }
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="revenue"
-                      stroke={BLUE}
-                      fill="url(#revFill)"
-                      strokeWidth={2}
-                      activeDot={{ r: 4 }}
-                    />
+                    <YAxis tick={{ fontSize: 12, fill: SOFT }} domain={["dataMin", "auto"]} stroke={SOFT} />
+                    <Tooltip formatter={(v, k) => (k === "revenue" ? formatCurrency(v) : formatInt(v))} />
+                    <Area type="monotone" dataKey="revenue" stroke={BLUE} fill="url(#revFill)" strokeWidth={2} activeDot={{ r: 4 }} />
                   </AreaChart>
                 </ResponsiveContainer>
               )}
@@ -582,27 +469,12 @@ export default function AdminAnalyticsDashboard() {
                 <EmptyMini label="Loading users..." />
               ) : dauDaily && dauDaily.length ? (
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart
-                    data={dauDaily}
-                    margin={{ top: 10, right: 20, left: 0, bottom: 0 }}
-                  >
+                  <LineChart data={dauDaily} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke={SOFT} opacity={0.45} />
                     <XAxis dataKey="day" tick={{ fontSize: 12, fill: SOFT }} stroke={SOFT} />
-                    <YAxis
-                      allowDecimals={false}
-                      tick={{ fontSize: 12, fill: SOFT }}
-                      domain={[0, "auto"]}
-                      stroke={SOFT}
-                    />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: SOFT }} domain={[0, "auto"]} stroke={SOFT} />
                     <Tooltip formatter={(v) => formatInt(v)} />
-                    <Line
-                      type="monotone"
-                      dataKey="users"
-                      stroke={BLUE}
-                      strokeWidth={2}
-                      dot={false}
-                      activeDot={{ r: 4 }}
-                    />
+                    <Line type="monotone" dataKey="users" stroke={BLUE} strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
                   </LineChart>
                 </ResponsiveContainer>
               ) : (
@@ -618,38 +490,15 @@ export default function AdminAnalyticsDashboard() {
             title="Theater Occupancy (Avg)"
             rows={theaterOcc}
             columns={[
-              {
-                key: "name",
-                label: "Theater",
-                render: (v) => (
-                  <div className="flex items-center gap-2">
-                    <Building2 className="h-4 w-4" aria-hidden="true" />
-                    <span>{v}</span>
-                  </div>
-                ),
-              },
-              {
-                key: "occupancy",
-                label: "Occupancy",
-                render: (v) => `${formatInt(v)}%`,
-              },
+              { key: "name", label: "Theater", render: (v) => (<div className="flex items-center gap-2"><Building2 className="h-4 w-4" aria-hidden="true" /><span>{v}</span></div>) },
+              { key: "occupancy", label: "Occupancy", render: (v) => `${formatInt(v)}%` },
             ]}
           />
-
           <SimpleTable
             title="Popular Movies"
             rows={topMovies}
             columns={[
-              {
-                key: "title",
-                label: "Movie",
-                render: (v) => (
-                  <div className="flex items-center gap-2">
-                    <Film className="h-4 w-4" aria-hidden="true" />
-                    <span>{v}</span>
-                  </div>
-                ),
-              },
+              { key: "title", label: "Movie", render: (v) => (<div className="flex items-center gap-2"><Film className="h-4 w-4" aria-hidden="true" /><span>{v}</span></div>) },
               { key: "bookings", label: "Bookings", render: (v) => formatInt(v) },
               { key: "revenue", label: "Revenue", render: (v) => formatCurrency(v) },
             ]}
