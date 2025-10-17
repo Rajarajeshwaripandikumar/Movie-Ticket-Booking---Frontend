@@ -131,6 +131,7 @@ export default function AdminTheaters() {
   const [imageFile, setImageFile] = useState(null);
   const [preview, setPreview] = useState("");
   const [previewKey, setPreviewKey] = useState(0);
+  const fileRef = useRef(null);
 
   // UI
   const [creating, setCreating] = useState(false);
@@ -174,8 +175,8 @@ export default function AdminTheaters() {
   }
 
   /* ---------------------- Image Picker ---------------------- */
-  function onPickFile(e) {
-    const file = e.target.files?.[0];
+  function onPickFile(eOrFile) {
+    const file = eOrFile?.target?.files?.[0] ?? eOrFile;
     if (!file) return;
 
     if (!["image/jpeg", "image/png", "image/webp", "image/gif"].includes(file.type)) {
@@ -220,6 +221,7 @@ export default function AdminTheaters() {
       return next;
     });
   }
+
   /* ---------------------- Create ---------------------- */
   async function createTheater(e) {
     e.preventDefault();
@@ -410,13 +412,31 @@ export default function AdminTheaters() {
                       className="w-full h-full object-cover"
                     />
                   </div>
+
+                  {/* Hidden input + button trigger */}
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      onPickFile(f);
+                      e.target.value = ""; // allow picking same file twice
+                    }}
+                  />
+
                   <div className="flex flex-col gap-1">
-                    <label className="inline-flex items-center gap-2 cursor-pointer">
-                      <input type="file" accept="image/*" onChange={onPickFile} className="hidden" />
-                      <SecondaryBtn className="px-3 py-1.5">
-                        <ImageIcon className="h-4 w-4" /> Choose Image
-                      </SecondaryBtn>
-                    </label>
+                    <SecondaryBtn
+                      type="button"
+                      className="px-3 py-1.5"
+                      onClick={() => {
+                        if (fileRef.current) fileRef.current.value = "";
+                        fileRef.current?.click();
+                      }}
+                    >
+                      <ImageIcon className="h-4 w-4" /> Choose Image
+                    </SecondaryBtn>
                     <span className="text-xs text-slate-500">JPG/PNG/WEBP/GIF · up to 3MB.</span>
                   </div>
                 </div>
@@ -426,7 +446,11 @@ export default function AdminTheaters() {
               <div className="flex gap-2 justify-between items-center pt-1">
                 <div className="flex gap-2">
                   <PrimaryBtn disabled={creating} type="submit">
-                    {creating ? "Saving..." : (<><PlusCircle className="h-4 w-4" /> Create Theater</>)}
+                    {creating ? "Saving..." : (
+                      <>
+                        <PlusCircle className="h-4 w-4" /> Create Theater
+                      </>
+                    )}
                   </PrimaryBtn>
                   <PrimaryBtn
                     disabled={updating}
@@ -434,7 +458,11 @@ export default function AdminTheaters() {
                     onClick={updateTheaterById}
                     className="bg-[#0A66C2] hover:bg-[#0956A3]"
                   >
-                    {updating ? "Updating..." : (<><PencilLine className="h-4 w-4" /> Update</>)}
+                    {updating ? "Updating..." : (
+                      <>
+                        <PencilLine className="h-4 w-4" /> Update
+                      </>
+                    )}
                   </PrimaryBtn>
                 </div>
                 <SecondaryBtn type="button" onClick={() => { resetForm(); setMsg(""); }}>
@@ -454,7 +482,10 @@ export default function AdminTheaters() {
             ) : (
               <ul className="space-y-3 max-h-[60vh] overflow-auto pr-1">
                 {theaters.map((t) => (
-                  <li key={t._id} className={`flex justify-between items-center border border-slate-200 bg-white rounded-2xl p-3 shadow-sm ${selectedId === t._id ? "ring-2 ring-[#0071DC]" : ""}`}>
+                  <li
+                    key={t._id}
+                    className={`flex justify-between items-center border border-slate-200 bg-white rounded-2xl p-3 shadow-sm ${selectedId === t._id ? "ring-2 ring-[#0071DC]" : ""}`}
+                  >
                     <div className="flex items-center gap-3">
                       <div className="w-14 h-14 rounded-xl overflow-hidden bg-slate-200 border border-slate-200 shadow-sm">
                         <img
@@ -466,12 +497,20 @@ export default function AdminTheaters() {
                       </div>
                       <div>
                         <div className="font-extrabold text-slate-900">{t.name}</div>
-                        <div className="text-sm text-slate-700">{t.city} — {t.address || "No address"}</div>
-                        <div className="text-xs text-slate-500 mt-0.5">{Array.isArray(t.amenities) && t.amenities.length ? t.amenities.join(" • ") : "No amenities"}</div>
+                        <div className="text-sm text-slate-700">
+                          {t.city} — {t.address || "No address"}
+                        </div>
+                        <div className="text-xs text-slate-500 mt-0.5">
+                          {Array.isArray(t.amenities) && t.amenities.length
+                            ? t.amenities.join(" • ")
+                            : "No amenities"}
+                        </div>
                       </div>
                     </div>
                     <div className="flex gap-2">
-                      <PrimaryBtn onClick={() => fillFromTheater(t)} className="px-3 py-1 text-sm">Use</PrimaryBtn>
+                      <PrimaryBtn onClick={() => fillFromTheater(t)} className="px-3 py-1 text-sm">
+                        Use
+                      </PrimaryBtn>
                       <SecondaryBtn onClick={() => deleteTheater(t._id)} className="px-3 py-1 text-sm" title="Delete theater">
                         <Trash2 className="h-4 w-4" /> Delete
                       </SecondaryBtn>
