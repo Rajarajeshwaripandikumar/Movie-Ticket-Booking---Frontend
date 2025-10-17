@@ -47,7 +47,7 @@ export default function Checkout() {
 
   const seats = state?.seats || stored?.seats || [];
   const basePrice = state?.basePrice ?? stored?.basePrice ?? 0;
-  const amount = state?.amount ?? stored?.amount ?? seats.length * basePrice;
+  const amount = state?.amount ?? stored?.amount ?? seats.length * basePrice; // base tickets total
 
   /* ---------- local state ---------- */
   const [loading, setLoading] = useState(false);
@@ -58,7 +58,7 @@ export default function Checkout() {
   // Fee/tax (example; replace with backend values if available)
   const BOOKING_FEE_RATE = 0.245;
   const bookingCharge = +(amount * BOOKING_FEE_RATE).toFixed(2);
-  const totalToPay = +(amount + bookingCharge).toFixed(2);
+  const totalToPay = +(amount + bookingCharge).toFixed(2); // ✅ this is what we will charge
 
   /* ---------- route guard ---------- */
   useEffect(() => {
@@ -81,15 +81,23 @@ export default function Checkout() {
     run();
   }, [showtimeId]);
 
-  /* ---------- STEP 1: create payment order ---------- */
+  /* ---------- STEP 1: create payment order (send FINAL total) ---------- */
   useEffect(() => {
     const createOrder = async () => {
       try {
         setLoading(true);
-        const { data } = await api.post("/payments/create-order", {
-          amount, // server should convert to paise
+        const payload = {
+          // 👇 IMPORTANT: send the final total so Razorpay popup matches UI
+          amount: totalToPay,        // server converts to paise
           showtimeId,
-        });
+          // If you switch to server-side calc later:
+          // base, convFee, gst
+          // base: amount,
+          // convFee: bookingCharge,
+          // gst: 0,
+        };
+        console.log("[Checkout] Creating order with ₹", totalToPay);
+        const { data } = await api.post("/payments/create-order", payload);
         setOrder(data);
       } catch (err) {
         console.error("❌ create-order failed:", err);
@@ -99,7 +107,8 @@ export default function Checkout() {
       }
     };
     if (showtimeId && seats.length) createOrder();
-  }, [showtimeId, seats.length, amount]);
+    // include totalToPay so an amount change re-creates order
+  }, [showtimeId, seats.length, totalToPay]);
 
   /* ---------- keep seat lock alive on checkout ---------- */
   useEffect(() => {
@@ -169,7 +178,7 @@ export default function Checkout() {
 
     const options = {
       key: import.meta.env.VITE_RAZORPAY_KEY_ID,
-      amount: order.amount,
+      amount: order.amount,          // already in paise from server
       currency: order.currency,
       name: "Cinema by Site",
       description: "Movie Ticket Booking",
@@ -219,14 +228,14 @@ export default function Checkout() {
           }
           setMsg("✅ Payment verified! Confirming your booking...");
 
-          // Confirm booking (idempotent)
+          // Confirm booking (idempotent) — send the same final amount used for payment
           try {
             const confirmRes = await api.post(
               "/bookings/confirm",
               {
                 showtimeId,
                 seats,
-                amount,
+                amount: totalToPay, // ✅ keep consistent with /create-order
                 paymentProvider: "razorpay",
                 paymentOrderId: response.razorpay_order_id,
                 paymentId: response.razorpay_payment_id,
@@ -270,7 +279,7 @@ export default function Checkout() {
     const rzp = new window.Razorpay(options);
     rzp.on("payment.failed", () => setMsg("❌ Payment failed or cancelled."));
     rzp.open();
-  }, [order, showtimeId, seats, amount, navigate]);
+  }, [order, showtimeId, seats, totalToPay, navigate]);
 
   /* ---------- UI ---------- */
   if (!showtimeId || seats.length === 0) return <Loader text="Returning to seat selection..." />;
