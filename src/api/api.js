@@ -86,11 +86,12 @@ api.interceptors.request.use((config) => {
   console.log(`[API] ${method} → ${previewUrl}`, config.params || "");
 
   // Rogue POST detector (interceptor-level)
-  const isPost = method === "POST";
   const urlLower = (config.url || "").toLowerCase();
-  const isTheaterPost = /(^|\/)theaters(?:$|\/|\?)/.test(urlLower);
+  // ✅ Only flag POSTs to the **root** theaters collection (not nested routes like /:id/screens)
+  const isRootTheatersPost =
+    method === "POST" && /^\/?theaters(\?.*)?$/i.test(urlLower);
   const isTagged = config.headers?.["X-Intent"] === "create-theater";
-  if (isPost && isTheaterPost && !isTagged) {
+  if (isRootTheatersPost && !isTagged) {
     console.warn("⚠️  Rogue POST /theaters detected (no X-Intent). Stack:");
     // eslint-disable-next-line no-console
     console.trace();
@@ -111,7 +112,6 @@ api.interceptors.response.use(
 
     // 🔒 Handle 401s explicitly (optional auto-logout hook)
     if (status === 401) {
-      // Broadcast so your AuthContext can listen and sign out if desired
       try {
         window.dispatchEvent(new CustomEvent("api:unauthorized", { detail: cfg?.url }));
       } catch {}
@@ -149,7 +149,8 @@ api.interceptors.response.use(
 const __origPost = api.post.bind(api);
 api.post = function patchedPost(url, ...rest) {
   const u = (url || "").toString().replace(/^\//, "");
-  if (u.startsWith("theaters")) {
+  // ✅ Only warn when posting to the root collection "theaters" (allow nested /:id/screens)
+  if (/^theaters(\?.*)?$/i.test(u)) {
     const cfg = rest[1] || rest[2] || {};
     const headers = (cfg && cfg.headers) || {};
     const tagged = headers["X-Intent"] === "create-theater";
