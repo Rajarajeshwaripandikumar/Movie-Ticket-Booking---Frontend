@@ -1,8 +1,8 @@
 [build]
-  command = "npm ci && npm run build"
+  command = "npm run build"
   publish = "dist"
 
 [build.environment]
-  NODE_VERSION = "20.11.1"          # or match what you use locally on Node 20
-  NPM_FLAGS = "--include=optional"  # force optional deps (rollup binary)
-  NPM_CONFIG_OPTIONAL = "true"
+  NODE_VERSION = "20"
+  # Your app needs this for images:
+  VITE_API_BASE = "https://movie-ticket-booking-backend-o1m2.onrender.com/api"
