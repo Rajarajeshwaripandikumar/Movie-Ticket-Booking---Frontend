@@ -22,7 +22,7 @@ import {
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8080/api";
 const FILES_BASE = API_BASE.replace(/\/api\/?$/, "");
 
-// Inline fallback
+// Inline fallback image
 const DEFAULT_IMG =
   "data:image/svg+xml;utf8," +
   encodeURIComponent(`
@@ -58,7 +58,7 @@ function Field({ as = "input", icon: Icon, className = "", label, ...props }) {
 function PrimaryBtn({ children, className = "", type = "button", ...props }) {
   return (
     <button
-      type={type} // default to "button" to avoid accidental submits
+      type={type} // default = button
       className={`inline-flex items-center justify-center gap-2 rounded-full px-5 py-2 font-semibold text-white bg-[#0071DC] hover:bg-[#0654BA] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071DC] disabled:opacity-60 ${className}`}
       {...props}
     >
@@ -70,7 +70,7 @@ function PrimaryBtn({ children, className = "", type = "button", ...props }) {
 function SecondaryBtn({ children, className = "", type = "button", ...props }) {
   return (
     <button
-      type={type} // default to "button" to avoid accidental submits
+      type={type} // default = button
       className={`inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 font-semibold border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071DC] ${className}`}
       {...props}
     >
@@ -239,17 +239,15 @@ export default function AdminTheaters() {
     });
   }
 
-  /* Create / Update / Delete */
-  async function createTheater(e) {
-    e.preventDefault();
-
-    if (submittingRef.current) return; // 🛑 ignore double-submits
+  /* ------------------- Create / Update / Delete ------------------- */
+  async function createTheater() {
+    if (submittingRef.current) return; // prevent double-submits
 
     if (!name.trim() || !city.trim()) {
       setMsg("Name and City are required"); setMsgType("error"); return;
     }
 
-    // Client-side duplicate guard (prevents 409 spam)
+    // Client-side duplicate guard to avoid 409
     const exists = theaters.some(t =>
       (t.name || "").trim().toLowerCase() === name.trim().toLowerCase() &&
       (t.city || "").trim().toLowerCase() === city.trim().toLowerCase()
@@ -277,7 +275,7 @@ export default function AdminTheaters() {
       setMsgType("success");
       resetForm();
     } catch (err) {
-      const m = err?.response?.data?.message || err.message;
+      const m = err?.response?.data?.error || err?.response?.data?.message || err.message;
       setMsg("❌ Create failed: " + m);
       setMsgType("error");
     } finally {
@@ -309,7 +307,7 @@ export default function AdminTheaters() {
       setOriginalAmenities(updated.amenities || []);
       setAmenitiesDirty(false);
     } catch (err) {
-      const m = err?.response?.data?.message || err.message;
+      const m = err?.response?.data?.error || err?.response?.data?.message || err.message;
       setMsg("❌ Update failed: " + m);
       setMsgType("error");
     } finally {
@@ -326,7 +324,7 @@ export default function AdminTheaters() {
       setMsg("🗑️ Theater deleted");
       setMsgType("info");
     } catch (err) {
-      const m = err?.response?.data?.message || err.message;
+      const m = err?.response?.data?.error || err?.response?.data?.message || err.message;
       setMsg("❌ Delete failed: " + m);
       setMsgType("error");
     }
@@ -355,6 +353,14 @@ export default function AdminTheaters() {
     setPreviewKey((k) => k + 1);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
+
+  /* Submit gate — only honor Create button submits */
+  const onFormSubmit = (e) => {
+    e.preventDefault();
+    const action = e.nativeEvent?.submitter?.dataset?.action;
+    if (action === "create") createTheater();
+    // ignore any other submitters
+  };
 
   /* ------------------- Render ------------------- */
   return (
@@ -387,6 +393,46 @@ export default function AdminTheaters() {
         )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          {/* ---------------- Image picker (moved OUTSIDE the form) ---------------- */}
+          <Card className="p-5">
+            <h2 className="text-lg font-extrabold tracking-tight border-b border-slate-200 pb-2 mb-4 flex items-center gap-2">
+              <ImageIcon className="h-5 w-5" /> Theater Image
+            </h2>
+            <div className="flex items-center gap-4">
+              <div className="w-24 h-24 rounded-xl overflow-hidden bg-slate-200 border border-slate-200 shadow-sm">
+                <img
+                  key={previewKey}
+                  src={preview || DEFAULT_IMG}
+                  onError={(e) => (e.currentTarget.src = DEFAULT_IMG)}
+                  alt="preview"
+                  className="w-full h-full object-cover"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <input
+                  ref={fileInputRef}
+                  id="theaterImage"
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  onChange={onPickFile}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 font-semibold border border-slate-300 bg-white hover:bg-slate-50"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation(); // never submit
+                    fileInputRef.current?.click();
+                  }}
+                >
+                  <ImageIcon className="h-4 w-4" /> Choose Image
+                </button>
+                <span className="text-xs text-slate-500">JPG/PNG/WEBP/GIF · up to 3MB.</span>
+              </div>
+            </div>
+          </Card>
+
           {/* ---------------- Form ---------------- */}
           <Card className="p-5">
             <h2 className="text-lg font-extrabold tracking-tight border-b border-slate-200 pb-2 mb-4 flex items-center gap-2">
@@ -394,7 +440,7 @@ export default function AdminTheaters() {
             </h2>
 
             <form
-              onSubmit={createTheater}
+              onSubmit={onFormSubmit}
               className="space-y-4"
               data-netlify="false"
               onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); }}
@@ -446,44 +492,10 @@ export default function AdminTheaters() {
                 />
               </div>
 
-              {/* Image */}
-              <div className="space-y-2">
-                <label className="block text-[12px] font-semibold text-slate-600">Theater Image</label>
-                <div className="flex items-center gap-4">
-                  <div className="w-20 h-20 rounded-xl overflow-hidden bg-slate-200 border border-slate-200 shadow-sm">
-                    <img
-                      key={previewKey}
-                      src={preview || DEFAULT_IMG}
-                      onError={(e) => (e.currentTarget.src = DEFAULT_IMG)}
-                      alt="preview"
-                      className="w-full h-full object-cover"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <input
-                      ref={fileInputRef}
-                      id="theaterImage"
-                      type="file"
-                      accept="image/png,image/jpeg,image/webp,image/gif"
-                      onChange={onPickFile}
-                      className="hidden"
-                    />
-                    <SecondaryBtn
-                      type="button"
-                      className="px-3 py-1.5"
-                      onClick={() => fileInputRef.current?.click()}
-                    >
-                      <ImageIcon className="h-4 w-4" /> Choose Image
-                    </SecondaryBtn>
-                    <span className="text-xs text-slate-500">JPG/PNG/WEBP/GIF · up to 3MB.</span>
-                  </div>
-                </div>
-              </div>
-
               {/* Buttons */}
               <div className="flex gap-2 justify-between items-center pt-1">
                 <div className="flex gap-2">
-                  <PrimaryBtn disabled={loading} type="submit">
+                  <PrimaryBtn disabled={loading} type="submit" data-action="create">
                     {loading ? "Saving..." : (<><PlusCircle className="h-4 w-4" /> Create Theater</>)}
                   </PrimaryBtn>
                   <PrimaryBtn
