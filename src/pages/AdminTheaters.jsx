@@ -1,5 +1,5 @@
 // src/pages/AdminTheaters.jsx — Walmart Style (clean, rounded, blue accents)
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import api from "../api/api";
 import { useAuth } from "../context/AuthContext";
 import {
@@ -112,6 +112,12 @@ const sameStringArray = (a = [], b = []) => {
 
 const COMMON_AMENITIES = ["Parking", "Snacks", "AC", "Wheelchair", "3D", "IMAX", "Dolby Atmos"];
 
+/* Simple idempotency key generator */
+const genIdemKey = () => {
+  if (crypto && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return `idem_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+};
+
 /* -------------------------------------------------------------------------- */
 /* Component                                                                  */
 /* -------------------------------------------------------------------------- */
@@ -134,9 +140,11 @@ export default function AdminTheaters() {
   const [previewKey, setPreviewKey] = useState(0);
 
   // UI state
-  const [loading, setLoading] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [updating, setUpdating] = useState(false);
   const [msg, setMsg] = useState("");
   const [msgType, setMsgType] = useState("info");
+  const lastCreateKeyRef = useRef(null);
 
   /* Load theaters */
   useEffect(() => {
@@ -192,7 +200,6 @@ export default function AdminTheaters() {
 
     setMsg("Uploading image...");
     setMsgType("info");
-    setLoading(true);
 
     try {
       const formData = new FormData();
@@ -207,8 +214,6 @@ export default function AdminTheaters() {
     } catch (err) {
       setMsg("❌ Upload failed: " + err.message);
       setMsgType("error");
-    } finally {
-      setLoading(false);
     }
   }
 
@@ -239,15 +244,38 @@ export default function AdminTheaters() {
     setAmenitiesDirty(!sameStringArray([], originalAmenities));
   }
 
+  /* Client-side duplicate guard: same name+city */
+  const hasLocalDuplicate = (nm, ct) => {
+    const n = (nm || "").trim().toLowerCase();
+    const c = (ct || "").trim().toLowerCase();
+    return theaters.some(
+      (t) => (t.name || "").trim().toLowerCase() === n && (t.city || "").trim().toLowerCase() === c
+    );
+  };
+
   /* Create / Update / Delete */
   async function createTheater(e) {
     e.preventDefault();
+    if (creating) return; // guard
     if (!name.trim() || !city.trim()) {
       setMsg("Name and City are required");
       setMsgType("error");
       return;
     }
-    setLoading(true);
+
+    // Fast local check to avoid obvious duplicates
+    if (hasLocalDuplicate(name, city)) {
+      setMsg("⚠️ A theater with the same name & city already exists.");
+      setMsgType("error");
+      // Still refresh list in case we were out of sync
+      await loadTheaters();
+      return;
+    }
+
+    setCreating(true);
+    const idemKey = genIdemKey();
+    lastCreateKeyRef.current = idemKey;
+
     try {
       const payload = {
         name: name.trim(),
@@ -256,28 +284,50 @@ export default function AdminTheaters() {
         amenities: amenitiesList,
         imageUrl: preview,
       };
-      const res = await api.post("/theaters", payload, { params: { ts: Date.now() } });
+
+      const res = await api.post("/theaters", payload, {
+        params: { ts: Date.now() },
+        headers: { "Idempotency-Key": idemKey },
+      });
+
       const created = normalizeTheater(res.data?.data || res.data);
       setTheaters((s) => [created, ...s]);
       setMsg("✅ Theater created!");
       setMsgType("success");
       resetForm();
     } catch (err) {
+      const status = err?.response?.status;
       const m = err?.response?.data?.message || err.message;
-      setMsg("❌ Create failed: " + m);
-      setMsgType("error");
+
+      if (status === 409) {
+        // Treat as success-ish: show message and refresh list so user sees the existing one.
+        setMsg("ℹ️ Theater already exists. Showing latest list.");
+        setMsgType("info");
+        await loadTheaters();
+        // Optionally prefill form with the existing item
+        const existing = theaters.find(
+          (t) =>
+            (t.name || "").trim().toLowerCase() === name.trim().toLowerCase() &&
+            (t.city || "").trim().toLowerCase() === city.trim().toLowerCase()
+        );
+        if (existing) fillFromTheater(existing);
+      } else {
+        setMsg("❌ Create failed: " + m);
+        setMsgType("error");
+      }
     } finally {
-      setLoading(false);
+      setCreating(false);
     }
   }
 
   async function updateTheaterById() {
+    if (updating) return;
     if (!selectedId) {
       setMsg("Pick a theater from the list first.");
       setMsgType("error");
       return;
     }
-    setLoading(true);
+    setUpdating(true);
     try {
       const payload = {
         name: name.trim(),
@@ -298,7 +348,7 @@ export default function AdminTheaters() {
       setMsg("❌ Update failed: " + m);
       setMsgType("error");
     } finally {
-      setLoading(false);
+      setUpdating(false);
     }
   }
 
@@ -447,16 +497,16 @@ export default function AdminTheaters() {
               {/* Buttons */}
               <div className="flex gap-2 justify-between items-center pt-1">
                 <div className="flex gap-2">
-                  <PrimaryBtn disabled={loading} type="submit">
-                    {loading ? "Saving..." : (<><PlusCircle className="h-4 w-4" /> Create Theater</>)}
+                  <PrimaryBtn disabled={creating} type="submit">
+                    {creating ? "Saving..." : (<><PlusCircle className="h-4 w-4" /> Create Theater</>)}
                   </PrimaryBtn>
                   <PrimaryBtn
-                    disabled={loading}
+                    disabled={updating}
                     type="button"
                     onClick={updateTheaterById}
                     className="bg-[#0A66C2] hover:bg-[#0956A3]"
                   >
-                    <PencilLine className="h-4 w-4" /> Update
+                    {updating ? "Updating..." : (<><PencilLine className="h-4 w-4" /> Update</>)}
                   </PrimaryBtn>
                 </div>
                 <SecondaryBtn type="button" onClick={() => { resetForm(); setMsg(""); }}>
