@@ -6,16 +6,15 @@ import axios from "axios";
 /* -------------------------------------------------------------------------- */
 /* Base URL Setup                                                             */
 /* -------------------------------------------------------------------------- */
-// Use env var if available, fallback to Render API
 const BASE_URL =
   (import.meta.env.VITE_API_BASE || "https://movie-ticket-booking-backend-o1m2.onrender.com/api")
-    .replace(/\/+$/, ""); // remove trailing slashes
+    .replace(/\/+$/, ""); // trim trailing slashes
 
 /* -------------------------------------------------------------------------- */
 /* Axios Instance                                                             */
 /* -------------------------------------------------------------------------- */
 const api = axios.create({
-  baseURL: BASE_URL, // ✅ no trailing slash
+  baseURL: BASE_URL, // e.g., https://.../api
   timeout: 60000,
   withCredentials: false,
   headers: { "Content-Type": "application/json" },
@@ -26,30 +25,26 @@ const api = axios.create({
 /* -------------------------------------------------------------------------- */
 api.interceptors.request.use((config) => {
   try {
-    // Attach JWT if stored in localStorage
     const raw = localStorage.getItem("auth"); // { token, role, ... }
     if (raw) {
       const { token } = JSON.parse(raw) || {};
       if (token) config.headers.Authorization = `Bearer ${token}`;
     }
-  } catch {
-    /* noop */
-  }
+  } catch { /* noop */ }
 
-  // --- Debugging: Log every request (method + url) ---
+  // Debug: print every request
   const method = (config.method || "GET").toUpperCase();
   const url = `${config.baseURL}${config.url?.startsWith("/") ? "" : "/"}${config.url}`;
   console.log(`[API] ${method} → ${url}`, config.params || "");
 
-  // --- Rogue POST detector (for unwanted POST /api/theaters) ---
+  // Rogue POST detector (interceptor-level)
   const isPost = method === "POST";
   const urlLower = (config.url || "").toLowerCase();
-  const isTheaterPost = /\/?theaters(?:\?|$)/.test(urlLower);
+  const isTheaterPost = /(^|\/)theaters(?:$|\?)/.test(urlLower);
   const isTagged = config.headers?.["X-Intent"] === "create-theater";
-
   if (isPost && isTheaterPost && !isTagged) {
-    console.warn("⚠️  Rogue POST /theaters detected — likely triggered by file picker or unintended code!");
-    console.trace(); // shows where it originated in your React stack
+    console.warn("⚠️  Rogue POST /theaters detected (no X-Intent). Stack:");
+    console.trace();
   }
 
   return config;
@@ -70,7 +65,7 @@ api.interceptors.response.use(
       return Promise.reject(error);
     }
 
-    // Retry only idempotent requests
+    // Retry only idempotent requests on network/timeout
     const isIdempotent = ["GET", "HEAD", "OPTIONS"].includes(method);
     const isTimeout =
       error?.code === "ECONNABORTED" || /timeout/i.test(error?.message || "");
@@ -91,6 +86,25 @@ api.interceptors.response.use(
 );
 
 /* -------------------------------------------------------------------------- */
+/* Monkey-patch only api.post('theaters', ...) to expose accidental callers   */
+/* -------------------------------------------------------------------------- */
+const __origPost = api.post.bind(api);
+api.post = function patchedPost(url, ...rest) {
+  const u = (url || "").toString().replace(/^\//, "");
+  if (u.startsWith("theaters")) {
+    const cfg = rest[1] || rest[2] || {};
+    const headers = (cfg && cfg.headers) || {};
+    const tagged = headers["X-Intent"] === "create-theater";
+    if (!tagged) {
+      console.warn("⚠️ ROGUE api.post('theaters', ...) call detected. Stack:");
+      // eslint-disable-next-line no-console
+      console.trace();
+    }
+  }
+  return __origPost(url, ...rest);
+};
+
+/* -------------------------------------------------------------------------- */
 /* Helper to wake backend                                                     */
 /* -------------------------------------------------------------------------- */
 export async function wakeBackend() {
@@ -99,7 +113,7 @@ export async function wakeBackend() {
       fetch(`${BASE_URL}/theaters?page=1&limit=1`, { cache: "no-store" })
     );
   } catch {
-    // ignore — normal calls will proceed/retry as needed
+    // ignore
   }
 }
 
