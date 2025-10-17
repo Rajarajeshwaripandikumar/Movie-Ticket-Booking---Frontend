@@ -75,17 +75,17 @@ const normalizeScreen = (s = {}) => {
 
 async function fetchScreensForTheater(theaterId) {
   const ts = Date.now();
-  const { data } = await api.get(`/api/admin/theaters/${theaterId}/screens?ts=${ts}`);
-  const arr = Array.isArray(data) ? data : data?.data || [];
+  const { data } = await api.get(`/admin/theaters/${theaterId}/screens?ts=${ts}`);
+  const arr = Array.isArray(data) ? data : (data?.data || []);
   return arr.filter(Boolean).map(normalizeScreen);
 }
 
 async function updateScreenApi(theaterId, screenId, body) {
   try {
-    return await api.patch(`/api/admin/theaters/${theaterId}/screens/${screenId}`, body);
+    return await api.patch(`/admin/theaters/${theaterId}/screens/${screenId}`, body);
   } catch (e) {
     if (e?.response?.status === 405) {
-      return await api.put(`/api/admin/theaters/${theaterId}/screens/${screenId}`, body);
+      return await api.put(`/admin/theaters/${theaterId}/screens/${screenId}`, body);
     }
     throw e;
   }
@@ -119,11 +119,15 @@ export default function AdminScreens() {
 
   async function loadTheaters() {
     try {
-      const { data } = await api.get(`/api/admin/theaters?ts=${Date.now()}`);
-      setTheaters(data || []);
+      const { data } = await api.get(`/admin/theaters?ts=${Date.now()}`);
+      // Backend returns { ok, theaters, ... }
+      const list = Array.isArray(data) ? data : (data?.theaters || data?.data || []);
+      setTheaters(Array.isArray(list) ? list : []);
+      setMsg("");
     } catch (err) {
       setMsgType("error");
       setMsg("Failed to load theaters.");
+      setTheaters([]);
     }
   }
 
@@ -193,7 +197,7 @@ export default function AdminScreens() {
 
     try {
       if (selectedScreen === NEW) {
-        const resp = await api.post(`/api/admin/theaters/${selectedTheater}/screens`, body);
+        const resp = await api.post(`/admin/theaters/${selectedTheater}/screens`, body);
         const created = resp?.data?.data || resp?.data;
         if (created?._id) setScreens((p) => [normalizeScreen(created), ...p]);
         const list = await fetchScreensForTheater(selectedTheater);
@@ -237,7 +241,7 @@ export default function AdminScreens() {
   async function deleteTheater(id) {
     if (!confirm("Delete this theater and its screens?")) return;
     try {
-      await api.delete(`/api/admin/theaters/${id}`);
+      await api.delete(`/admin/theaters/${id}`);
       setTheaters((prev) => prev.filter((t) => t._id !== id));
       if (selectedTheater === id) {
         setSelectedTheater("");
@@ -302,7 +306,7 @@ export default function AdminScreens() {
                 onChange={(e) => setSelectedTheater(e.target.value)}
               >
                 <option value="">-- Choose a theater --</option>
-                {theaters.map((t) => (
+                {(Array.isArray(theaters) ? theaters : []).map((t) => (
                   <option key={t._id} value={t._id}>
                     {t.name} — {t.city}
                   </option>
@@ -397,7 +401,7 @@ export default function AdminScreens() {
             <Building2 className="h-5 w-5 text-[#0654BA]" /> Available Theaters
           </h2>
 
-          {theaters.length === 0 ? (
+          {(!theaters || theaters.length === 0) ? (
             <p className="text-sm text-slate-600">No theaters found.</p>
           ) : (
             <ul className="grid gap-4 sm:grid-cols-2">
