@@ -58,7 +58,7 @@ function Field({ as = "input", icon: Icon, className = "", label, ...props }) {
 function PrimaryBtn({ children, className = "", type = "button", ...props }) {
   return (
     <button
-      type={type}  // default to button to avoid accidental submits
+      type={type} // default to "button" to avoid accidental submits
       className={`inline-flex items-center justify-center gap-2 rounded-full px-5 py-2 font-semibold text-white bg-[#0071DC] hover:bg-[#0654BA] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071DC] disabled:opacity-60 ${className}`}
       {...props}
     >
@@ -70,7 +70,7 @@ function PrimaryBtn({ children, className = "", type = "button", ...props }) {
 function SecondaryBtn({ children, className = "", type = "button", ...props }) {
   return (
     <button
-      type={type}  // default to button to avoid accidental submits
+      type={type} // default to "button" to avoid accidental submits
       className={`inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 font-semibold border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071DC] ${className}`}
       {...props}
     >
@@ -112,8 +112,6 @@ const sameStringArray = (a = [], b = []) => {
   return sa.every((v, i) => v === sb[i]);
 };
 
-const COMMON_AMENITIES = ["Parking", "Snacks", "AC", "Wheelchair", "3D", "IMAX", "Dolby Atmos"];
-
 /* -------------------------------------------------------------------------- */
 /* Component                                                                  */
 /* -------------------------------------------------------------------------- */
@@ -135,6 +133,9 @@ export default function AdminTheaters() {
   const [preview, setPreview] = useState("");
   const [previewKey, setPreviewKey] = useState(0);
   const fileInputRef = useRef(null);
+
+  // Submit guard
+  const submittingRef = useRef(false);
 
   // UI state
   const [loading, setLoading] = useState(false);
@@ -237,19 +238,29 @@ export default function AdminTheaters() {
       return next;
     });
   }
-  function clearAmenities() {
-    setAmenitiesList([]);
-    setAmenitiesDirty(!sameStringArray([], originalAmenities));
-  }
 
   /* Create / Update / Delete */
   async function createTheater(e) {
     e.preventDefault();
+
+    if (submittingRef.current) return; // 🛑 ignore double-submits
+
     if (!name.trim() || !city.trim()) {
-      setMsg("Name and City are required");
+      setMsg("Name and City are required"); setMsgType("error"); return;
+    }
+
+    // Client-side duplicate guard (prevents 409 spam)
+    const exists = theaters.some(t =>
+      (t.name || "").trim().toLowerCase() === name.trim().toLowerCase() &&
+      (t.city || "").trim().toLowerCase() === city.trim().toLowerCase()
+    );
+    if (exists) {
+      setMsg("A theater with this Name + City already exists.");
       setMsgType("error");
       return;
     }
+
+    submittingRef.current = true;
     setLoading(true);
     try {
       const payload = {
@@ -271,6 +282,7 @@ export default function AdminTheaters() {
       setMsgType("error");
     } finally {
       setLoading(false);
+      submittingRef.current = false;
     }
   }
 
@@ -419,8 +431,15 @@ export default function AdminTheaters() {
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
                       e.preventDefault();
-                      addAmenity(amenityInput);
-                      setAmenityInput("");
+                      const v = amenityInput.trim();
+                      if (v) {
+                        const set = new Set(amenitiesList);
+                        set.add(v);
+                        const next = Array.from(set);
+                        setAmenitiesList(next);
+                        setAmenitiesDirty(!sameStringArray(next, originalAmenities));
+                        setAmenityInput("");
+                      }
                     }
                   }}
                   icon={ListChecks}
@@ -441,7 +460,6 @@ export default function AdminTheaters() {
                     />
                   </div>
                   <div className="flex flex-col gap-1">
-                    {/* Hidden input + button triggers it (no label-wrapping) */}
                     <input
                       ref={fileInputRef}
                       id="theaterImage"
