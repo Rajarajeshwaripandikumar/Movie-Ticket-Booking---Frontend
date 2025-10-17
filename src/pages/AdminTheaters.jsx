@@ -1,5 +1,5 @@
 // src/pages/AdminTheaters.jsx — Walmart Style (clean, rounded, blue accents)
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import api from "../api/api";
 import { useAuth } from "../context/AuthContext";
 import {
@@ -22,7 +22,7 @@ import {
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8080/api";
 const FILES_BASE = API_BASE.replace(/\/api\/?$/, "");
 
-// Inline fallback image
+// Inline fallback
 const DEFAULT_IMG =
   "data:image/svg+xml;utf8," +
   encodeURIComponent(`
@@ -110,6 +110,8 @@ const sameStringArray = (a = [], b = []) => {
   return sa.every((v, i) => v === sb[i]);
 };
 
+const COMMON_AMENITIES = ["Parking", "Snacks", "AC", "Wheelchair", "3D", "IMAX", "Dolby Atmos"];
+
 /* -------------------------------------------------------------------------- */
 /* Component                                                                  */
 /* -------------------------------------------------------------------------- */
@@ -127,21 +129,19 @@ export default function AdminTheaters() {
   const [amenitiesDirty, setAmenitiesDirty] = useState(false);
   const [amenityInput, setAmenityInput] = useState("");
 
-  // Image
-  const [imageFile, setImageFile] = useState(null);
+  // Image upload
   const [preview, setPreview] = useState("");
   const [previewKey, setPreviewKey] = useState(0);
-  const fileRef = useRef(null);
 
-  // UI
-  const [creating, setCreating] = useState(false);
-  const [updating, setUpdating] = useState(false);
+  // UI state
+  const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
   const [msgType, setMsgType] = useState("info");
 
-  /* ---------------------- Load Theaters ---------------------- */
+  /* Load theaters */
   useEffect(() => {
     if (token && role?.toLowerCase() === "admin") loadTheaters();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, role]);
 
   async function loadTheaters() {
@@ -149,8 +149,10 @@ export default function AdminTheaters() {
       const { data } = await api.get("/theaters", {
         params: { page: 1, limit: 500, ts: Date.now() },
       });
-      const arr = Array.isArray(data?.theaters) ? data.theaters : [];
-      setTheaters(arr.map(normalizeTheater));
+      const arr = Array.isArray(data?.theaters) ? data.theaters : Array.isArray(data) ? data : [];
+      const normalized = arr.map(normalizeTheater);
+      setTheaters(normalized);
+      setMsg("");
     } catch (err) {
       console.error("loadTheaters error:", err);
       setMsg("⚠️ Failed to load theaters (check API_URL)");
@@ -158,7 +160,6 @@ export default function AdminTheaters() {
     }
   }
 
-  /* ---------------------- Reset ---------------------- */
   function resetForm() {
     setSelectedId(null);
     setName("");
@@ -170,13 +171,12 @@ export default function AdminTheaters() {
     setAmenityInput("");
     if (preview?.startsWith("blob:")) URL.revokeObjectURL(preview);
     setPreview("");
-    setImageFile(null);
     setPreviewKey((k) => k + 1);
   }
 
-  /* ---------------------- Image Picker ---------------------- */
-  function onPickFile(eOrFile) {
-    const file = eOrFile?.target?.files?.[0] ?? eOrFile;
+  /* ------------------- Upload Handler ------------------- */
+  async function onPickFile(e) {
+    const file = e.target.files?.[0];
     if (!file) return;
 
     if (!["image/jpeg", "image/png", "image/webp", "image/gif"].includes(file.type)) {
@@ -190,16 +190,29 @@ export default function AdminTheaters() {
       return;
     }
 
-    if (preview?.startsWith("blob:")) URL.revokeObjectURL(preview);
-    const url = URL.createObjectURL(file);
-    setPreview(url);
-    setImageFile(file);
-    setPreviewKey((k) => k + 1);
-    setMsg("✅ Image selected (will upload on Save)");
-    setMsgType("success");
+    setMsg("Uploading image...");
+    setMsgType("info");
+    setLoading(true);
+
+    try {
+      const formData = new FormData();
+      formData.append("image", file);
+      const res = await fetch(`${API_BASE}/upload`, { method: "POST", body: formData });
+      if (!res.ok) throw new Error(`Upload failed (${res.status})`);
+      const data = await res.json();
+      setPreview(data.url);
+      setPreviewKey((k) => k + 1);
+      setMsg("✅ Image uploaded successfully");
+      setMsgType("success");
+    } catch (err) {
+      setMsg("❌ Upload failed: " + err.message);
+      setMsgType("error");
+    } finally {
+      setLoading(false);
+    }
   }
 
-  /* ---------------------- Amenities ---------------------- */
+  /* Amenities helpers */
   function addAmenity(value) {
     const items = String(value || "")
       .split(",")
@@ -221,82 +234,74 @@ export default function AdminTheaters() {
       return next;
     });
   }
+  function clearAmenities() {
+    setAmenitiesList([]);
+    setAmenitiesDirty(!sameStringArray([], originalAmenities));
+  }
 
-  /* ---------------------- Create ---------------------- */
+  /* Create / Update / Delete */
   async function createTheater(e) {
     e.preventDefault();
-    if (creating) return;
     if (!name.trim() || !city.trim()) {
-      setMsg("Name and City required");
+      setMsg("Name and City are required");
       setMsgType("error");
       return;
     }
-
-    setCreating(true);
+    setLoading(true);
     try {
-      const form = new FormData();
-      form.append("name", name.trim());
-      form.append("city", city.trim());
-      form.append("address", (address || "").trim());
-      amenitiesList.forEach((a) => form.append("amenities", a));
-      if (imageFile) form.append("image", imageFile);
-
-      const res = await api.post("/theaters", form, { params: { ts: Date.now() } });
+      const payload = {
+        name: name.trim(),
+        city: city.trim(),
+        address: (address || "").trim(),
+        amenities: amenitiesList,
+        imageUrl: preview,
+      };
+      const res = await api.post("/theaters", payload, { params: { ts: Date.now() } });
       const created = normalizeTheater(res.data?.data || res.data);
       setTheaters((s) => [created, ...s]);
       setMsg("✅ Theater created!");
       setMsgType("success");
       resetForm();
     } catch (err) {
-      const status = err?.response?.status;
-      if (status === 409) {
-        setMsg("ℹ️ Theater already exists.");
-        setMsgType("info");
-        await loadTheaters();
-      } else {
-        setMsg("❌ Create failed: " + (err?.response?.data?.message || err.message));
-        setMsgType("error");
-      }
+      const m = err?.response?.data?.message || err.message;
+      setMsg("❌ Create failed: " + m);
+      setMsgType("error");
     } finally {
-      setCreating(false);
+      setLoading(false);
     }
   }
 
-  /* ---------------------- Update ---------------------- */
   async function updateTheaterById() {
-    if (updating) return;
     if (!selectedId) {
-      setMsg("Pick a theater first.");
+      setMsg("Pick a theater from the list first.");
       setMsgType("error");
       return;
     }
-    setUpdating(true);
+    setLoading(true);
     try {
-      const form = new FormData();
-      form.append("name", name.trim());
-      form.append("city", city.trim());
-      form.append("address", (address || "").trim());
-      const amens = amenitiesDirty ? amenitiesList : originalAmenities;
-      amens.forEach((a) => form.append("amenities", a));
-      if (imageFile) form.append("image", imageFile);
-
-      const res = await api.put(`/theaters/${selectedId}`, form, { params: { ts: Date.now() } });
+      const payload = {
+        name: name.trim(),
+        city: city.trim(),
+        address: (address || "").trim(),
+        amenities: amenitiesDirty ? amenitiesList : originalAmenities,
+        imageUrl: preview,
+      };
+      const res = await api.put(`/theaters/${selectedId}`, payload, { params: { ts: Date.now() } });
       const updated = normalizeTheater(res.data?.data || res.data);
       setTheaters((list) => list.map((t) => (t._id === updated._id ? updated : t)));
       setMsg("✅ Theater updated.");
       setMsgType("success");
       setOriginalAmenities(updated.amenities || []);
       setAmenitiesDirty(false);
-      setImageFile(null);
     } catch (err) {
-      setMsg("❌ Update failed: " + (err?.response?.data?.message || err.message));
+      const m = err?.response?.data?.message || err.message;
+      setMsg("❌ Update failed: " + m);
       setMsgType("error");
     } finally {
-      setUpdating(false);
+      setLoading(false);
     }
   }
 
-  /* ---------------------- Delete ---------------------- */
   async function deleteTheater(id) {
     if (!confirm("Delete this theater?")) return;
     try {
@@ -306,12 +311,20 @@ export default function AdminTheaters() {
       setMsg("🗑️ Theater deleted");
       setMsgType("info");
     } catch (err) {
-      setMsg("❌ Delete failed: " + (err?.response?.data?.message || err.message));
+      const m = err?.response?.data?.message || err.message;
+      setMsg("❌ Delete failed: " + m);
       setMsgType("error");
     }
   }
 
-  /* ---------------------- Select ---------------------- */
+  /* Selection */
+  const names = useMemo(() => [...new Set(theaters.map((t) => t.name))], [theaters]);
+  const cities = useMemo(() => [...new Set(theaters.map((t) => t.city))], [theaters]);
+  const addresses = useMemo(
+    () => [...new Set(theaters.map((t) => t.address || "").filter(Boolean))],
+    [theaters]
+  );
+
   function fillFromTheater(raw) {
     const t = normalizeTheater(raw);
     setSelectedId(t._id);
@@ -321,20 +334,20 @@ export default function AdminTheaters() {
     setAmenitiesList(Array.isArray(t.amenities) ? t.amenities : []);
     setOriginalAmenities(Array.isArray(t.amenities) ? t.amenities : []);
     setAmenitiesDirty(false);
+    const url = t.imageUrl || "";
     if (preview?.startsWith("blob:")) URL.revokeObjectURL(preview);
-    setPreview(t.imageUrl || "");
-    setImageFile(null);
+    setPreview(url);
     setPreviewKey((k) => k + 1);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  /* ---------------------- Render ---------------------- */
+  /* ------------------- Render ------------------- */
   return (
-    <main className="min-h-screen bg-slate-50 py-8 px-4 md:px-6">
+    <main className="min-h-screen w-screen [margin-inline:calc(50%-50vw)] bg-slate-50 text-slate-900 py-8 px-4 md:px-6">
       <div className="max-w-7xl mx-auto space-y-5">
         <Card className="p-5 flex items-center justify-between">
           <div>
-            <h1 className="text-2xl md:text-3xl font-extrabold flex items-center gap-2">
+            <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight flex items-center gap-2">
               <Building2 className="h-6 w-6" /> Manage Theaters
             </h1>
             <p className="text-sm text-slate-600 mt-1">Add, edit, or remove theaters.</p>
@@ -361,11 +374,18 @@ export default function AdminTheaters() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
           {/* ---------------- Form ---------------- */}
           <Card className="p-5">
-            <h2 className="text-lg font-extrabold border-b border-slate-200 pb-2 mb-4 flex items-center gap-2">
+            <h2 className="text-lg font-extrabold tracking-tight border-b border-slate-200 pb-2 mb-4 flex items-center gap-2">
               <PlusCircle className="h-5 w-5" /> Add / Edit Theater
             </h2>
 
             <form onSubmit={createTheater} className="space-y-4">
+              {selectedId && (
+                <div className="text-xs text-slate-600">
+                  Editing ID: <span className="font-mono">{selectedId}</span>
+                </div>
+              )}
+
+              {/* Fields */}
               <Field label="Theater Name" value={name} onChange={(e) => setName(e.target.value)} icon={Building2} required />
               <Field label="City" value={city} onChange={(e) => setCity(e.target.value)} icon={MapPin} required />
               <Field label="Address" value={address} onChange={(e) => setAddress(e.target.value)} icon={Home} />
@@ -412,31 +432,13 @@ export default function AdminTheaters() {
                       className="w-full h-full object-cover"
                     />
                   </div>
-
-                  {/* Hidden input + button trigger */}
-                  <input
-                    ref={fileRef}
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      onPickFile(f);
-                      e.target.value = ""; // allow picking same file twice
-                    }}
-                  />
-
                   <div className="flex flex-col gap-1">
-                    <SecondaryBtn
-                      type="button"
-                      className="px-3 py-1.5"
-                      onClick={() => {
-                        if (fileRef.current) fileRef.current.value = "";
-                        fileRef.current?.click();
-                      }}
-                    >
-                      <ImageIcon className="h-4 w-4" /> Choose Image
-                    </SecondaryBtn>
+                    <label className="inline-flex items-center gap-2 cursor-pointer">
+                      <input type="file" accept="image/*" onChange={onPickFile} className="hidden" />
+                      <SecondaryBtn className="px-3 py-1.5">
+                        <ImageIcon className="h-4 w-4" /> Choose Image
+                      </SecondaryBtn>
+                    </label>
                     <span className="text-xs text-slate-500">JPG/PNG/WEBP/GIF · up to 3MB.</span>
                   </div>
                 </div>
@@ -445,24 +447,16 @@ export default function AdminTheaters() {
               {/* Buttons */}
               <div className="flex gap-2 justify-between items-center pt-1">
                 <div className="flex gap-2">
-                  <PrimaryBtn disabled={creating} type="submit">
-                    {creating ? "Saving..." : (
-                      <>
-                        <PlusCircle className="h-4 w-4" /> Create Theater
-                      </>
-                    )}
+                  <PrimaryBtn disabled={loading} type="submit">
+                    {loading ? "Saving..." : (<><PlusCircle className="h-4 w-4" /> Create Theater</>)}
                   </PrimaryBtn>
                   <PrimaryBtn
-                    disabled={updating}
+                    disabled={loading}
                     type="button"
                     onClick={updateTheaterById}
                     className="bg-[#0A66C2] hover:bg-[#0956A3]"
                   >
-                    {updating ? "Updating..." : (
-                      <>
-                        <PencilLine className="h-4 w-4" /> Update
-                      </>
-                    )}
+                    <PencilLine className="h-4 w-4" /> Update
                   </PrimaryBtn>
                 </div>
                 <SecondaryBtn type="button" onClick={() => { resetForm(); setMsg(""); }}>
@@ -474,7 +468,7 @@ export default function AdminTheaters() {
 
           {/* ---------------- List ---------------- */}
           <Card className="p-5">
-            <h2 className="text-lg font-extrabold border-b border-slate-200 pb-2 mb-4 flex items-center gap-2">
+            <h2 className="text-lg font-extrabold tracking-tight border-b border-slate-200 pb-2 mb-4 flex items-center gap-2">
               <Building2 className="h-5 w-5" /> Existing Theaters
             </h2>
             {theaters.length === 0 ? (
@@ -482,10 +476,7 @@ export default function AdminTheaters() {
             ) : (
               <ul className="space-y-3 max-h-[60vh] overflow-auto pr-1">
                 {theaters.map((t) => (
-                  <li
-                    key={t._id}
-                    className={`flex justify-between items-center border border-slate-200 bg-white rounded-2xl p-3 shadow-sm ${selectedId === t._id ? "ring-2 ring-[#0071DC]" : ""}`}
-                  >
+                  <li key={t._id} className={`flex justify-between items-center border border-slate-200 bg-white rounded-2xl p-3 shadow-sm ${selectedId === t._id ? "ring-2 ring-[#0071DC]" : ""}`}>
                     <div className="flex items-center gap-3">
                       <div className="w-14 h-14 rounded-xl overflow-hidden bg-slate-200 border border-slate-200 shadow-sm">
                         <img
@@ -497,20 +488,12 @@ export default function AdminTheaters() {
                       </div>
                       <div>
                         <div className="font-extrabold text-slate-900">{t.name}</div>
-                        <div className="text-sm text-slate-700">
-                          {t.city} — {t.address || "No address"}
-                        </div>
-                        <div className="text-xs text-slate-500 mt-0.5">
-                          {Array.isArray(t.amenities) && t.amenities.length
-                            ? t.amenities.join(" • ")
-                            : "No amenities"}
-                        </div>
+                        <div className="text-sm text-slate-700">{t.city} — {t.address || "No address"}</div>
+                        <div className="text-xs text-slate-500 mt-0.5">{Array.isArray(t.amenities) && t.amenities.length ? t.amenities.join(" • ") : "No amenities"}</div>
                       </div>
                     </div>
                     <div className="flex gap-2">
-                      <PrimaryBtn onClick={() => fillFromTheater(t)} className="px-3 py-1 text-sm">
-                        Use
-                      </PrimaryBtn>
+                      <PrimaryBtn onClick={() => fillFromTheater(t)} className="px-3 py-1 text-sm">Use</PrimaryBtn>
                       <SecondaryBtn onClick={() => deleteTheater(t._id)} className="px-3 py-1 text-sm" title="Delete theater">
                         <Trash2 className="h-4 w-4" /> Delete
                       </SecondaryBtn>
