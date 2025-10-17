@@ -1,30 +1,63 @@
-// src/api/api.js  (or api.ts)
-// Production-ready Axios instance for Render
+// src/api/api.js
+// Production-ready Axios instance for Render + debugging aids for /theaters 409 issue
 
 import axios from "axios";
 
-const BASE_URL = "https://movie-ticket-booking-backend-o1m2.onrender.com/api"; // <-- include /api
+/* -------------------------------------------------------------------------- */
+/* Base URL Setup                                                             */
+/* -------------------------------------------------------------------------- */
+// Use env var if available, fallback to Render API
+const BASE_URL =
+  (import.meta.env.VITE_API_BASE || "https://movie-ticket-booking-backend-o1m2.onrender.com/api")
+    .replace(/\/+$/, ""); // remove trailing slashes
 
+/* -------------------------------------------------------------------------- */
+/* Axios Instance                                                             */
+/* -------------------------------------------------------------------------- */
 const api = axios.create({
-  baseURL: BASE_URL,
-  timeout: 60000, // render cold starts
+  baseURL: BASE_URL, // ✅ no trailing slash
+  timeout: 60000,
   withCredentials: false,
   headers: { "Content-Type": "application/json" },
 });
 
-// Attach JWT from your storage/AuthContext (adjust if you store differently)
+/* -------------------------------------------------------------------------- */
+/* Request Interceptor                                                        */
+/* -------------------------------------------------------------------------- */
 api.interceptors.request.use((config) => {
   try {
+    // Attach JWT if stored in localStorage
     const raw = localStorage.getItem("auth"); // { token, role, ... }
     if (raw) {
       const { token } = JSON.parse(raw) || {};
       if (token) config.headers.Authorization = `Bearer ${token}`;
     }
-  } catch { /* noop */ }
+  } catch {
+    /* noop */
+  }
+
+  // --- Debugging: Log every request (method + url) ---
+  const method = (config.method || "GET").toUpperCase();
+  const url = `${config.baseURL}${config.url?.startsWith("/") ? "" : "/"}${config.url}`;
+  console.log(`[API] ${method} → ${url}`, config.params || "");
+
+  // --- Rogue POST detector (for unwanted POST /api/theaters) ---
+  const isPost = method === "POST";
+  const urlLower = (config.url || "").toLowerCase();
+  const isTheaterPost = /\/?theaters(?:\?|$)/.test(urlLower);
+  const isTagged = config.headers?.["X-Intent"] === "create-theater";
+
+  if (isPost && isTheaterPost && !isTagged) {
+    console.warn("⚠️  Rogue POST /theaters detected — likely triggered by file picker or unintended code!");
+    console.trace(); // shows where it originated in your React stack
+  }
+
   return config;
 });
 
-// Retry only idempotent requests; never retry 4xx/409; never retry writes
+/* -------------------------------------------------------------------------- */
+/* Response Interceptor + Retry Logic                                         */
+/* -------------------------------------------------------------------------- */
 api.interceptors.response.use(
   (res) => res,
   async (error) => {
@@ -32,21 +65,23 @@ api.interceptors.response.use(
     const method = (cfg.method || "").toUpperCase();
     const status = error?.response?.status;
 
-    // If server responded with 4xx (e.g., 400, 401, 403, 404, 409), don't retry
+    // Don't retry client errors (4xx)
     if (typeof status === "number" && status >= 400 && status < 500) {
       return Promise.reject(error);
     }
 
-    // Only retry GET/HEAD/OPTIONS on network/timeout
+    // Retry only idempotent requests
     const isIdempotent = ["GET", "HEAD", "OPTIONS"].includes(method);
-    const isTimeout = error?.code === "ECONNABORTED" || /timeout/i.test(error?.message || "");
-    const isNetwork = !error?.response; // no HTTP response at all
+    const isTimeout =
+      error?.code === "ECONNABORTED" || /timeout/i.test(error?.message || "");
+    const isNetwork = !error?.response;
 
     if (!isIdempotent) return Promise.reject(error);
 
     cfg.__retryCount = cfg.__retryCount || 0;
     if ((isTimeout || isNetwork) && cfg.__retryCount < 2) {
       cfg.__retryCount += 1;
+      console.warn(`[API] Retrying ${method} ${cfg.url} (${cfg.__retryCount})`);
       await new Promise((r) => setTimeout(r, 1500 * cfg.__retryCount));
       return api(cfg);
     }
@@ -55,16 +90,17 @@ api.interceptors.response.use(
   }
 );
 
-export default api;
-
-// Optional: wake backend before first auth action
+/* -------------------------------------------------------------------------- */
+/* Helper to wake backend                                                     */
+/* -------------------------------------------------------------------------- */
 export async function wakeBackend() {
   try {
-    // Try a very cheap GET to a public endpoint (health or theaters)
-    // Using fetch so it bypasses Axios interceptors/retries
-    await fetch(`${BASE_URL}/health`, { method: "GET", cache: "no-store" })
-      .catch(() => fetch(`${BASE_URL}/theaters?page=1&limit=1`, { cache: "no-store" }));
+    await fetch(`${BASE_URL}/health`, { method: "GET", cache: "no-store" }).catch(() =>
+      fetch(`${BASE_URL}/theaters?page=1&limit=1`, { cache: "no-store" })
+    );
   } catch {
     // ignore — normal calls will proceed/retry as needed
   }
 }
+
+export default api;
