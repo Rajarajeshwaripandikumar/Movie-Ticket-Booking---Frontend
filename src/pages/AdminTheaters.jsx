@@ -177,7 +177,7 @@ export default function AdminTheaters() {
     setPreviewKey((k) => k + 1);
   }
 
-  /* ------------------- Upload Handler ------------------- */
+  /* ------------------- Upload Handler (updated) ------------------- */
   async function onPickFile(e) {
     const fileInput = e.target;
     const file = fileInput.files?.[0];
@@ -196,40 +196,43 @@ export default function AdminTheaters() {
       return;
     }
 
+    // Optional: show instant local preview while uploading
+    let localUrl = "";
+    try {
+      localUrl = URL.createObjectURL(file);
+      setPreview(localUrl);
+      setPreviewKey((k) => k + 1);
+    } catch {}
+
     setMsg("Uploading image...");
     setMsgType("info");
     setLoading(true);
 
     try {
-      // match Axios auth
-      let authHeader = {};
-      try {
-        const raw = localStorage.getItem("auth");
-        if (raw) {
-          const { token } = JSON.parse(raw) || {};
-          if (token) authHeader = { Authorization: `Bearer ${token}` };
-        }
-      } catch {}
+      const fd = new FormData();
+      fd.append("image", file); // must match backend upload.single("image")
 
-      const formData = new FormData();
-      formData.append("image", file);
-
-      const res = await fetch(`${API_BASE}/upload`, {
-        method: "POST",
-        body: formData,
-        headers: { ...authHeader }, // do not set Content-Type for FormData
+      // Use axios instance so baseURL + auth interceptors apply
+      const { data } = await api.post("/upload", fd, {
+        headers: { "Content-Type": "multipart/form-data" },
+        timeout: 30000,
       });
 
-      if (!res.ok) throw new Error(`Upload failed (${res.status})`);
-      const data = await res.json();
-      setPreview(data.url);
+      // Resolve to absolute URL so Netlify loads from Render backend
+      const abs = resolveImageUrl(data.url, Date.now());
+      setPreview(abs);
       setPreviewKey((k) => k + 1);
       setMsg("✅ Image uploaded successfully");
       setMsgType("success");
     } catch (err) {
-      setMsg("❌ Upload failed: " + err.message);
+      const status = err?.response?.status || err?.status;
+      const text = err?.response?.data?.error || err?.message || "Upload failed";
+      setMsg(`❌ Upload failed${status ? ` (${status})` : ""}: ${text}`);
       setMsgType("error");
     } finally {
+      if (localUrl) {
+        try { URL.revokeObjectURL(localUrl); } catch {}
+      }
       setLoading(false);
       fileInput.value = ""; // allow selecting the same file again
     }
@@ -263,7 +266,7 @@ export default function AdminTheaters() {
         city: city.trim(),
         address: (address || "").trim(),
         amenities: amenitiesList,
-        imageUrl: preview,
+        imageUrl: preview, // already absolute due to resolveImageUrl()
       };
       const res = await api.post("theaters", payload, {
         params: { ts: Date.now() },
@@ -296,7 +299,7 @@ export default function AdminTheaters() {
         city: city.trim(),
         address: (address || "").trim(),
         amenities: amenitiesDirty ? amenitiesList : originalAmenities,
-        imageUrl: preview,
+        imageUrl: preview, // absolute
       };
       const res = await api.put(`theaters/${selectedId}`, payload, { params: { ts: Date.now() } });
       const updated = normalizeTheater(res.data?.data || res.data);
@@ -353,7 +356,7 @@ export default function AdminTheaters() {
             </h1>
             <p className="text-sm text-slate-600 mt-1">Add, edit, or remove theaters.</p>
           </div>
-        <SecondaryBtn onClick={loadTheaters}>
+          <SecondaryBtn onClick={loadTheaters}>
             <RefreshCcw className="h-4 w-4" /> Refresh
           </SecondaryBtn>
         </Card>
