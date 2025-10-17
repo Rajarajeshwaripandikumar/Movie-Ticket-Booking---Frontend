@@ -19,8 +19,8 @@ import {
 /* -------------------------------------------------------------------------- */
 /* Constants                                                                  */
 /* -------------------------------------------------------------------------- */
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8080/api";
-const FILES_BASE = API_BASE.replace(/\/api\/?$/, "");
+const API_BASE = (import.meta.env.VITE_API_BASE || "http://localhost:8080/api").replace(/\/+$/, "");
+const FILES_BASE = API_BASE.replace(/\/api$/, "");
 
 // Inline fallback image
 const DEFAULT_IMG =
@@ -44,9 +44,7 @@ function Field({ as = "input", icon: Icon, className = "", label, ...props }) {
   const C = as;
   return (
     <div>
-      {label ? (
-        <label className="block text-[12px] font-semibold text-slate-600 mb-1">{label}</label>
-      ) : null}
+      {label ? <label className="block text-[12px] font-semibold text-slate-600 mb-1">{label}</label> : null}
       <div className="flex items-center gap-2 border border-slate-300 rounded-xl bg-white px-3 py-2 focus-within:ring-2 focus-within:ring-[#0071DC]">
         {Icon ? <Icon className="h-4 w-4 text-slate-700" /> : null}
         <C {...props} className={`w-full outline-none bg-transparent text-sm sm:text-base ${className}`} />
@@ -58,7 +56,7 @@ function Field({ as = "input", icon: Icon, className = "", label, ...props }) {
 function PrimaryBtn({ children, className = "", type = "button", ...props }) {
   return (
     <button
-      type={type} // default = button
+      type={type} // default button
       className={`inline-flex items-center justify-center gap-2 rounded-full px-5 py-2 font-semibold text-white bg-[#0071DC] hover:bg-[#0654BA] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071DC] disabled:opacity-60 ${className}`}
       {...props}
     >
@@ -70,7 +68,7 @@ function PrimaryBtn({ children, className = "", type = "button", ...props }) {
 function SecondaryBtn({ children, className = "", type = "button", ...props }) {
   return (
     <button
-      type={type} // default = button
+      type={type} // default button
       className={`inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 font-semibold border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071DC] ${className}`}
       {...props}
     >
@@ -150,16 +148,14 @@ export default function AdminTheaters() {
 
   async function loadTheaters() {
     try {
-      const { data } = await api.get("/theaters", {
-        params: { page: 1, limit: 500, ts: Date.now() },
-      });
+      const { data } = await api.get("theaters", { params: { page: 1, limit: 500, ts: Date.now() } });
       const arr = Array.isArray(data?.theaters) ? data.theaters : Array.isArray(data) ? data : [];
       const normalized = arr.map(normalizeTheater);
       setTheaters(normalized);
       setMsg("");
     } catch (err) {
       console.error("loadTheaters error:", err);
-      setMsg("⚠️ Failed to load theaters (check API_URL)");
+      setMsg("⚠️ Failed to load theaters (check API_BASE)");
       setMsgType("error");
     }
   }
@@ -178,7 +174,7 @@ export default function AdminTheaters() {
     setPreviewKey((k) => k + 1);
   }
 
-  /* ------------------- Upload Handler ------------------- */
+  /* ------------------- Upload Handler (outside form) ------------------- */
   async function onPickFile(e) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -247,7 +243,7 @@ export default function AdminTheaters() {
       setMsg("Name and City are required"); setMsgType("error"); return;
     }
 
-    // Client-side duplicate guard to avoid 409
+    // Client-side duplicate guard
     const exists = theaters.some(t =>
       (t.name || "").trim().toLowerCase() === name.trim().toLowerCase() &&
       (t.city || "").trim().toLowerCase() === city.trim().toLowerCase()
@@ -268,7 +264,11 @@ export default function AdminTheaters() {
         amenities: amenitiesList,
         imageUrl: preview,
       };
-      const res = await api.post("/theaters", payload, { params: { ts: Date.now() } });
+      const res = await api.post(
+        "theaters", // relative — baseURL already includes /api
+        payload,
+        { params: { ts: Date.now() }, headers: { "X-Intent": "create-theater" } } // tag legit create
+      );
       const created = normalizeTheater(res.data?.data || res.data);
       setTheaters((s) => [created, ...s]);
       setMsg("✅ Theater created!");
@@ -299,7 +299,7 @@ export default function AdminTheaters() {
         amenities: amenitiesDirty ? amenitiesList : originalAmenities,
         imageUrl: preview,
       };
-      const res = await api.put(`/theaters/${selectedId}`, payload, { params: { ts: Date.now() } });
+      const res = await api.put(`theaters/${selectedId}`, payload, { params: { ts: Date.now() } });
       const updated = normalizeTheater(res.data?.data || res.data);
       setTheaters((list) => list.map((t) => (t._id === updated._id ? updated : t)));
       setMsg("✅ Theater updated.");
@@ -318,7 +318,7 @@ export default function AdminTheaters() {
   async function deleteTheater(id) {
     if (!confirm("Delete this theater?")) return;
     try {
-      await api.delete(`/theaters/${id}`, { params: { ts: Date.now() } });
+      await api.delete(`theaters/${id}`, { params: { ts: Date.now() } });
       setTheaters((s) => s.filter((t) => t._id !== id));
       if (selectedId === id) resetForm();
       setMsg("🗑️ Theater deleted");
@@ -333,10 +333,7 @@ export default function AdminTheaters() {
   /* Selection */
   const names = useMemo(() => [...new Set(theaters.map((t) => t.name))], [theaters]);
   const cities = useMemo(() => [...new Set(theaters.map((t) => t.city))], [theaters]);
-  const addresses = useMemo(
-    () => [...new Set(theaters.map((t) => t.address || "").filter(Boolean))],
-    [theaters]
-  );
+  const addresses = useMemo(() => [...new Set(theaters.map((t) => t.address || "").filter(Boolean))], [theaters]);
 
   function fillFromTheater(raw) {
     const t = normalizeTheater(raw);
@@ -359,7 +356,6 @@ export default function AdminTheaters() {
     e.preventDefault();
     const action = e.nativeEvent?.submitter?.dataset?.action;
     if (action === "create") createTheater();
-    // ignore any other submitters
   };
 
   /* ------------------- Render ------------------- */
@@ -393,7 +389,7 @@ export default function AdminTheaters() {
         )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          {/* ---------------- Image picker (moved OUTSIDE the form) ---------------- */}
+          {/* ---------------- Image picker (OUTSIDE the form) ---------------- */}
           <Card className="p-5">
             <h2 className="text-lg font-extrabold tracking-tight border-b border-slate-200 pb-2 mb-4 flex items-center gap-2">
               <ImageIcon className="h-5 w-5" /> Theater Image
@@ -422,7 +418,7 @@ export default function AdminTheaters() {
                   className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 font-semibold border border-slate-300 bg-white hover:bg-slate-50"
                   onClick={(e) => {
                     e.preventDefault();
-                    e.stopPropagation(); // never submit
+                    e.stopPropagation(); // ensure never submits
                     fileInputRef.current?.click();
                   }}
                 >
