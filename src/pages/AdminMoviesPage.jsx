@@ -24,7 +24,7 @@ function Field({ as = "input", className = "", ...props }) {
 function PrimaryBtn({ children, className = "", ...props }) {
   return (
     <button
-      className={`inline-flex items-center gap-2 rounded-full px-5 py-2 font-semibold text-white bg-[${BLUE}] hover:bg-[${BLUE_DARK}] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[${BLUE}] ${className}`}
+      className={`inline-flex items-center gap-2 rounded-full px-5 py-2 font-semibold text-white bg-[${BLUE}] hover:bg-[${BLUE_DARK}] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[${BLUE}] disabled:opacity-60 ${className}`}
       {...props}
     >
       {children}
@@ -55,7 +55,7 @@ const DEFAULT_POSTER =
   `);
 
 /* -------------------------- Backend base URL -------------------------- */
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8080/api";
+const API_BASE = import.meta.env.VITE_API_BASE || "https://movie-ticket-booking-backend-o1m2.onrender.com/api";
 const FILES_BASE = API_BASE.replace(/\/api\/?$/, "");
 
 /* ----------------------------- Helpers -------------------------------- */
@@ -141,6 +141,7 @@ function MovieForm({ initial = {}, onCancel, onSave }) {
 
   const [posterFile, setPosterFile] = useState(null);
   const [preview, setPreview] = useState(norm.posterUrl ? resolvePosterUrl(norm.posterUrl) : "");
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     const n = normalizeMovie(initial);
@@ -188,7 +189,7 @@ function MovieForm({ initial = {}, onCancel, onSave }) {
   const addCrew = () => setCrew((c) => [...c, { name: "", role: "" }]);
   const removeCrew = (i) => setCrew((c) => c.filter((_, j) => j !== i));
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault();
 
     const data = new FormData();
@@ -200,9 +201,21 @@ function MovieForm({ initial = {}, onCancel, onSave }) {
     data.append("languages", (languages || []).map((x) => String(x).trim()).filter(Boolean).join(","));
     data.append("cast", JSON.stringify((cast || []).filter((c) => (c?.actorName || "").trim())));
     data.append("crew", JSON.stringify((crew || []).filter((c) => (c?.name || "").trim())));
-    if (posterFile) data.append("poster", posterFile);
 
-    onSave(data);
+    if (posterFile) {
+      data.append("poster", posterFile); // backend multer field
+    } else if (form.posterUrl) {
+      data.append("posterUrl", form.posterUrl); // preserve existing
+    }
+
+    try {
+      setSaving(true);
+      await onSave(data);
+    } catch (err) {
+      console.error("Save failed", err);
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -231,7 +244,11 @@ function MovieForm({ initial = {}, onCancel, onSave }) {
         </div>
         <div>
           <label className="block text-[12px] font-semibold text-slate-600 mb-1">Release Date</label>
-          <Field type="date" value={form.releaseDate ? String(form.releaseDate).slice(0, 10) : ""} onChange={change("releaseDate")} />
+          <Field
+            type="date"
+            value={form.releaseDate ? String(form.releaseDate).slice(0, 10) : ""}
+            onChange={change("releaseDate")}
+          />
         </div>
       </div>
 
@@ -251,10 +268,14 @@ function MovieForm({ initial = {}, onCancel, onSave }) {
                 placeholder="Language"
                 className="bg-transparent outline-none text-sm text-slate-900"
               />
-              <button type="button" onClick={() => removeLang(i)} className="text-rose-600 text-xs">✕</button>
+              <button type="button" onClick={() => removeLang(i)} className="text-rose-600 text-xs">
+                ✕
+              </button>
             </div>
           ))}
-          <SecondaryBtn type="button" onClick={addLang} className="text-sm">+ Add Language</SecondaryBtn>
+          <SecondaryBtn type="button" onClick={addLang} className="text-sm">
+            + Add Language
+          </SecondaryBtn>
         </div>
       </div>
 
@@ -262,7 +283,9 @@ function MovieForm({ initial = {}, onCancel, onSave }) {
       <div>
         <div className="flex justify-between items-center mb-2">
           <label className="text-[12px] font-semibold text-slate-600">Cast</label>
-          <SecondaryBtn type="button" onClick={addCast} className="text-sm">+ Add Cast</SecondaryBtn>
+          <SecondaryBtn type="button" onClick={addCast} className="text-sm">
+            + Add Cast
+          </SecondaryBtn>
         </div>
         {cast.length === 0 && <p className="text-sm text-slate-600">No cast added yet.</p>}
         <div className="space-y-2">
@@ -288,7 +311,9 @@ function MovieForm({ initial = {}, onCancel, onSave }) {
                 placeholder="Character"
                 className="col-span-2"
               />
-              <SecondaryBtn type="button" onClick={() => removeCast(i)} className="justify-center">✕</SecondaryBtn>
+              <SecondaryBtn type="button" onClick={() => removeCast(i)} className="justify-center">
+                ✕
+              </SecondaryBtn>
             </div>
           ))}
         </div>
@@ -298,7 +323,9 @@ function MovieForm({ initial = {}, onCancel, onSave }) {
       <div>
         <div className="flex justify-between items-center mb-2">
           <label className="text-[12px] font-semibold text-slate-600">Crew</label>
-          <SecondaryBtn type="button" onClick={addCrew} className="text-sm">+ Add Crew</SecondaryBtn>
+          <SecondaryBtn type="button" onClick={addCrew} className="text-sm">
+            + Add Crew
+          </SecondaryBtn>
         </div>
         {crew.length === 0 && <p className="text-sm text-slate-600">No crew added yet.</p>}
         <div className="space-y-2">
@@ -324,7 +351,9 @@ function MovieForm({ initial = {}, onCancel, onSave }) {
                 placeholder="Role (e.g. Director)"
                 className="col-span-2"
               />
-              <SecondaryBtn type="button" onClick={() => removeCrew(i)} className="justify-center">✕</SecondaryBtn>
+              <SecondaryBtn type="button" onClick={() => removeCrew(i)} className="justify-center">
+                ✕
+              </SecondaryBtn>
             </div>
           ))}
         </div>
@@ -346,8 +375,12 @@ function MovieForm({ initial = {}, onCancel, onSave }) {
       {/* Sticky Buttons */}
       <div className="sticky bottom-0 bg-white pt-2">
         <div className="flex gap-2 justify-end border-t border-slate-200 pt-3">
-          <SecondaryBtn type="button" onClick={onCancel}>Cancel</SecondaryBtn>
-          <PrimaryBtn type="submit">Save</PrimaryBtn>
+          <SecondaryBtn type="button" onClick={onCancel}>
+            Cancel
+          </SecondaryBtn>
+          <PrimaryBtn type="submit" disabled={saving}>
+            {saving ? "Saving…" : "Save"}
+          </PrimaryBtn>
         </div>
       </div>
     </form>
@@ -380,15 +413,15 @@ export default function AdminMoviesPage() {
 
   useEffect(() => {
     fetchMovies();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const doCreate = async (formData) => {
     try {
-      const resp = await api.post("/api/movies", formData, {
+      const resp = await api.post("/api/admin/movies", formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
-      setMovies((m) => [normalizeMovie(resp.data), ...m]);
+      const created = resp?.data?.data || resp?.data?.movie || resp?.data;
+      setMovies((m) => [normalizeMovie(created), ...m]);
       setCreating(false);
     } catch (err) {
       console.error(err);
@@ -399,11 +432,13 @@ export default function AdminMoviesPage() {
   const doUpdate = async (formData) => {
     try {
       const id = editing?._id || editing?.id;
-      const resp = await api.put(`/api/movies/${id}`, formData, {
+      const resp = await api.put(`/api/admin/movies/${id}`, formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
-      const updated = normalizeMovie(resp.data);
-      setMovies((m) => m.map((x) => ((x._id || x.id) === (updated._id || updated.id) ? updated : x)));
+      const updated = normalizeMovie(resp?.data?.data || resp?.data?.movie || resp?.data);
+      setMovies((m) =>
+        m.map((x) => ((x._id || x.id) === (updated._id || updated.id) ? updated : x))
+      );
       setEditing(null);
     } catch (err) {
       console.error(err);
@@ -414,7 +449,7 @@ export default function AdminMoviesPage() {
   const doDelete = async (m) => {
     if (!window.confirm(`Delete "${m.title}" ?`)) return;
     try {
-      await api.delete(`/api/movies/${m._id || m.id}`);
+      await api.delete(`/api/admin/movies/${m._id || m.id}`);
       setMovies((x) => x.filter((t) => (t._id || t.id) !== (m._id || m.id)));
     } catch (err) {
       console.error(err);
@@ -439,7 +474,11 @@ export default function AdminMoviesPage() {
             <PrimaryBtn onClick={() => setCreating(true)}>Add Movie</PrimaryBtn>
           </div>
         </div>
-        {error && <Card className="mt-3 p-3 bg-rose-50 border-rose-200 text-rose-700 font-semibold">{error}</Card>}
+        {error && (
+          <Card className="mt-3 p-3 bg-rose-50 border-rose-200 text-rose-700 font-semibold">
+            {error}
+          </Card>
+        )}
       </Card>
 
       {/* Movie grid */}
@@ -460,9 +499,13 @@ export default function AdminMoviesPage() {
               <div className="flex-1">
                 <h3 className="font-extrabold text-slate-900">{m.title}</h3>
                 <div className="text-sm text-slate-700">{m.genresStr || "—"}</div>
-                <div className="text-sm text-slate-600">Runtime: {m.runtime || m.durationMins || "—"} min</div>
+                <div className="text-sm text-slate-600">
+                  Runtime: {m.runtime || m.durationMins || "—"} min
+                </div>
                 {m.languages?.length > 0 && (
-                  <div className="text-xs text-slate-600 mt-1">Languages: {m.languages.join(", ")}</div>
+                  <div className="text-xs text-slate-600 mt-1">
+                    Languages: {m.languages.join(", ")}
+                  </div>
                 )}
                 {m.cast?.length > 0 && (
                   <div className="text-xs text-slate-600 mt-1">
@@ -471,8 +514,12 @@ export default function AdminMoviesPage() {
                   </div>
                 )}
                 <div className="mt-3 flex gap-2">
-                  <SecondaryBtn onClick={() => setEditing(m)} className="text-sm">Edit</SecondaryBtn>
-                  <SecondaryBtn onClick={() => doDelete(m)} className="text-sm">Delete</SecondaryBtn>
+                  <SecondaryBtn onClick={() => setEditing(m)} className="text-sm">
+                    Edit
+                  </SecondaryBtn>
+                  <SecondaryBtn onClick={() => doDelete(m)} className="text-sm">
+                    Delete
+                  </SecondaryBtn>
                 </div>
               </div>
             </Card>
