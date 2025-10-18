@@ -576,10 +576,14 @@ export default function AdminAnalyticsDashboard() {
     [loadData, range]
   );
 
-  // start SSE to /stream (outside /api/analytics). API_BASE points to /api/analytics,
-  // so we compute streamUrl by replacing the tail.
-  const baseRoot = API_BASE.replace(/\/api\/analytics$/, "") || API_BASE.replace(/\/+$/, "");
-  const streamUrl = `${baseRoot}/api/analytics/stream`.replace(/\/+/g, "/").replace("http:/", "http://").replace("https:/", "https://");
+  // ===== START SSE URL + token fix =====
+  // EventSource cannot send Authorization headers — include token as query param.
+  // Also avoid double '/api' by deriving API_ROOT from API_BASE safely.
+  const tokenForStream = localStorage.getItem("token") || localStorage.getItem("jwt") || "";
+  const API_ROOT = API_BASE.replace(/\/api\/analytics\/?$/i, "").replace(/\/+$/, "");
+  const streamUrl = `${API_ROOT}/api/analytics/stream${tokenForStream ? `?token=${encodeURIComponent(tokenForStream)}` : ""}`;
+  console.debug("[SSE] connecting to", streamUrl);
+  // ===== END SSE URL + token fix =====
 
   useRealtime({ url: streamUrl, onMessage: handleRealtimeMessage, enabled: true, pollFallbackMs: 30000, setLiveStatus });
 
