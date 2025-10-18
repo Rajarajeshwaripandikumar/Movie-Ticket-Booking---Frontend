@@ -1,5 +1,5 @@
 // frontend/src/pages/AdminAnalytics.jsx — Walmart Style (Blue, Rounded, Clean)
-// Updated: adds SSE realtime (EventSource) + live status badge
+// Updated: adds SSE realtime (EventSource) + live status badge + debug surfacing
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   TrendingUp,
@@ -47,20 +47,13 @@ import {
    ========================================================================== */
 
 function resolveApiBase() {
-  // prefer explicit env keys but fall back to localhost
   const raw =
     import.meta.env.VITE_API_BASE ||
     import.meta.env.VITE_API_BASE_URL ||
     "http://localhost:8080";
 
-  // normalize: remove trailing slashes
   let base = String(raw).replace(/\/+$/, "");
-
-  // defensive: if the provided base already includes /api or /api/analytics,
-  // strip those so we don't end up with /api/api/...
   base = base.replace(/\/api\/analytics$/i, "").replace(/\/api$/i, "");
-
-  // now append the analytics route once
   return `${base}/api/analytics`;
 }
 const API_BASE = resolveApiBase();
@@ -165,10 +158,18 @@ function Stat({ icon: Icon, label, value, delta }) {
   );
 }
 
-const HeaderBar = ({ range, setRange, onRefresh, onExport, onToggleAlerts, onToggleFilters, liveStatus }) => (
+const HeaderBar = ({ range, setRange, onRefresh, onExport, onToggleAlerts, onToggleFilters, liveStatus, debugInfo }) => (
   <div className="space-y-3">
     <div className="flex items-start justify-between gap-4">
-      <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">Admin Analytics</h1>
+      <div>
+        <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">Admin Analytics</h1>
+        {debugInfo && (
+          <div className="mt-1 text-xs text-slate-500">
+            <span className="mr-3">Server bookings since filter: <strong>{debugInfo.totalBookingsSince ?? "—"}</strong></span>
+            {debugInfo.server && <span>Server: <code className="bg-slate-100 px-1 rounded">{debugInfo.server}</code></span>}
+          </div>
+        )}
+      </div>
       <div className="mt-1 flex items-center gap-3">
         <span className="inline-flex items-center gap-2 text-sm text-slate-600">
           <span className={`h-2 w-2 rounded-full ${liveStatus === "connected" ? "bg-emerald-500" : liveStatus === "connecting" ? "bg-amber-400" : "bg-rose-400"}`} />
@@ -253,7 +254,6 @@ const authHeaders = () => {
 };
 
 async function getJSON(path, params, signal) {
-  // Safer URL composition: handle leading/trailing slashes robustly
   const url = new URL(path.replace(/^\//, ""), API_BASE + "/");
   if (params) Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
   const res = await fetch(url, {
@@ -263,7 +263,7 @@ async function getJSON(path, params, signal) {
   });
   if (!res.ok) {
     let detail = "";
-    try { detail = (await res.json())?.message || ""; } catch {}
+    try { detail = (await res.json())?.message || JSON.stringify(await res.text()); } catch {}
     const base = `HTTP ${res.status} ${res.statusText}`;
     throw new Error(detail ? `${base} — ${detail}` : base);
   }
@@ -279,30 +279,30 @@ const fmtDay = (d) => {
     .replace(/ /g, "-");
 };
 
-// Keep both pretty label (for charts) and raw ISO day (for CSV)
+// Accept both total / totalRevenue fields
 const toRevenueDaily = (arr = []) =>
   arr.map((d, i) => {
-    const iso = d?.date?.slice?.(0, 10) || "";
+    const iso = d?.date?.slice?.(0, 10) || d?.dayISO || "";
     return {
       day: fmtDay(iso || `D${i + 1}`),
       dayISO: iso,
-      revenue: Number(d.totalRevenue ?? 0),
-      bookings: Number(d.bookings ?? 0),
+      revenue: Number(d.totalRevenue ?? d.total ?? d.revenue ?? 0),
+      bookings: Number(d.bookings ?? d.totalBookings ?? 0),
     };
   });
 
 const toDauDaily = (arr = []) =>
   arr.map((d, i) => {
-    const iso = d?.date?.slice?.(0, 10) || "";
+    const iso = d?.date?.slice?.(0, 10) || d?.dayISO || "";
     return {
       day: fmtDay(iso || `D${i + 1}`),
       dayISO: iso,
-      users: Number(d.dau ?? 0),
+      users: Number(d.dau ?? d.count ?? d.users ?? 0),
     };
   });
 
 const toMovies = (arr = []) =>
-  arr.map((m) => ({
+  arr.map((m) => (Array.isArray(m) ? m : {
     title: m.movieName ?? m.title ?? "Unknown",
     revenue: Number(m.totalRevenue ?? m.revenue ?? 0),
     bookings: Number(m.totalBookings ?? m.bookings ?? 0),
@@ -310,9 +310,9 @@ const toMovies = (arr = []) =>
   }));
 
 const toTheaterOcc = (arr = []) =>
-  arr.map((t) => ({
+  arr.map((t) => (Array.isArray(t) ? t : {
     name: t.theaterName ?? t.name ?? "Unknown",
-    occupancy: Math.round(Number(t.occupancyRate ?? 0) * 100),
+    occupancy: Math.round(Number(t.occupancyRate ?? t.avgOccupancy ?? 0) * 100),
   }));
 
 function buildSummary(summaryData = [], dauData = [], revenue7 = 0) {
@@ -326,18 +326,13 @@ function buildSummary(summaryData = [], dauData = [], revenue7 = 0) {
   );
   const aov = totals.orders ? Math.round(totals.revenue / totals.orders) : 0;
   const avgDau = dauData.length
-    ? Math.round(dauData.reduce((s, d) => s + (Number(d.dau ?? 0)), 0) / dauData.length)
+    ? Math.round(dauData.reduce((s, d) => s + (Number(d.dau ?? d.users ?? 0)), 0) / dauData.length)
     : 0;
 
   return { revenue30d: totals.revenue, orders: totals.orders, aov, revenue7d: revenue7, dau: avgDau };
 }
 
 /* ----------------------------- Realtime hook ---------------------------- */
-/**
- * useRealtime opens an EventSource to `url` and calls onMessage(payload, type)
- * - reconnects with backoff
- * - calls onMessage({__poll:true}, 'poll') during polling fallback
- */
 function useRealtime({ url, onMessage, enabled = true, pollFallbackMs = 30000, setLiveStatus }) {
   const esRef = useRef(null);
   const backoffRef = useRef(1000);
@@ -358,33 +353,32 @@ function useRealtime({ url, onMessage, enabled = true, pollFallbackMs = 30000, s
         es.onopen = () => {
           backoffRef.current = 1000;
           setLiveStatus?.("connected");
+          console.debug("[SSE] open");
         };
 
-        // generic 'message' events
         es.addEventListener("message", (ev) => {
-          try { onMessage(JSON.parse(ev.data), "message"); } catch (e) {}
+          try { onMessage(JSON.parse(ev.data), "message"); } catch (e) { console.warn("SSE parse error", e); }
         });
 
         const types = ["snapshot", "revenue", "dau", "movies", "occupancy", "summary"];
         types.forEach((t) => {
           es.addEventListener(t, (ev) => {
-            try { onMessage(JSON.parse(ev.data), t); } catch (e) {}
+            try { onMessage(JSON.parse(ev.data), t); } catch (e) { console.warn("SSE parse error for", t, e); }
           });
         });
 
         es.onerror = () => {
-          // signal connection problem; attempt reconnect with backoff
           setLiveStatus?.("connecting");
           try { es.close(); } catch (e) {}
           esRef.current = null;
           if (closedRef.current) return;
+          console.debug("[SSE] connection error — reconnecting...");
           setTimeout(() => {
             backoffRef.current = Math.min(Math.round(backoffRef.current * 1.8), 30000);
             connect();
           }, backoffRef.current);
         };
       } catch (err) {
-        // EventSource unsupported or blocked — fallback to polling
         setLiveStatus?.("disconnected");
         schedulePoll();
       }
@@ -418,15 +412,14 @@ export default function AdminAnalyticsDashboard() {
   const [dauDaily, setDauDaily] = useState([]);
   const [topMovies, setTopMovies] = useState([]);
   const [theaterOcc, setTheaterOcc] = useState([]);
+  const [debugInfo, setDebugInfo] = useState(null);
 
   const [movieLimit] = useState(10);
   const controllerRef = useRef(null);
   const daysOf = (id) => ranges.find((r) => r.id === id)?.days ?? 30;
 
-  // live status: 'connected' | 'connecting' | 'disconnected'
   const [liveStatus, setLiveStatus] = useState("connecting");
 
-  // stable loadData so useRealtime/polling can call it
   const loadData = useCallback(
     async (selectedRange) => {
       controllerRef.current?.abort();
@@ -445,6 +438,11 @@ export default function AdminAnalyticsDashboard() {
           getJSON("/bookings/summary", { days }, controller.signal),
           getJSON("/bookings/summary", { days: 7 }, controller.signal),
         ]);
+
+        // If any endpoint returns an object with debug info (e.g., main /api/analytics),
+        // capture debug.totalBookingsSince if present.
+        if (revTrends && revTrends.debug) setDebugInfo(revTrends.debug);
+        else if (Array.isArray(revTrends) && revTrends.debug) setDebugInfo(revTrends.debug);
 
         const revenueDailyT = toRevenueDaily(revTrends);
         const dauDailyT = toDauDaily(dau);
@@ -469,7 +467,6 @@ export default function AdminAnalyticsDashboard() {
     [movieLimit]
   );
 
-  // initial load + reload on range change
   useEffect(() => {
     loadData(range);
     return () => controllerRef.current?.abort();
@@ -478,14 +475,15 @@ export default function AdminAnalyticsDashboard() {
   /* ------------------ realtime message handler ------------------ */
   const handleRealtimeMessage = useCallback(
     (payload, type) => {
-      // Poll fallback triggered: reload full snapshot
       if (type === "poll" || (payload && payload.__poll)) {
         loadData(range);
         return;
       }
 
       if (type === "snapshot") {
-        const { revenueDaily: rev = [], dauDaily: d = [], movies = [], occupancy = [], summary: summ = null } = payload || {};
+        console.debug("[SSE] snapshot received:", payload);
+        const { revenueDaily: rev = [], dauDaily: d = [], movies = [], occupancy = [], summary: summ = null, debug: dbg = null } = payload || {};
+        if (dbg) setDebugInfo((p) => ({ ...(p || {}), ...dbg }));
         if (rev) setRevenueDaily(toRevenueDaily(rev));
         if (d) setDauDaily(toDauDaily(d));
         if (movies) setTopMovies(toMovies(movies));
@@ -495,7 +493,6 @@ export default function AdminAnalyticsDashboard() {
       }
 
       if (type === "revenue") {
-        // payload may be full day or delta
         setRevenueDaily((prev) => {
           const arr = [...prev];
           const idx = arr.findIndex((d) => d.dayISO === payload.dayISO);
@@ -546,8 +543,9 @@ export default function AdminAnalyticsDashboard() {
         else if (payload) {
           setTopMovies((prev) => {
             const copy = [...prev];
-            const i = copy.findIndex((m) => m.title === (payload.movieName || payload.title));
-            const updated = { title: payload.movieName || payload.title, revenue: Number(payload.totalRevenue ?? payload.revenue ?? 0), bookings: Number(payload.totalBookings ?? payload.bookings ?? 0), seatsBooked: Number(payload.seatsBooked ?? 0) };
+            const title = payload.movieName || payload.title;
+            const i = copy.findIndex((m) => m.title === title);
+            const updated = { title, revenue: Number(payload.totalRevenue ?? payload.revenue ?? 0), bookings: Number(payload.totalBookings ?? payload.bookings ?? 0), seatsBooked: Number(payload.seatsBooked ?? 0) };
             if (i >= 0) copy[i] = updated;
             else copy.unshift(updated);
             return copy.slice(0, 50);
@@ -561,8 +559,9 @@ export default function AdminAnalyticsDashboard() {
         else if (payload) {
           setTheaterOcc((prev) => {
             const copy = [...prev];
-            const i = copy.findIndex((t) => t.name === (payload.theaterName || payload.name));
-            const updated = { name: payload.theaterName || payload.name, occupancy: Math.round(Number(payload.occupancyRate ?? 0) * 100) };
+            const name = payload.theaterName || payload.name;
+            const i = copy.findIndex((t) => t.name === name);
+            const updated = { name, occupancy: Math.round(Number(payload.occupancyRate ?? payload.avgOccupancy ?? 0) * 100) };
             if (i >= 0) copy[i] = updated;
             else copy.unshift(updated);
             return copy;
@@ -588,8 +587,6 @@ export default function AdminAnalyticsDashboard() {
   );
 
   // ===== START SSE URL + token fix =====
-  // EventSource cannot send Authorization headers — include token as query param.
-  // Also avoid double '/api' by deriving API_ROOT from API_BASE safely.
   const tokenForStream = localStorage.getItem("token") || localStorage.getItem("jwt") || "";
   const API_ROOT = API_BASE.replace(/\/api\/analytics\/?$/i, "").replace(/\/+$/, "");
   const streamUrl = `${API_ROOT}/api/analytics/stream${tokenForStream ? `?token=${encodeURIComponent(tokenForStream)}` : ""}`;
@@ -604,7 +601,6 @@ export default function AdminAnalyticsDashboard() {
       const s = String(v);
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
-    // Export date as TEXT so Excel shows it immediately (no ##### and no auto formatting)
     const asExcelText = (s) => (s ? `'${String(s)}` : "");
 
     const makeCSV = (title, headers, rows) => {
@@ -614,7 +610,6 @@ export default function AdminAnalyticsDashboard() {
       return csv;
     };
 
-    // Build sections with ISO date column (text) + pretty label
     const revForCsv = revenueDaily.map((r) => ({
       date: asExcelText(r.dayISO || r.day),
       day: r.day,
@@ -653,6 +648,7 @@ export default function AdminAnalyticsDashboard() {
           onToggleAlerts={() => alert("Alerts panel coming soon")}
           onToggleFilters={() => alert("Filters panel coming soon")}
           liveStatus={liveStatus}
+          debugInfo={debugInfo}
         />
 
         {error && (
