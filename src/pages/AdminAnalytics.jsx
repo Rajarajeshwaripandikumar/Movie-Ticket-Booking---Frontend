@@ -1,5 +1,6 @@
 // frontend/src/pages/AdminAnalytics.jsx — Walmart Style (Blue, Rounded, Clean)
-import React, { useState, useEffect, useRef } from "react";
+// Updated: adds SSE realtime (EventSource) + live status badge
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   TrendingUp,
   TrendingDown,
@@ -36,6 +37,13 @@ import {
      - GET /movies/popular?days=N&limit=10
      - GET /occupancy?days=N
      - GET /bookings/summary?days=N
+   SSE: GET /stream (API_BASE + "/stream") emits:
+     - event: snapshot  -> full snapshot { revenueDaily, dauDaily, movies, occupancy, summary }
+     - event: revenue   -> { dayISO, revenue, bookings } or { dayISO, revenueDelta, bookingsDelta }
+     - event: dau       -> { dayISO, users } or { dayISO, usersDelta }
+     - event: movies    -> array or single movie object
+     - event: occupancy -> array or single occupancy object
+     - event: summary   -> KPI deltas { revenueDelta, ordersDelta, revenue7dDelta, aov, dau }
    ========================================================================== */
 
 function resolveApiBase() {
@@ -147,9 +155,18 @@ function Stat({ icon: Icon, label, value, delta }) {
   );
 }
 
-const HeaderBar = ({ range, setRange, onRefresh, onExport, onToggleAlerts, onToggleFilters }) => (
+const HeaderBar = ({ range, setRange, onRefresh, onExport, onToggleAlerts, onToggleFilters, liveStatus }) => (
   <div className="space-y-3">
-    <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">Admin Analytics</h1>
+    <div className="flex items-start justify-between gap-4">
+      <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">Admin Analytics</h1>
+      <div className="mt-1 flex items-center gap-3">
+        <span className="inline-flex items-center gap-2 text-sm text-slate-600">
+          <span className={`h-2 w-2 rounded-full ${liveStatus === "connected" ? "bg-emerald-500" : liveStatus === "connecting" ? "bg-amber-400" : "bg-rose-400"}`} />
+          <span className="font-medium">{liveStatus === "connected" ? "Live" : liveStatus === "connecting" ? "Connecting…" : "Disconnected"}</span>
+        </span>
+      </div>
+    </div>
+
     <Card className="p-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="text-sm text-slate-600">Revenue, usage, and theater performance at a glance.</div>
@@ -275,15 +292,15 @@ const toDauDaily = (arr = []) =>
 
 const toMovies = (arr = []) =>
   arr.map((m) => ({
-    title: m.movieName ?? "Unknown",
-    revenue: Number(m.totalRevenue ?? 0),
-    bookings: Number(m.totalBookings ?? 0),
+    title: m.movieName ?? m.title ?? "Unknown",
+    revenue: Number(m.totalRevenue ?? m.revenue ?? 0),
+    bookings: Number(m.totalBookings ?? m.bookings ?? 0),
     seatsBooked: Number(m.seatsBooked ?? 0),
   }));
 
 const toTheaterOcc = (arr = []) =>
   arr.map((t) => ({
-    name: t.theaterName ?? "Unknown",
+    name: t.theaterName ?? t.name ?? "Unknown",
     occupancy: Math.round(Number(t.occupancyRate ?? 0) * 100),
   }));
 
@@ -304,6 +321,81 @@ function buildSummary(summaryData = [], dauData = [], revenue7 = 0) {
   return { revenue30d: totals.revenue, orders: totals.orders, aov, revenue7d: revenue7, dau: avgDau };
 }
 
+/* ----------------------------- Realtime hook ---------------------------- */
+/**
+ * useRealtime opens an EventSource to `url` and calls onMessage(payload, type)
+ * - reconnects with backoff
+ * - calls onMessage({__poll:true}, 'poll') during polling fallback
+ */
+function useRealtime({ url, onMessage, enabled = true, pollFallbackMs = 30000, setLiveStatus }) {
+  const esRef = useRef(null);
+  const backoffRef = useRef(1000);
+  const closedRef = useRef(false);
+  const pollTimerRef = useRef(null);
+
+  useEffect(() => {
+    if (!enabled) return;
+    closedRef.current = false;
+    setLiveStatus?.("connecting");
+
+    const connect = () => {
+      if (typeof window === "undefined") return;
+      try {
+        const es = new EventSource(url, { withCredentials: true });
+        esRef.current = es;
+
+        es.onopen = () => {
+          backoffRef.current = 1000;
+          setLiveStatus?.("connected");
+        };
+
+        // generic 'message' events
+        es.addEventListener("message", (ev) => {
+          try { onMessage(JSON.parse(ev.data), "message"); } catch (e) {}
+        });
+
+        const types = ["snapshot", "revenue", "dau", "movies", "occupancy", "summary"];
+        types.forEach((t) => {
+          es.addEventListener(t, (ev) => {
+            try { onMessage(JSON.parse(ev.data), t); } catch (e) {}
+          });
+        });
+
+        es.onerror = () => {
+          // signal connection problem; attempt reconnect with backoff
+          setLiveStatus?.("connecting");
+          try { es.close(); } catch (e) {}
+          esRef.current = null;
+          if (closedRef.current) return;
+          setTimeout(() => {
+            backoffRef.current = Math.min(Math.round(backoffRef.current * 1.8), 30000);
+            connect();
+          }, backoffRef.current);
+        };
+      } catch (err) {
+        // EventSource unsupported or blocked — fallback to polling
+        setLiveStatus?.("disconnected");
+        schedulePoll();
+      }
+    };
+
+    const schedulePoll = () => {
+      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+      pollTimerRef.current = setInterval(() => {
+        onMessage({ __poll: true }, "poll");
+      }, pollFallbackMs);
+    };
+
+    connect();
+
+    return () => {
+      closedRef.current = true;
+      if (esRef.current) try { esRef.current.close(); } catch (e) {}
+      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+    };
+  }, [url, onMessage, enabled, pollFallbackMs, setLiveStatus]);
+}
+
 /* -------------------------------- View -------------------------------- */
 export default function AdminAnalyticsDashboard() {
   const [range, setRange] = useState("30d");
@@ -320,49 +412,176 @@ export default function AdminAnalyticsDashboard() {
   const controllerRef = useRef(null);
   const daysOf = (id) => ranges.find((r) => r.id === id)?.days ?? 30;
 
-  async function loadData(selectedRange) {
-    controllerRef.current?.abort();
-    const controller = new AbortController();
-    controllerRef.current = controller;
-    setLoading(true);
-    setError("");
-    const days = daysOf(selectedRange);
+  // live status: 'connected' | 'connecting' | 'disconnected'
+  const [liveStatus, setLiveStatus] = useState("connecting");
 
-    try {
-      const [revTrends, dau, movies, occ, bookSum, bookSum7] = await Promise.all([
-        getJSON("/revenue/trends", { days }, controller.signal),
-        getJSON("/users/active", { days }, controller.signal),
-        getJSON("/movies/popular", { days, limit: movieLimit }, controller.signal),
-        getJSON("/occupancy", { days }, controller.signal),
-        getJSON("/bookings/summary", { days }, controller.signal),
-        getJSON("/bookings/summary", { days: 7 }, controller.signal),
-      ]);
+  // stable loadData so useRealtime/polling can call it
+  const loadData = useCallback(
+    async (selectedRange) => {
+      controllerRef.current?.abort();
+      const controller = new AbortController();
+      controllerRef.current = controller;
+      setLoading(true);
+      setError("");
+      const days = daysOf(selectedRange);
 
-      const revenueDailyT = toRevenueDaily(revTrends);
-      const dauDailyT = toDauDaily(dau);
-      const moviesT = toMovies(movies);
-      const occT = toTheaterOcc(occ);
-      const revenue7 = (bookSum7 || []).reduce((s, d) => s + Number(d.revenue ?? 0), 0);
-      const kpis = buildSummary(bookSum, dau, revenue7);
+      try {
+        const [revTrends, dau, movies, occ, bookSum, bookSum7] = await Promise.all([
+          getJSON("/revenue/trends", { days }, controller.signal),
+          getJSON("/users/active", { days }, controller.signal),
+          getJSON("/movies/popular", { days, limit: movieLimit }, controller.signal),
+          getJSON("/occupancy", { days }, controller.signal),
+          getJSON("/bookings/summary", { days }, controller.signal),
+          getJSON("/bookings/summary", { days: 7 }, controller.signal),
+        ]);
 
-      setRevenueDaily(revenueDailyT);
-      setDauDaily(dauDailyT);
-      setTopMovies(moviesT);
-      setTheaterOcc(occT);
-      setSummary(kpis);
-    } catch (e) {
-      if (e.name === "AbortError") return;
-      console.error("Analytics load failed:", e);
-      setError(e.message || "Failed to load analytics");
-    } finally {
-      setLoading(false);
-    }
-  }
+        const revenueDailyT = toRevenueDaily(revTrends);
+        const dauDailyT = toDauDaily(dau);
+        const moviesT = toMovies(movies);
+        const occT = toTheaterOcc(occ);
+        const revenue7 = (bookSum7 || []).reduce((s, d) => s + Number(d.revenue ?? 0), 0);
+        const kpis = buildSummary(bookSum, dau, revenue7);
 
+        setRevenueDaily(revenueDailyT);
+        setDauDaily(dauDailyT);
+        setTopMovies(moviesT);
+        setTheaterOcc(occT);
+        setSummary(kpis);
+      } catch (e) {
+        if (e.name === "AbortError") return;
+        console.error("Analytics load failed:", e);
+        setError(e.message || "Failed to load analytics");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [movieLimit]
+  );
+
+  // initial load + reload on range change
   useEffect(() => {
     loadData(range);
     return () => controllerRef.current?.abort();
-  }, [range, movieLimit]);
+  }, [range, loadData]);
+
+  /* ------------------ realtime message handler ------------------ */
+  const handleRealtimeMessage = useCallback(
+    (payload, type) => {
+      // Poll fallback triggered: reload full snapshot
+      if (type === "poll" || (payload && payload.__poll)) {
+        loadData(range);
+        return;
+      }
+
+      if (type === "snapshot") {
+        const { revenueDaily: rev = [], dauDaily: d = [], movies = [], occupancy = [], summary: summ = null } = payload || {};
+        if (rev) setRevenueDaily(toRevenueDaily(rev));
+        if (d) setDauDaily(toDauDaily(d));
+        if (movies) setTopMovies(toMovies(movies));
+        if (occupancy) setTheaterOcc(toTheaterOcc(occupancy));
+        if (summ) setSummary((prev) => ({ ...prev, ...summ }));
+        return;
+      }
+
+      if (type === "revenue") {
+        // payload may be full day or delta
+        setRevenueDaily((prev) => {
+          const arr = [...prev];
+          const idx = arr.findIndex((d) => d.dayISO === payload.dayISO);
+          if (payload.revenue != null) {
+            const entry = { day: fmtDay(payload.dayISO), dayISO: payload.dayISO, revenue: Number(payload.revenue), bookings: Number(payload.bookings ?? 0) };
+            if (idx >= 0) arr[idx] = entry;
+            else arr.unshift(entry);
+            return arr;
+          }
+          if (payload.revenueDelta != null) {
+            if (idx >= 0) {
+              arr[idx] = { ...arr[idx], revenue: Number(arr[idx].revenue || 0) + Number(payload.revenueDelta || 0), bookings: Number(arr[idx].bookings || 0) + Number(payload.bookingsDelta || 0) };
+              return arr;
+            } else {
+              return [{ day: fmtDay(payload.dayISO), dayISO: payload.dayISO, revenue: Number(payload.revenueDelta || 0), bookings: Number(payload.bookingsDelta || 0) }, ...arr];
+            }
+          }
+          return prev;
+        });
+        return;
+      }
+
+      if (type === "dau") {
+        setDauDaily((prev) => {
+          const arr = [...prev];
+          const idx = arr.findIndex((d) => d.dayISO === payload.dayISO);
+          if (payload.users != null) {
+            const entry = { day: fmtDay(payload.dayISO), dayISO: payload.dayISO, users: Number(payload.users) };
+            if (idx >= 0) arr[idx] = entry;
+            else arr.unshift(entry);
+            return arr;
+          }
+          if (payload.usersDelta != null) {
+            if (idx >= 0) {
+              arr[idx] = { ...arr[idx], users: Number(arr[idx].users || 0) + Number(payload.usersDelta || 0) };
+              return arr;
+            } else {
+              return [{ day: fmtDay(payload.dayISO), dayISO: payload.dayISO, users: Number(payload.usersDelta || 0) }, ...arr];
+            }
+          }
+          return prev;
+        });
+        return;
+      }
+
+      if (type === "movies") {
+        if (Array.isArray(payload)) setTopMovies(toMovies(payload));
+        else if (payload) {
+          setTopMovies((prev) => {
+            const copy = [...prev];
+            const i = copy.findIndex((m) => m.title === (payload.movieName || payload.title));
+            const updated = { title: payload.movieName || payload.title, revenue: Number(payload.totalRevenue ?? payload.revenue ?? 0), bookings: Number(payload.totalBookings ?? payload.bookings ?? 0), seatsBooked: Number(payload.seatsBooked ?? 0) };
+            if (i >= 0) copy[i] = updated;
+            else copy.unshift(updated);
+            return copy.slice(0, 50);
+          });
+        }
+        return;
+      }
+
+      if (type === "occupancy") {
+        if (Array.isArray(payload)) setTheaterOcc(toTheaterOcc(payload));
+        else if (payload) {
+          setTheaterOcc((prev) => {
+            const copy = [...prev];
+            const i = copy.findIndex((t) => t.name === (payload.theaterName || payload.name));
+            const updated = { name: payload.theaterName || payload.name, occupancy: Math.round(Number(payload.occupancyRate ?? 0) * 100) };
+            if (i >= 0) copy[i] = updated;
+            else copy.unshift(updated);
+            return copy;
+          });
+        }
+        return;
+      }
+
+      if (type === "summary") {
+        setSummary((prev) => {
+          const next = { ...prev };
+          if (payload.revenueDelta) next.revenue30d = Number(prev.revenue30d || 0) + Number(payload.revenueDelta);
+          if (payload.ordersDelta) next.orders = Number(prev.orders || 0) + Number(payload.ordersDelta);
+          if (payload.aov != null) next.aov = payload.aov;
+          if (payload.revenue7dDelta) next.revenue7d = Number(prev.revenue7d || 0) + Number(payload.revenue7dDelta);
+          if (payload.dau != null) next.dau = payload.dau;
+          return next;
+        });
+        return;
+      }
+    },
+    [loadData, range]
+  );
+
+  // start SSE to /stream (outside /api/analytics). API_BASE points to /api/analytics,
+  // so we compute streamUrl by replacing the tail.
+  const baseRoot = API_BASE.replace(/\/api\/analytics$/, "") || API_BASE.replace(/\/+$/, "");
+  const streamUrl = `${baseRoot}/api/analytics/stream`.replace(/\/+/g, "/").replace("http:/", "http://").replace("https:/", "https://");
+
+  useRealtime({ url: streamUrl, onMessage: handleRealtimeMessage, enabled: true, pollFallbackMs: 30000, setLiveStatus });
 
   function exportCSV() {
     const csvEscape = (v) => {
@@ -418,6 +637,7 @@ export default function AdminAnalyticsDashboard() {
           onRefresh={() => loadData(range)}
           onToggleAlerts={() => alert("Alerts panel coming soon")}
           onToggleFilters={() => alert("Filters panel coming soon")}
+          liveStatus={liveStatus}
         />
 
         {error && (
