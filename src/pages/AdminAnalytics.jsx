@@ -1,5 +1,5 @@
 // frontend/src/pages/AdminAnalytics.jsx — Walmart Style (Blue, Rounded, Clean)
-// Updated: adds SSE realtime (EventSource) + live status badge + debug surfacing
+// Improved: composite /api/analytics first, fallback to granular endpoints, robust SSE handling
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   TrendingUp,
@@ -31,19 +31,9 @@ import {
 
 /* =============================================================================
    Admin Analytics wired to YOUR Express routes (Walmart UI)
-   Routes mounted at /api/analytics:
-     - GET /revenue/trends?days=N
-     - GET /users/active?days=N
-     - GET /movies/popular?days=N&limit=10
-     - GET /occupancy?days=N
-     - GET /bookings/summary?days=N
-   SSE: GET /stream (API_BASE + "/stream") emits:
-     - event: snapshot  -> full snapshot { revenueDaily, dauDaily, movies, occupancy, summary }
-     - event: revenue   -> { dayISO, revenue, bookings } or { dayISO, revenueDelta, bookingsDelta }
-     - event: dau       -> { dayISO, users } or { dayISO, usersDelta }
-     - event: movies    -> array or single movie object
-     - event: occupancy -> array or single occupancy object
-     - event: summary   -> KPI deltas { revenueDelta, ordersDelta, revenue7dDelta, aov, dau }
+   - Composite: GET /api/analytics?days=N  -> { revenue, users, occupancy, popularMovies, debug }
+   - Granular: GET /revenue/trends, /users/active, /movies/popular, /occupancy, /bookings/summary
+   SSE: GET /stream (API_BASE + "/stream") emits snapshot/revenue/dau/movies/occupancy/summary
    ========================================================================== */
 
 function resolveApiBase() {
@@ -58,12 +48,12 @@ function resolveApiBase() {
 }
 const API_BASE = resolveApiBase();
 
-/* ----------------------------- Walmart tokens ----------------------------- */
+/* Colors */
 const BLUE = "#0071DC";
 const BLUE_DARK = "#0654BA";
 const SOFT = "#94A3B8";
 
-/* --------------------------- Walmart primitives --------------------------- */
+/* UI primitives (same as your original) */
 const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
   <Tag className={`bg-white border border-slate-200 rounded-2xl shadow-sm ${className}`} {...rest}>
     {children}
@@ -88,7 +78,7 @@ const Primary = ({ children, className = "", ...props }) => (
   </button>
 );
 
-/* ------------------------------ UI helpers ------------------------------ */
+/* helpers */
 const ranges = [
   { id: "7d", label: "Last 7d", days: 7 },
   { id: "14d", label: "Last 14d", days: 14 },
@@ -247,7 +237,7 @@ const EmptyMini = ({ label }) => (
   </div>
 );
 
-/* ----------------------------- API helpers ---------------------------- */
+/* API helpers */
 const authHeaders = () => {
   const token = localStorage.getItem("token") || localStorage.getItem("jwt") || "";
   return token ? { Authorization: `Bearer ${token}` } : {};
@@ -270,7 +260,7 @@ async function getJSON(path, params, signal) {
   return res.json();
 }
 
-/* ---------------------------- data transforms ---------------------------- */
+/* data transforms */
 const fmtDay = (d) => {
   const dt = new Date(d);
   if (isNaN(dt)) return String(d || "");
@@ -279,10 +269,9 @@ const fmtDay = (d) => {
     .replace(/ /g, "-");
 };
 
-// Accept both total / totalRevenue fields
 const toRevenueDaily = (arr = []) =>
-  arr.map((d, i) => {
-    const iso = d?.date?.slice?.(0, 10) || d?.dayISO || "";
+  (arr || []).map((d, i) => {
+    const iso = d?.date?.slice?.(0, 10) || d?.dayISO || d?.date || "";
     return {
       day: fmtDay(iso || `D${i + 1}`),
       dayISO: iso,
@@ -292,8 +281,8 @@ const toRevenueDaily = (arr = []) =>
   });
 
 const toDauDaily = (arr = []) =>
-  arr.map((d, i) => {
-    const iso = d?.date?.slice?.(0, 10) || d?.dayISO || "";
+  (arr || []).map((d, i) => {
+    const iso = d?.date?.slice?.(0, 10) || d?.dayISO || d?.date || "";
     return {
       day: fmtDay(iso || `D${i + 1}`),
       dayISO: iso,
@@ -302,21 +291,28 @@ const toDauDaily = (arr = []) =>
   });
 
 const toMovies = (arr = []) =>
-  arr.map((m) => (Array.isArray(m) ? m : {
-    title: m.movieName ?? m.title ?? "Unknown",
-    revenue: Number(m.totalRevenue ?? m.revenue ?? 0),
-    bookings: Number(m.totalBookings ?? m.bookings ?? 0),
-    seatsBooked: Number(m.seatsBooked ?? 0),
-  }));
+  (arr || []).map((m = {}) => {
+    // m might already be shaped, or may be { movie: 'Title', bookings, revenue }
+    const title = m.movieName ?? m.title ?? (m.movie && m.movie.title) ?? "Unknown";
+    return {
+      title,
+      revenue: Number(m.totalRevenue ?? m.revenue ?? m.revenue ?? 0),
+      bookings: Number(m.totalBookings ?? m.bookings ?? m.bookings ?? 0),
+      seatsBooked: Number(m.seatsBooked ?? 0),
+    };
+  });
 
 const toTheaterOcc = (arr = []) =>
-  arr.map((t) => (Array.isArray(t) ? t : {
-    name: t.theaterName ?? t.name ?? "Unknown",
-    occupancy: Math.round(Number(t.occupancyRate ?? t.avgOccupancy ?? 0) * 100),
-  }));
+  (arr || []).map((t = {}) => {
+    const name = t.theaterName ?? t.name ?? (t._id && String(t._id)) ?? "Unknown";
+    const occupancyValue = Number(t.occupancyRate ?? t.avgOccupancy ?? 0);
+    // if occupancy already in percent (0-100) detect and normalize
+    const occupancy = occupancyValue > 1 ? Math.round(occupancyValue) : Math.round(occupancyValue * 100);
+    return { name, occupancy };
+  });
 
 function buildSummary(summaryData = [], dauData = [], revenue7 = 0) {
-  const totals = summaryData.reduce(
+  const totals = (summaryData || []).reduce(
     (acc, d) => {
       acc.revenue += Number(d.revenue ?? 0);
       acc.orders += Number(d.confirmed ?? 0);
@@ -325,14 +321,14 @@ function buildSummary(summaryData = [], dauData = [], revenue7 = 0) {
     { revenue: 0, orders: 0 }
   );
   const aov = totals.orders ? Math.round(totals.revenue / totals.orders) : 0;
-  const avgDau = dauData.length
-    ? Math.round(dauData.reduce((s, d) => s + (Number(d.dau ?? d.users ?? 0)), 0) / dauData.length)
+  const avgDau = dauData && dauData.length
+    ? Math.round((dauData.reduce((s, d) => s + (Number(d.dau ?? d.users ?? 0)), 0)) / dauData.length)
     : 0;
 
   return { revenue30d: totals.revenue, orders: totals.orders, aov, revenue7d: revenue7, dau: avgDau };
 }
 
-/* ----------------------------- Realtime hook ---------------------------- */
+/* Realtime hook (unchanged except logs) */
 function useRealtime({ url, onMessage, enabled = true, pollFallbackMs = 30000, setLiveStatus }) {
   const esRef = useRef(null);
   const backoffRef = useRef(1000);
@@ -360,7 +356,7 @@ function useRealtime({ url, onMessage, enabled = true, pollFallbackMs = 30000, s
           try { onMessage(JSON.parse(ev.data), "message"); } catch (e) { console.warn("SSE parse error", e); }
         });
 
-        const types = ["snapshot", "revenue", "dau", "movies", "occupancy", "summary"];
+        const types = ["snapshot", "revenue", "dau", "movies", "occupancy", "summary", "notification"];
         types.forEach((t) => {
           es.addEventListener(t, (ev) => {
             try { onMessage(JSON.parse(ev.data), t); } catch (e) { console.warn("SSE parse error for", t, e); }
@@ -401,7 +397,7 @@ function useRealtime({ url, onMessage, enabled = true, pollFallbackMs = 30000, s
   }, [url, onMessage, enabled, pollFallbackMs, setLiveStatus]);
 }
 
-/* -------------------------------- View -------------------------------- */
+/* Main component */
 export default function AdminAnalyticsDashboard() {
   const [range, setRange] = useState("30d");
   const [loading, setLoading] = useState(false);
@@ -430,6 +426,39 @@ export default function AdminAnalyticsDashboard() {
       const days = daysOf(selectedRange);
 
       try {
+        // Try the composite endpoint first — it's handy to get debug + snapshot in one call
+        let composite = null;
+        try {
+          composite = await getJSON("/", { days }, controller.signal);
+        } catch (e) {
+          // not fatal — fall back to granular endpoints
+          composite = null;
+        }
+
+        if (composite && composite.ok !== false && (composite.revenue || composite.users || composite.popularMovies)) {
+          // Use composite
+          const rev = composite.revenue || [];
+          const users = composite.users || [];
+          const movies = composite.popularMovies || [];
+          const occ = composite.occupancy || [];
+          const bookSummary = composite.bookingsSummary || [];
+          // capture debug if present
+          if (composite.debug) setDebugInfo(composite.debug);
+
+          setRevenueDaily(toRevenueDaily(rev));
+          setDauDaily(toDauDaily(users));
+          setTopMovies(toMovies(movies));
+          setTheaterOcc(toTheaterOcc(occ));
+          // build summary from bookings summary if present, else attempt other fallbacks
+          const revenue7 = (composite.revenue7d ?? 0) || 0;
+          const kpis = buildSummary(bookSummary || [], users, revenue7);
+          setSummary(kpis);
+
+          setLoading(false);
+          return;
+        }
+
+        // fallback: granular endpoints
         const [revTrends, dau, movies, occ, bookSum, bookSum7] = await Promise.all([
           getJSON("/revenue/trends", { days }, controller.signal),
           getJSON("/users/active", { days }, controller.signal),
@@ -439,10 +468,8 @@ export default function AdminAnalyticsDashboard() {
           getJSON("/bookings/summary", { days: 7 }, controller.signal),
         ]);
 
-        // If any endpoint returns an object with debug info (e.g., main /api/analytics),
-        // capture debug.totalBookingsSince if present.
+        // If any endpoint returned debug object (rare), capture
         if (revTrends && revTrends.debug) setDebugInfo(revTrends.debug);
-        else if (Array.isArray(revTrends) && revTrends.debug) setDebugInfo(revTrends.debug);
 
         const revenueDailyT = toRevenueDaily(revTrends);
         const dauDailyT = toDauDaily(dau);
@@ -472,7 +499,7 @@ export default function AdminAnalyticsDashboard() {
     return () => controllerRef.current?.abort();
   }, [range, loadData]);
 
-  /* ------------------ realtime message handler ------------------ */
+  /* Realtime message handler */
   const handleRealtimeMessage = useCallback(
     (payload, type) => {
       if (type === "poll" || (payload && payload.__poll)) {
@@ -481,7 +508,7 @@ export default function AdminAnalyticsDashboard() {
       }
 
       if (type === "snapshot") {
-        console.debug("[SSE] snapshot received:", payload);
+        console.debug("[SSE] snapshot:", payload);
         const { revenueDaily: rev = [], dauDaily: d = [], movies = [], occupancy = [], summary: summ = null, debug: dbg = null } = payload || {};
         if (dbg) setDebugInfo((p) => ({ ...(p || {}), ...dbg }));
         if (rev) setRevenueDaily(toRevenueDaily(rev));
@@ -493,25 +520,27 @@ export default function AdminAnalyticsDashboard() {
       }
 
       if (type === "revenue") {
-        setRevenueDaily((prev) => {
-          const arr = [...prev];
-          const idx = arr.findIndex((d) => d.dayISO === payload.dayISO);
-          if (payload.revenue != null) {
-            const entry = { day: fmtDay(payload.dayISO), dayISO: payload.dayISO, revenue: Number(payload.revenue), bookings: Number(payload.bookings ?? 0) };
-            if (idx >= 0) arr[idx] = entry;
-            else arr.unshift(entry);
-            return arr;
-          }
-          if (payload.revenueDelta != null) {
-            if (idx >= 0) {
-              arr[idx] = { ...arr[idx], revenue: Number(arr[idx].revenue || 0) + Number(payload.revenueDelta || 0), bookings: Number(arr[idx].bookings || 0) + Number(payload.bookingsDelta || 0) };
+        try {
+          setRevenueDaily((prev) => {
+            const arr = [...prev];
+            const idx = arr.findIndex((d) => d.dayISO === payload.dayISO);
+            if (payload.revenue != null) {
+              const entry = { day: fmtDay(payload.dayISO), dayISO: payload.dayISO, revenue: Number(payload.revenue), bookings: Number(payload.bookings ?? 0) };
+              if (idx >= 0) arr[idx] = entry;
+              else arr.unshift(entry);
               return arr;
-            } else {
-              return [{ day: fmtDay(payload.dayISO), dayISO: payload.dayISO, revenue: Number(payload.revenueDelta || 0), bookings: Number(payload.bookingsDelta || 0) }, ...arr];
             }
-          }
-          return prev;
-        });
+            if (payload.revenueDelta != null) {
+              if (idx >= 0) {
+                arr[idx] = { ...arr[idx], revenue: Number(arr[idx].revenue || 0) + Number(payload.revenueDelta || 0), bookings: Number(arr[idx].bookings || 0) + Number(payload.bookingsDelta || 0) };
+                return arr;
+              } else {
+                return [{ day: fmtDay(payload.dayISO), dayISO: payload.dayISO, revenue: Number(payload.revenueDelta || 0), bookings: Number(payload.bookingsDelta || 0) }, ...arr];
+              }
+            }
+            return prev;
+          });
+        } catch (e) { console.warn("apply revenue delta failed", e); }
         return;
       }
 
@@ -582,16 +611,18 @@ export default function AdminAnalyticsDashboard() {
         });
         return;
       }
+
+      // notifications or other messages: we ignore or could surface
+      return;
     },
     [loadData, range]
   );
 
-  // ===== START SSE URL + token fix =====
+  // SSE URL + token
   const tokenForStream = localStorage.getItem("token") || localStorage.getItem("jwt") || "";
   const API_ROOT = API_BASE.replace(/\/api\/analytics\/?$/i, "").replace(/\/+$/, "");
   const streamUrl = `${API_ROOT}/api/analytics/stream${tokenForStream ? `?token=${encodeURIComponent(tokenForStream)}` : ""}`;
   console.debug("[SSE] connecting to", streamUrl);
-  // ===== END SSE URL + token fix =====
 
   useRealtime({ url: streamUrl, onMessage: handleRealtimeMessage, enabled: true, pollFallbackMs: 30000, setLiveStatus });
 
