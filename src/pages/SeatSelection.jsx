@@ -75,12 +75,14 @@ function buildGrid(rows, cols, snapshotList) {
 /* Single-letter row label: A, B, C... */
 const rowLabel = (r) => String.fromCharCode(64 + r);
 
-/* Circular seat button (Walmart look) */
+/* Circular seat button (Walmart look)
+   --> made smaller and tighter: w-7 h-7, text-xs, reduced border-radius for compact look.
+*/
 function SeatButton({ state, number, active, onClick }) {
   const stateU = (state || "AVAILABLE").toUpperCase();
   const disabled = stateU === "BOOKED" || stateU === "LOCKED" || stateU === "HELD";
   const base =
-    "w-10 h-10 rounded-full text-[11px] font-semibold flex items-center justify-center transition-all select-none border";
+    "w-7 h-7 rounded-full text-[10px] font-semibold flex items-center justify-center transition-all select-none border";
   const classes = active
     ? "text-white border-transparent shadow-sm"
     : disabled
@@ -103,15 +105,19 @@ function SeatButton({ state, number, active, onClick }) {
   );
 }
 
-/* Row with center aisle gap */
+/* Row with center aisle gap
+   --> tightened gaps, use grid to ensure consistent alignment across rows.
+*/
 function SeatRow({ rowIndex, seatsInRow, selected, onToggle }) {
   const lbl = rowLabel(rowIndex);
   const aisleAfter = Math.floor(seatsInRow.length / 2); // insert gap after middle seat
 
   return (
     <div className="flex items-center gap-3 py-1">
-      <div className="w-8 shrink-0 text-sm text-slate-700 font-semibold text-left">{lbl}</div>
-      <div className="flex flex-wrap gap-2">
+      <div className="w-6 shrink-0 text-sm text-slate-700 font-semibold text-left">{lbl}</div>
+
+      {/* Seat container: use inline-grid so seats are neat and consistent */}
+      <div className="inline-grid" style={{ gridAutoFlow: "column", gridAutoColumns: "min-content", gap: "6px 6px" }}>
         {seatsInRow.map((s) => {
           const isActive = selected.some((x) => x.row === s.row && x.col === s.col);
           return (
@@ -122,7 +128,7 @@ function SeatRow({ rowIndex, seatsInRow, selected, onToggle }) {
                 active={isActive}
                 onClick={() => onToggle({ row: s.row, col: s.col })}
               />
-              {s.col === aisleAfter && <div className="w-6" />}
+              {s.col === aisleAfter && <div style={{ width: 10 }} />} {/* smaller aisle gap */}
             </React.Fragment>
           );
         })}
@@ -410,66 +416,68 @@ export default function SeatSelection() {
             </p>
           </div>
 
-          <div className="px-5 py-5 overflow-auto">
-            <div className="inline-block">
-              {rowsArray.map((rowSeats, idx) => (
-                <SeatRow
-                  key={`r-${idx + 1}`}
-                  rowIndex={idx + 1}
-                  seatsInRow={rowSeats}
-                  selected={selected}
-                  onToggle={toggleSeat}
-                />
-              ))}
+          <div className="px-5 py-5">
+            {/* --- MOVED: Screen should be on TOP (user requested) --- */}
+            <div className="mb-4 flex flex-col items-center">
+              <div className="mb-2">
+                <svg
+                  viewBox="0 0 460 70"
+                  className="block w-[360px] sm:w-[420px] md:w-[460px] h-[70px] origin-center"
+                  aria-hidden="true"
+                >
+                  <defs>
+                    <filter id="soft-blur" x="-20%" y="-20%" width="140%" height="140%">
+                      <feGaussianBlur in="SourceGraphic" stdDeviation="1.2" />
+                    </filter>
+                  </defs>
+
+                  {/* bottom glow */}
+                  <path
+                    d="M20,44 C120,14 340,14 440,44"
+                    stroke="#8AB9FF"
+                    strokeWidth="10"
+                    fill="none"
+                    strokeLinecap="round"
+                    opacity="0.9"
+                    filter="url(#soft-blur)"
+                  />
+                  {/* main curve */}
+                  <path
+                    d="M25,38 C125,8 335,8 435,38"
+                    stroke={BLUE}
+                    strokeWidth="12"
+                    fill="none"
+                    strokeLinecap="round"
+                    opacity="0.95"
+                  />
+                  {/* top highlight */}
+                  <path
+                    d="M35,32 C135,2 325,2 425,32"
+                    stroke={BLUE_DARK}
+                    strokeWidth="10"
+                    fill="none"
+                    strokeLinecap="round"
+                    opacity="0.85"
+                  />
+                </svg>
+              </div>
+              <p className="text-center text-[11px] tracking-[0.2em] text-slate-500">SCREEN THIS WAY</p>
             </div>
 
-            {/* 🎥 Curved blue screen (flipped to face seats) */}
-            <div className="mt-10 mb-2 flex justify-center">
-              <svg
-                viewBox="0 0 460 70"
-                className="block w-[360px] sm:w-[420px] md:w-[460px] h-[70px] origin-center -scale-y-100"
-                aria-hidden="true"
-              >
-                <defs>
-                  <filter id="soft-blur" x="-20%" y="-20%" width="140%" height="140%">
-                    <feGaussianBlur in="SourceGraphic" stdDeviation="1.2" />
-                  </filter>
-                </defs>
-
-                {/* bottom glow */}
-                <path
-                  d="M20,44 C120,14 340,14 440,44"
-                  stroke="#8AB9FF"
-                  strokeWidth="10"
-                  fill="none"
-                  strokeLinecap="round"
-                  opacity="0.9"
-                  filter="url(#soft-blur)"
-                />
-                {/* main curve */}
-                <path
-                  d="M25,38 C125,8 335,8 435,38"
-                  stroke={BLUE}
-                  strokeWidth="12"
-                  fill="none"
-                  strokeLinecap="round"
-                  opacity="0.95"
-                />
-                {/* top highlight */}
-                <path
-                  d="M35,32 C135,2 325,2 425,32"
-                  stroke={BLUE_DARK}
-                  strokeWidth="10"
-                  fill="none"
-                  strokeLinecap="round"
-                  opacity="0.85"
-                />
-              </svg>
+            {/* Make seat area vertically stacked and scrollable if large */}
+            <div className="max-h-[52vh] overflow-auto">
+              <div className="flex flex-col items-center gap-2 px-2">
+                {rowsArray.map((rowSeats, idx) => (
+                  <SeatRow
+                    key={`r-${idx + 1}`}
+                    rowIndex={idx + 1}
+                    seatsInRow={rowSeats}
+                    selected={selected}
+                    onToggle={toggleSeat}
+                  />
+                ))}
+              </div>
             </div>
-
-            <p className="text-center text-[11px] tracking-[0.2em] text-slate-500">
-              SCREEN THIS WAY
-            </p>
 
             {/* Legend (circular) */}
             <div className="mt-6 flex items-center justify-center gap-6 text-sm">
