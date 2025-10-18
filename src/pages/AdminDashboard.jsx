@@ -8,6 +8,12 @@ import {
   BarChart3, // Analytics
   Clapperboard, // Movies
   ChevronRight,
+  ShoppingBag, // Bookings
+  Users, // Users
+  Bell, // Notifications
+  CreditCard, // Payments
+  Settings, // System Settings
+  FileText, // Reports
 } from "lucide-react";
 
 /* ----------------------------- Walmart primitives ---------------------------- */
@@ -48,6 +54,14 @@ export default function AdminDashboard() {
     { to: "/admin/showtimes", label: "Manage Showtimes", desc: "Schedule movie showtimes", icon: CalendarClock },
     { to: "/admin/pricing", label: "Update Pricing", desc: "Adjust ticket pricing", icon: CircleDollarSign },
     { to: "/admin/analytics", label: "Admin Analytics", desc: "Sales and booking reports", icon: BarChart3 },
+
+    // Additional helpful admin tiles
+    { to: "/admin/bookings", label: "Manage Bookings", desc: "View and manage bookings", icon: ShoppingBag },
+    { to: "/admin/users", label: "Manage Users", desc: "User accounts, roles & permissions", icon: Users },
+    { to: "/admin/notifications", label: "Notifications", desc: "Send announcements & alerts", icon: Bell },
+    { to: "/admin/payments", label: "Payments", desc: "Monitor payments and refunds", icon: CreditCard },
+    { to: "/admin/settings", label: "System Settings", desc: "Configure app preferences", icon: Settings },
+    { to: "/admin/reports", label: "Reports", desc: "Export advanced reports", icon: FileText },
   ];
 
   return (
