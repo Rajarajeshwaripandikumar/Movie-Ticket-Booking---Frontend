@@ -47,11 +47,21 @@ import {
    ========================================================================== */
 
 function resolveApiBase() {
-  const base =
+  // prefer explicit env keys but fall back to localhost
+  const raw =
     import.meta.env.VITE_API_BASE ||
     import.meta.env.VITE_API_BASE_URL ||
     "http://localhost:8080";
-  return `${base.replace(/\/+$/, "")}/api/analytics`;
+
+  // normalize: remove trailing slashes
+  let base = String(raw).replace(/\/+$/, "");
+
+  // defensive: if the provided base already includes /api or /api/analytics,
+  // strip those so we don't end up with /api/api/...
+  base = base.replace(/\/api\/analytics$/i, "").replace(/\/api$/i, "");
+
+  // now append the analytics route once
+  return `${base}/api/analytics`;
 }
 const API_BASE = resolveApiBase();
 
@@ -243,7 +253,8 @@ const authHeaders = () => {
 };
 
 async function getJSON(path, params, signal) {
-  const url = new URL(API_BASE + path);
+  // Safer URL composition: handle leading/trailing slashes robustly
+  const url = new URL(path.replace(/^\//, ""), API_BASE + "/");
   if (params) Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
   const res = await fetch(url, {
     headers: { "Content-Type": "application/json", ...authHeaders() },
