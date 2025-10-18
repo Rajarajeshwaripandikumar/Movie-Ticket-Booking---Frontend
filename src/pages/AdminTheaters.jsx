@@ -375,174 +375,180 @@ export default function AdminTheaters() {
           </Card>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          {/* Image upload */}
-          <Card className="p-5">
-            <h2 className="text-lg font-extrabold border-b border-slate-200 pb-2 mb-4 flex items-center gap-2">
-              <ImageIcon className="h-5 w-5" /> Theater Image
-            </h2>
-            <div className="flex items-center gap-4">
-              <div className="w-24 h-24 rounded-xl overflow-hidden bg-slate-200 border border-slate-200 shadow-sm">
-                <img
-                  key={previewKey}
-                  src={preview || DEFAULT_IMG}
-                  onError={(e) => (e.currentTarget.src = DEFAULT_IMG)}
-                  alt="preview"
-                  className="w-full h-full object-cover"
-                />
-              </div>
-              <div className="flex flex-col gap-1">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={onPickFile}
-                />
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 font-semibold border border-slate-300 bg-white hover:bg-slate-50"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    fileInputRef.current?.click();
-                  }}
-                >
-                  <ImageIcon className="h-4 w-4" /> Choose Image
-                </button>
-                <span className="text-xs text-slate-500">JPG/PNG/WEBP/GIF · up to 3MB</span>
-              </div>
-            </div>
-          </Card>
-
-          {/* Form */}
-          <Card className="p-5">
-            <h2 className="text-lg font-extrabold border-b border-slate-200 pb-2 mb-4 flex items-center gap-2">
-              <PlusCircle className="h-5 w-5" /> Add / Edit Theater
-            </h2>
-
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                createTheater();
-              }}
-              className="space-y-4"
-            >
-              {selectedId && (
-                <div className="text-xs text-slate-600">
-                  Editing ID: <span className="font-mono">{selectedId}</span>
+        {/* ===== Balanced 2-column layout: left = Image + List, right = Form ===== */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* LEFT: stack Image upload + Existing Theaters (takes 2 cols on large screens) */}
+          <div className="lg:col-span-2 space-y-5">
+            {/* Image upload */}
+            <Card className="p-5">
+              <h2 className="text-lg font-extrabold border-b border-slate-200 pb-2 mb-4 flex items-center gap-2">
+                <ImageIcon className="h-5 w-5" /> Theater Image
+              </h2>
+              <div className="flex items-center gap-4">
+                <div className="w-24 h-24 rounded-xl overflow-hidden bg-slate-200 border border-slate-200 shadow-sm">
+                  <img
+                    key={previewKey}
+                    src={preview || DEFAULT_IMG}
+                    onError={(e) => (e.currentTarget.src = DEFAULT_IMG)}
+                    alt="preview"
+                    className="w-full h-full object-cover"
+                  />
                 </div>
-              )}
-
-              <Field label="Theater Name" value={name} onChange={(e) => setName(e.target.value)} icon={Building2} required />
-              <Field label="City" value={city} onChange={(e) => setCity(e.target.value)} icon={MapPin} required />
-              <Field label="Address" value={address} onChange={(e) => setAddress(e.target.value)} icon={Home} />
-
-              {/* Amenities */}
-              <div className="space-y-2">
-                <label className="block text-[12px] font-semibold text-slate-600">Amenities</label>
-                <div className="flex flex-wrap gap-2">
-                  {amenitiesList.map((a) => (
-                    <span key={a} className="inline-flex items-center gap-1 text-xs border border-slate-300 rounded-lg bg-white px-2 py-1">
-                      <Check className="h-3.5 w-3.5 text-emerald-600" />
-                      {a}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const next = amenitiesList.filter((x) => x !== a);
-                          setAmenitiesList(next);
-                          setAmenitiesDirty(!sameStringArray(next, originalAmenities));
-                        }}
-                        className="ml-1 rounded-full hover:bg-slate-100 p-0.5"
-                      >
-                        <X className="h-3.5 w-3.5 text-slate-600" />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-                <Field
-                  placeholder="Type amenity and press Enter"
-                  value={amenityInput}
-                  onChange={(e) => setAmenityInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      const v = amenityInput.trim();
-                      if (v) {
-                        const next = Array.from(new Set([...amenitiesList, v]));
-                        setAmenitiesList(next);
-                        setAmenitiesDirty(!sameStringArray(next, originalAmenities));
-                        setAmenityInput("");
-                      }
-                    }
-                  }}
-                  icon={ListChecks}
-                />
-              </div>
-
-              {/* Buttons */}
-              <div className="flex gap-2 justify-between items-center pt-1">
-                <div className="flex gap-2">
-                  <PrimaryBtn disabled={loading} type="submit">
-                    {loading ? "Saving..." : (<><PlusCircle className="h-4 w-4" /> Create Theater</>)}
-                  </PrimaryBtn>
-                  <PrimaryBtn
-                    disabled={loading}
+                <div className="flex flex-col gap-1">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={onPickFile}
+                  />
+                  <button
                     type="button"
-                    onClick={updateTheaterById}
-                    className="bg-[#0A66C2] hover:bg-[#0956A3]"
+                    className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 font-semibold border border-slate-300 bg-white hover:bg-slate-50"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      fileInputRef.current?.click();
+                    }}
                   >
-                    <PencilLine className="h-4 w-4" /> Update
-                  </PrimaryBtn>
+                    <ImageIcon className="h-4 w-4" /> Choose Image
+                  </button>
+                  <span className="text-xs text-slate-500">JPG/PNG/WEBP/GIF · up to 3MB</span>
                 </div>
-                <SecondaryBtn type="button" onClick={() => { resetForm(); setMsg(""); }}>
-                  Clear
-                </SecondaryBtn>
               </div>
-            </form>
-          </Card>
+            </Card>
 
-          {/* List */}
-          <Card className="p-5">
-            <h2 className="text-lg font-extrabold border-b border-slate-200 pb-2 mb-4 flex items-center gap-2">
-              <Building2 className="h-5 w-5" /> Existing Theaters
-            </h2>
-            {theaters.length === 0 ? (
-              <p className="text-sm text-slate-700">No theaters found.</p>
-            ) : (
-              <ul className="space-y-3 max-h-[60vh] overflow-auto pr-1">
-                {theaters.map((t) => (
-                  <li
-                    key={t._id}
-                    className={`flex justify-between items-center border border-slate-200 bg-white rounded-2xl p-3 shadow-sm ${selectedId === t._id ? "ring-2 ring-[#0071DC]" : ""}`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-14 h-14 rounded-xl overflow-hidden bg-slate-200 border border-slate-200 shadow-sm">
-                        <img
-                          src={t.imageUrl || DEFAULT_IMG}
-                          onError={(e) => (e.currentTarget.src = DEFAULT_IMG)}
-                          alt={t.name}
-                          className="w-full h-full object-cover"
-                        />
-                      </div>
-                      <div>
-                        <div className="font-extrabold text-slate-900">{t.name}</div>
-                        <div className="text-sm text-slate-700">{t.city} — {t.address || "No address"}</div>
-                        <div className="text-xs text-slate-500 mt-0.5">
-                          {Array.isArray(t.amenities) && t.amenities.length ? t.amenities.join(" • ") : "No amenities"}
+            {/* Existing Theaters */}
+            <Card className="p-5">
+              <h2 className="text-lg font-extrabold border-b border-slate-200 pb-2 mb-4 flex items-center gap-2">
+                <Building2 className="h-5 w-5" /> Existing Theaters
+              </h2>
+              {theaters.length === 0 ? (
+                <p className="text-sm text-slate-700">No theaters found.</p>
+              ) : (
+                <ul className="space-y-3 max-h-[60vh] overflow-auto pr-1">
+                  {theaters.map((t) => (
+                    <li
+                      key={t._id}
+                      className={`flex justify-between items-center border border-slate-200 bg-white rounded-2xl p-3 shadow-sm ${selectedId === t._id ? "ring-2 ring-[#0071DC]" : ""}`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-14 h-14 rounded-xl overflow-hidden bg-slate-200 border border-slate-200 shadow-sm">
+                          <img
+                            src={t.imageUrl || DEFAULT_IMG}
+                            onError={(e) => (e.currentTarget.src = DEFAULT_IMG)}
+                            alt={t.name}
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+                        <div>
+                          <div className="font-extrabold text-slate-900">{t.name}</div>
+                          <div className="text-sm text-slate-700">{t.city} — {t.address || "No address"}</div>
+                          <div className="text-xs text-slate-500 mt-0.5">
+                            {Array.isArray(t.amenities) && t.amenities.length ? t.amenities.join(" • ") : "No amenities"}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                    <div className="flex gap-2">
-                      <PrimaryBtn onClick={() => fillFromTheater(t)} className="px-3 py-1 text-sm">Use</PrimaryBtn>
-                      <SecondaryBtn onClick={() => deleteTheater(t._id)} className="px-3 py-1 text-sm" title="Delete theater">
-                        <Trash2 className="h-4 w-4" /> Delete
-                      </SecondaryBtn>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Card>
+                      <div className="flex gap-2">
+                        <PrimaryBtn onClick={() => fillFromTheater(t)} className="px-3 py-1 text-sm">Use</PrimaryBtn>
+                        <SecondaryBtn onClick={() => deleteTheater(t._id)} className="px-3 py-1 text-sm" title="Delete theater">
+                          <Trash2 className="h-4 w-4" /> Delete
+                        </SecondaryBtn>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Card>
+          </div>
+
+          {/* RIGHT: Add / Edit Form (fixed column visually) */}
+          <div className="lg:col-span-1">
+            <Card className="p-5 sticky top-6">
+              <h2 className="text-lg font-extrabold border-b border-slate-200 pb-2 mb-4 flex items-center gap-2">
+                <PlusCircle className="h-5 w-5" /> Add / Edit Theater
+              </h2>
+
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  createTheater();
+                }}
+                className="space-y-4"
+              >
+                {selectedId && (
+                  <div className="text-xs text-slate-600">
+                    Editing ID: <span className="font-mono">{selectedId}</span>
+                  </div>
+                )}
+
+                <Field label="Theater Name" value={name} onChange={(e) => setName(e.target.value)} icon={Building2} required />
+                <Field label="City" value={city} onChange={(e) => setCity(e.target.value)} icon={MapPin} required />
+                <Field label="Address" value={address} onChange={(e) => setAddress(e.target.value)} icon={Home} />
+
+                {/* Amenities */}
+                <div className="space-y-2">
+                  <label className="block text-[12px] font-semibold text-slate-600">Amenities</label>
+                  <div className="flex flex-wrap gap-2">
+                    {amenitiesList.map((a) => (
+                      <span key={a} className="inline-flex items-center gap-1 text-xs border border-slate-300 rounded-lg bg-white px-2 py-1">
+                        <Check className="h-3.5 w-3.5 text-emerald-600" />
+                        {a}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const next = amenitiesList.filter((x) => x !== a);
+                            setAmenitiesList(next);
+                            setAmenitiesDirty(!sameStringArray(next, originalAmenities));
+                          }}
+                          className="ml-1 rounded-full hover:bg-slate-100 p-0.5"
+                        >
+                          <X className="h-3.5 w-3.5 text-slate-600" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                  <Field
+                    placeholder="Type amenity and press Enter"
+                    value={amenityInput}
+                    onChange={(e) => setAmenityInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        const v = amenityInput.trim();
+                        if (v) {
+                          const next = Array.from(new Set([...amenitiesList, v]));
+                          setAmenitiesList(next);
+                          setAmenitiesDirty(!sameStringArray(next, originalAmenities));
+                          setAmenityInput("");
+                        }
+                      }
+                    }}
+                    icon={ListChecks}
+                  />
+                </div>
+
+                {/* Buttons */}
+                <div className="flex gap-2 justify-between items-center pt-1">
+                  <div className="flex gap-2">
+                    <PrimaryBtn disabled={loading} type="submit">
+                      {loading ? "Saving..." : (<><PlusCircle className="h-4 w-4" /> Create Theater</>)}
+                    </PrimaryBtn>
+                    <PrimaryBtn
+                      disabled={loading}
+                      type="button"
+                      onClick={updateTheaterById}
+                      className="bg-[#0A66C2] hover:bg-[#0956A3]"
+                    >
+                      <PencilLine className="h-4 w-4" /> Update
+                    </PrimaryBtn>
+                  </div>
+                  <SecondaryBtn type="button" onClick={() => { resetForm(); setMsg(""); }}>
+                    Clear
+                  </SecondaryBtn>
+                </div>
+              </form>
+            </Card>
+          </div>
         </div>
       </div>
     </main>
