@@ -1,4 +1,5 @@
 // src/pages/AdminTheaters.jsx — Walmart Style (clean, rounded, blue accents)
+// Layout adjustments: narrower centered container to keep whole content centered
 import { useEffect, useMemo, useRef, useState } from "react";
 import api from "../api/api";
 import { useAuth } from "../context/AuthContext";
@@ -347,8 +348,10 @@ export default function AdminTheaters() {
 
   /* ------------------- Render ------------------- */
   return (
-    <main className="min-h-screen w-screen bg-slate-50 text-slate-900 py-8 px-4 md:px-6">
-      <div className="max-w-7xl mx-auto space-y-5">
+    // NOTE: use w-full (not w-screen) to avoid viewport overflow and to center properly
+    <main className="min-h-screen w-full bg-slate-50 text-slate-900 py-8">
+      {/* Tighter centered container: max-w-6xl makes the whole page visibly centered */}
+      <div className="w-full max-w-6xl mx-auto px-4 md:px-6 space-y-5">
         <Card className="p-5 flex items-center justify-between">
           <div>
             <h1 className="text-2xl md:text-3xl font-extrabold flex items-center gap-2">
