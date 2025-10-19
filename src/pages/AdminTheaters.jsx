@@ -10,7 +10,6 @@ import {
   Image as ImageIcon,
   RefreshCcw,
   PlusCircle,
-  PencilLine,
   Trash2,
   X,
   Check,
@@ -27,7 +26,7 @@ const API_BASE = (
 
 const FILES_BASE = API_BASE.replace(/\/api$/, "");
 
-// Inline fallback image
+/* Inline fallback image */
 const DEFAULT_IMG =
   "data:image/svg+xml;utf8," +
   encodeURIComponent(`
@@ -87,9 +86,7 @@ function SecondaryBtn({ children, className = "", type = "button", ...props }) {
 /* -------------------------------------------------------------------------- */
 const resolveImageUrl = (url, updatedAt) => {
   if (!url) return null;
-  const abs = /^https?:\/\//i.test(url)
-    ? url
-    : `${FILES_BASE}${url.startsWith("/") ? "" : "/"}${url}`;
+  const abs = /^https?:\/\//i.test(url) ? url : `${FILES_BASE}${url.startsWith("/") ? "" : "/"}${url}`;
   const v = updatedAt ? new Date(updatedAt).getTime() : null;
   return v ? `${abs}${abs.includes("?") ? "&" : "?"}v=${v}` : abs;
 };
@@ -104,15 +101,8 @@ const normalizeTheater = (t = {}) => {
   return {
     ...t,
     amenities,
-    imageUrl: resolveImageUrl(t.imageUrl || t.poster || t.image, t.updatedAt) || "",
+    imageUrl: resolveImageUrl(t.imageUrl || t.poster || t.theaterImage || t.image, t.updatedAt) || "",
   };
-};
-
-const sameStringArray = (a = [], b = []) => {
-  if (a.length !== b.length) return false;
-  const sa = [...a].map(String).map((s) => s.trim()).sort();
-  const sb = [...b].map(String).map((s) => s.trim()).sort();
-  return sa.every((v, i) => v === sb[i]);
 };
 
 /* -------------------------------------------------------------------------- */
@@ -134,6 +124,7 @@ export default function AdminTheaters() {
   const [preview, setPreview] = useState("");
   const [previewKey, setPreviewKey] = useState(0);
   const fileInputRef = useRef(null);
+  const [selectedFile, setSelectedFile] = useState(null); // keep the chosen file for direct multipart create/update
 
   const submittingRef = useRef(false);
   const [loading, setLoading] = useState(false);
@@ -147,7 +138,8 @@ export default function AdminTheaters() {
 
   async function loadTheaters() {
     try {
-      const { data } = await api.get("/theaters", { params: { limit: 100, ts: Date.now() } });
+      const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
+      const { data } = await api.get("/theaters", { params: { limit: 100, ts: Date.now() }, headers });
       const arr = Array.isArray(data?.theaters) ? data.theaters : Array.isArray(data) ? data : [];
       setTheaters(arr.map(normalizeTheater));
       setMsg("");
@@ -170,42 +162,64 @@ export default function AdminTheaters() {
     if (preview?.startsWith("blob:")) URL.revokeObjectURL(preview);
     setPreview("");
     setPreviewKey((k) => k + 1);
+    setSelectedFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
   /* ------------------- Upload Handler ------------------- */
+  // Primary upload: sends file to /api/upload (protected). Keeps flow consistent with existing backend.
   async function onPickFile(e) {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
-      setMsg("Only JPG, PNG, or WEBP allowed");
+    if (!["image/jpeg", "image/png", "image/webp", "image/gif"].includes(file.type)) {
+      setMsg("Only JPG, PNG, WEBP, or GIF allowed");
       setMsgType("error");
       return;
     }
 
-    let localUrl = URL.createObjectURL(file);
+    // local preview while uploading
+    const localUrl = URL.createObjectURL(file);
     setPreview(localUrl);
     setPreviewKey((k) => k + 1);
+    setSelectedFile(file);
     setMsg("Uploading image...");
     setMsgType("info");
 
     try {
       const fd = new FormData();
       fd.append("image", file);
-      const { data } = await api.post("/upload", fd, { timeout: 30000 });
-      const abs = resolveImageUrl(data.url, Date.now());
-      setPreview(abs);
+
+      // ensure axios doesn't override Content-Type (let browser set boundary)
+      try {
+        if (api?.defaults?.headers?.post) delete api.defaults.headers.post["Content-Type"];
+      } catch (e) {}
+
+      // attach token (route requires auth + admin)
+      const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
+
+      const { data } = await api.post("/upload", fd, { headers, timeout: 30000 });
+      // server returns { url, filename, ... }
+      const abs = resolveImageUrl(data.url || data.secure_url, Date.now());
+      setPreview(abs || data.url || data.secure_url);
       setMsg("✅ Image uploaded successfully");
       setMsgType("success");
     } catch (err) {
       console.error("Upload failed:", err);
-      setMsg("❌ Upload failed: " + (err?.response?.data?.error || err.message));
+      const serverMsg =
+        err?.response?.data?.error || err?.response?.data?.message || err?.response?.data || err?.message;
+      setMsg("❌ Upload failed: " + serverMsg);
       setMsgType("error");
     } finally {
-      URL.revokeObjectURL(localUrl);
+      // cleanup local blob URL after some time — keep preview if upload succeeded (we already set it)
+      setTimeout(() => URL.revokeObjectURL(localUrl), 2000);
     }
   }
 
   /* ------------------- CRUD ------------------- */
+  // Helper to prepare headers
+  const authHeaders = () => (token ? { Authorization: `Bearer ${token}` } : undefined);
+
+  // If a file is selected (selectedFile), create/update will send multipart form directly.
   async function createTheater() {
     if (submittingRef.current) return;
     if (!name.trim() || !city.trim()) {
@@ -217,6 +231,29 @@ export default function AdminTheaters() {
     submittingRef.current = true;
     setLoading(true);
     try {
+      // if a file is selected, use FormData to send image + fields to the admin create endpoint
+      if (selectedFile) {
+        const fd = new FormData();
+        fd.append("image", selectedFile);
+        fd.append("name", name);
+        fd.append("city", city);
+        if (address) fd.append("address", address);
+        if (amenitiesList?.length) fd.append("amenities", amenitiesList.join(","));
+
+        try {
+          if (api?.defaults?.headers?.post) delete api.defaults.headers.post["Content-Type"];
+        } catch (e) {}
+
+        const { data } = await api.post("/admin/theaters", fd, { headers: authHeaders() });
+        const created = normalizeTheater(data?.data || data);
+        setTheaters((s) => [created, ...s]);
+        setMsg("✅ Theater created!");
+        setMsgType("success");
+        resetForm();
+        return;
+      }
+
+      // Otherwise, send JSON payload (imageUrl is preview if previously uploaded)
       const payload = {
         name,
         city,
@@ -224,13 +261,14 @@ export default function AdminTheaters() {
         amenities: amenitiesList,
         imageUrl: preview,
       };
-      const res = await api.post("/admin/theaters", payload);
+      const res = await api.post("/admin/theaters", payload, { headers: authHeaders() });
       const created = normalizeTheater(res.data?.data || res.data);
       setTheaters((s) => [created, ...s]);
       setMsg("✅ Theater created!");
       setMsgType("success");
       resetForm();
     } catch (err) {
+      console.error("Create theater failed:", err);
       setMsg("❌ Create failed: " + (err?.response?.data?.message || err.message));
       setMsgType("error");
     } finally {
@@ -243,6 +281,29 @@ export default function AdminTheaters() {
     if (!selectedId) return;
     setLoading(true);
     try {
+      // If a new file is selected, send FormData with image to replace
+      if (selectedFile) {
+        const fd = new FormData();
+        fd.append("image", selectedFile);
+        fd.append("name", name);
+        fd.append("city", city);
+        if (address) fd.append("address", address);
+        fd.append("amenities", amenitiesDirty ? amenitiesList.join(",") : originalAmenities.join(","));
+
+        try {
+          if (api?.defaults?.headers?.post) delete api.defaults.headers.post["Content-Type"];
+        } catch (e) {}
+
+        const { data } = await api.put(`/admin/theaters/${selectedId}`, fd, { headers: authHeaders() });
+        const updated = normalizeTheater(data?.data || data);
+        setTheaters((list) => list.map((t) => (t._id === updated._id ? updated : t)));
+        setMsg("✅ Updated successfully");
+        setMsgType("success");
+        resetForm();
+        return;
+      }
+
+      // Otherwise send JSON payload
       const payload = {
         name,
         city,
@@ -250,12 +311,14 @@ export default function AdminTheaters() {
         amenities: amenitiesDirty ? amenitiesList : originalAmenities,
         imageUrl: preview,
       };
-      const res = await api.put(`/admin/theaters/${selectedId}`, payload);
+      const res = await api.put(`/admin/theaters/${selectedId}`, payload, { headers: authHeaders() });
       const updated = normalizeTheater(res.data?.data || res.data);
       setTheaters((list) => list.map((t) => (t._id === updated._id ? updated : t)));
       setMsg("✅ Updated successfully");
       setMsgType("success");
+      resetForm();
     } catch (err) {
+      console.error("Update failed:", err);
       setMsg("❌ Update failed: " + (err?.response?.data?.message || err.message));
       setMsgType("error");
     } finally {
@@ -266,11 +329,14 @@ export default function AdminTheaters() {
   async function deleteTheater(id) {
     if (!confirm("Delete this theater?")) return;
     try {
-      await api.delete(`/admin/theaters/${id}`);
+      await api.delete(`/admin/theaters/${id}`, { headers: authHeaders() });
       setTheaters((s) => s.filter((t) => t._id !== id));
       setMsg("🗑️ Deleted");
       setMsgType("info");
+      // clear form if deleted item was selected
+      if (id === selectedId) resetForm();
     } catch (err) {
+      console.error("Delete failed:", err);
       setMsg("❌ Delete failed: " + (err?.response?.data?.message || err.message));
       setMsgType("error");
     }
@@ -280,11 +346,13 @@ export default function AdminTheaters() {
     setSelectedId(t._id);
     setName(t.name);
     setCity(t.city);
-    setAddress(t.address);
+    setAddress(t.address || "");
     setAmenitiesList(t.amenities || []);
     setOriginalAmenities(t.amenities || []);
     setPreview(t.imageUrl);
     setPreviewKey((k) => k + 1);
+    setSelectedFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
   /* ------------------- Render ------------------- */
@@ -335,7 +403,15 @@ export default function AdminTheaters() {
                   />
                 </div>
                 <div>
-                  <input ref={fileInputRef} type="file" className="hidden" onChange={onPickFile} />
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    className="hidden"
+                    onChange={(e) => {
+                      onPickFile(e);
+                    }}
+                    accept="image/*"
+                  />
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
@@ -343,6 +419,7 @@ export default function AdminTheaters() {
                   >
                     <ImageIcon className="h-4 w-4" /> Choose Image
                   </button>
+                  <div className="text-xs text-slate-500 mt-2">Tip: small JPG/PNG/WebP &lt;3MB recommended</div>
                 </div>
               </div>
             </Card>
@@ -377,10 +454,7 @@ export default function AdminTheaters() {
                         <PrimaryBtn onClick={() => fillFromTheater(t)} className="px-3 py-1 text-sm">
                           Use
                         </PrimaryBtn>
-                        <SecondaryBtn
-                          onClick={() => deleteTheater(t._id)}
-                          className="px-3 py-1 text-sm"
-                        >
+                        <SecondaryBtn onClick={() => deleteTheater(t._id)} className="px-3 py-1 text-sm">
                           <Trash2 className="h-4 w-4" /> Delete
                         </SecondaryBtn>
                       </div>
@@ -434,6 +508,7 @@ export default function AdminTheaters() {
                         if (v && !amenitiesList.includes(v)) {
                           setAmenitiesList([...amenitiesList, v]);
                           setAmenityInput("");
+                          setAmenitiesDirty(true);
                         }
                       }
                     }}
@@ -446,13 +521,23 @@ export default function AdminTheaters() {
                     {loading ? "Saving..." : "Create Theater"}
                   </PrimaryBtn>
                   <PrimaryBtn
-                    onClick={updateTheaterById}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      updateTheaterById();
+                    }}
                     disabled={loading}
                     className="bg-[#0A66C2] hover:bg-[#0956A3]"
                   >
                     Update
                   </PrimaryBtn>
-                  <SecondaryBtn onClick={resetForm}>Clear</SecondaryBtn>
+                  <SecondaryBtn
+                    onClick={(e) => {
+                      e.preventDefault();
+                      resetForm();
+                    }}
+                  >
+                    Clear
+                  </SecondaryBtn>
                 </div>
               </form>
             </Card>
