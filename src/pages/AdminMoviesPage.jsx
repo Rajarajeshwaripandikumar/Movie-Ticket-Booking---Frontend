@@ -1,5 +1,5 @@
 // src/pages/AdminMovies.jsx — Walmart Style (clean, rounded, blue accents)
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import api from "../api/api";
 
 /* --------------------------- Walmart primitives --------------------------- */
@@ -113,7 +113,7 @@ function normalizeMovie(m = {}) {
 }
 
 /* ------------------------- Movie Form Component ------------------------- */
-function MovieForm({ initial = {}, onCancel, onSave }) {
+function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
   const norm = normalizeMovie(initial);
 
   const [form, setForm] = useState({
@@ -379,8 +379,8 @@ function MovieForm({ initial = {}, onCancel, onSave }) {
           <SecondaryBtn type="button" onClick={onCancel}>
             Cancel
           </SecondaryBtn>
-          <PrimaryBtn type="submit" disabled={saving}>
-            {saving ? "Saving…" : "Save"}
+          <PrimaryBtn type="submit" disabled={saving || isSaving}>
+            {saving || isSaving ? "Saving…" : "Save"}
           </PrimaryBtn>
         </div>
       </div>
@@ -390,6 +390,9 @@ function MovieForm({ initial = {}, onCancel, onSave }) {
 
 /* -------------------------- Admin Movies Page --------------------------- */
 export default function AdminMoviesPage() {
+  // guard to prevent duplicate submit (double-clicks, double-invoke)
+  const submittingRef = useRef(false);
+
   const [movies, setMovies] = useState([]);
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(false);
@@ -413,10 +416,17 @@ export default function AdminMoviesPage() {
   }
 
   useEffect(() => {
+    // In dev React StrictMode can mount twice — guard so we don't double-fetch during dev
+    if (import.meta.env.DEV) {
+      if (window.__adminMoviesFetchedOnce) return;
+      window.__adminMoviesFetchedOnce = true;
+    }
     fetchMovies();
   }, []);
 
   const doCreate = async (formData) => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     try {
       // DON'T set Content-Type manually — let axios/browser add the multipart boundary
       const resp = await api.post("/api/admin/movies", formData);
@@ -426,12 +436,17 @@ export default function AdminMoviesPage() {
     } catch (err) {
       console.error(err);
       alert("Create failed: " + (err?.response?.data?.message || err.message));
+    } finally {
+      submittingRef.current = false;
     }
   };
 
   const doUpdate = async (formData) => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     try {
       const id = editing?._id || editing?.id;
+      console.trace("doUpdate called"); // helpful to find duplicate callers in DevTools
       // DON'T set Content-Type manually — let axios/browser add the multipart boundary
       const resp = await api.put(`/api/admin/movies/${id}`, formData);
       const updated = normalizeMovie(resp?.data?.data || resp?.data?.movie || resp?.data);
@@ -442,6 +457,8 @@ export default function AdminMoviesPage() {
     } catch (err) {
       console.error(err);
       alert("Update failed: " + (err?.response?.data?.message || err.message));
+    } finally {
+      submittingRef.current = false;
     }
   };
 
@@ -534,7 +551,7 @@ export default function AdminMoviesPage() {
               <h2 className="text-lg font-extrabold">Create Movie</h2>
             </div>
             <div className="px-5 py-4 overflow-y-auto">
-              <MovieForm initial={{}} onCancel={() => setCreating(false)} onSave={doCreate} />
+              <MovieForm initial={{}} onCancel={() => setCreating(false)} onSave={doCreate} isSaving={submittingRef.current} />
             </div>
           </Card>
         </div>
@@ -548,7 +565,7 @@ export default function AdminMoviesPage() {
               <h2 className="text-lg font-extrabold">Edit Movie</h2>
             </div>
             <div className="px-5 py-4 overflow-y-auto">
-              <MovieForm initial={editing} onCancel={() => setEditing(null)} onSave={doUpdate} />
+              <MovieForm initial={editing} onCancel={() => setEditing(null)} onSave={doUpdate} isSaving={submittingRef.current} />
             </div>
           </Card>
         </div>
