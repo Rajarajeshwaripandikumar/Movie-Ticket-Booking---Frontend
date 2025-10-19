@@ -202,10 +202,11 @@ function MovieForm({ initial = {}, onCancel, onSave }) {
     data.append("cast", JSON.stringify((cast || []).filter((c) => (c?.actorName || "").trim())));
     data.append("crew", JSON.stringify((crew || []).filter((c) => (c?.name || "").trim())));
 
+    // IMPORTANT: send the file under the "image" field (server expects "image")
     if (posterFile) {
-      data.append("poster", posterFile); // backend multer field
+      data.append("image", posterFile);
     } else if (form.posterUrl) {
-      data.append("posterUrl", form.posterUrl); // preserve existing
+      data.append("posterUrl", form.posterUrl); // preserve existing URL if no new file
     }
 
     try {
@@ -417,9 +418,8 @@ export default function AdminMoviesPage() {
 
   const doCreate = async (formData) => {
     try {
-      const resp = await api.post("/api/admin/movies", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
+      // DON'T set Content-Type manually — let axios/browser add the multipart boundary
+      const resp = await api.post("/api/admin/movies", formData);
       const created = resp?.data?.data || resp?.data?.movie || resp?.data;
       setMovies((m) => [normalizeMovie(created), ...m]);
       setCreating(false);
@@ -432,9 +432,8 @@ export default function AdminMoviesPage() {
   const doUpdate = async (formData) => {
     try {
       const id = editing?._id || editing?.id;
-      const resp = await api.put(`/api/admin/movies/${id}`, formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
+      // DON'T set Content-Type manually — let axios/browser add the multipart boundary
+      const resp = await api.put(`/api/admin/movies/${id}`, formData);
       const updated = normalizeMovie(resp?.data?.data || resp?.data?.movie || resp?.data);
       setMovies((m) =>
         m.map((x) => ((x._id || x.id) === (updated._id || updated.id) ? updated : x))
