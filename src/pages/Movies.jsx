@@ -1,14 +1,31 @@
+// src/pages/Movies.jsx (updated resolvePosterUrl + sensible API_BASE default)
 import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import api from "../api/api";
 
 /* ---------- Shared media helpers ---------- */
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8080/api";
+// NOTE: prefer to set VITE_API_BASE in your Vite env for different environments.
+// Default uses your Render backend so relative poster paths resolve correctly in prod.
+const API_BASE = import.meta.env.VITE_API_BASE || "https://movie-ticket-booking-backend-o1m2.onrender.com/api";
 const FILES_BASE = API_BASE.replace(/\/api\/?$/, "");
 
+/**
+ * resolvePosterUrl(url)
+ * - if url is falsy -> null
+ * - if url is absolute (http(s)://) -> return as-is
+ * - if url starts with /uploads/ or uploads/ -> prefix FILES_BASE
+ * - otherwise, treat as relative and prefix FILES_BASE + '/' + url
+ */
 function resolvePosterUrl(url) {
   if (!url) return null;
-  return /^https?:\/\//i.test(url) ? url : `${FILES_BASE}${url}`;
+  const s = String(url).trim();
+  if (!s) return null;
+  if (/^https?:\/\//i.test(s)) return s; // already absolute
+  // Common case: "/uploads/xyz.jpg" or "uploads/xyz.jpg"
+  if (s.startsWith("/uploads/")) return `${FILES_BASE}${s}`;
+  if (s.startsWith("uploads/")) return `${FILES_BASE}/${s}`;
+  // Fallback: prefix with FILES_BASE (keeps behavior predictable)
+  return `${FILES_BASE}/${s.replace(/^\/+/, "")}`;
 }
 
 const DEFAULT_POSTER =
