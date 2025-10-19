@@ -63,12 +63,17 @@ function resolvePosterUrl(url) {
   if (!url) return null;
   return /^https?:\/\//i.test(url) ? url : `${FILES_BASE}${url}`;
 }
-const toArray = (v) =>
-  Array.isArray(v)
-    ? v
-    : typeof v === "string"
-    ? v.split(",").map((s) => s.trim()).filter(Boolean)
-    : [];
+
+function toArray(v) {
+  if (Array.isArray(v)) return v;
+  if (typeof v === "string") {
+    return v
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
 
 /** Normalize movie from API into UI-friendly shape */
 function normalizeMovie(m = {}) {
@@ -76,20 +81,16 @@ function normalizeMovie(m = {}) {
   const synopsis = m.synopsis ?? m.description ?? "";
   const runtime = m.runtime ?? m.durationMins ?? "";
   const releaseDate = m.releaseDate ?? "";
-
   const genresArr = Array.isArray(m.genres)
     ? m.genres
     : Array.isArray(m.genre)
     ? m.genre
     : toArray(m.genre || "");
   const genresStr = genresArr.join(", ");
-
   const languages = Array.isArray(m.languages) ? m.languages : toArray(m.languages ?? m.language ?? "");
-
   const cast = Array.isArray(m.cast)
     ? m.cast.map((c) => (typeof c === "string" ? { actorName: c } : c))
     : [];
-
   const crew = Array.isArray(m.crew)
     ? m.crew.map((c) =>
         c && typeof c === "object"
@@ -115,7 +116,6 @@ function normalizeMovie(m = {}) {
 /* ------------------------- Movie Form Component ------------------------- */
 function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
   const norm = normalizeMovie(initial);
-
   const [form, setForm] = useState({
     title: norm.title,
     synopsis: norm.synopsis,
@@ -124,46 +124,23 @@ function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
     releaseDate: norm.releaseDate,
     posterUrl: norm.posterUrl,
   });
-
   const [languages, setLanguages] = useState(norm.languages);
   const [cast, setCast] = useState(
-    norm.cast.map((c) => ({
-      actorName: c.actorName || c.name || "",
-      character: c.character || "",
-    }))
+    norm.cast.map((c) => ({ actorName: c.actorName || c.name || "", character: c.character || "" }))
   );
   const [crew, setCrew] = useState(
-    norm.crew.map((c) => ({
-      name: c.name || "",
-      role: c.role || c.job || "",
-    }))
+    norm.crew.map((c) => ({ name: c.name || "", role: c.role || c.job || "" }))
   );
-
   const [posterFile, setPosterFile] = useState(null);
   const [preview, setPreview] = useState(norm.posterUrl ? resolvePosterUrl(norm.posterUrl) : "");
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    const n = normalizeMovie(initial);
-    setForm({
-      title: n.title,
-      synopsis: n.synopsis,
-      runtime: n.runtime,
-      genresStr: n.genresStr,
-      releaseDate: n.releaseDate,
-      posterUrl: n.posterUrl,
-    });
-    setLanguages(n.languages);
-    setCast(n.cast.map((c) => ({ actorName: c.actorName || c.name || "", character: c.character || "" })));
-    setCrew(n.crew.map((c) => ({ name: c.name || "", role: c.role || c.job || "" })));
-    setPreview(n.posterUrl ? resolvePosterUrl(n.posterUrl) : "");
-    setPosterFile(null);
-  }, [initial]);
-
   const change = (k) => (e) => setForm((s) => ({ ...s, [k]: e.target.value }));
 
+  /* ----------------------- Handle File Selection ----------------------- */
   const handleFile = (e) => {
     const file = e.target.files?.[0];
+    console.log("handleFile selected:", file);
     if (!file) return;
     if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
       alert("Only JPG, PNG, or WEBP allowed.");
@@ -177,20 +154,10 @@ function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
     setPreview(URL.createObjectURL(file));
   };
 
-  // Languages
-  const addLang = () => setLanguages((l) => [...l, ""]);
-  const removeLang = (i) => setLanguages((l) => l.filter((_, j) => j !== i));
-
-  // Cast
-  const addCast = () => setCast((c) => [...c, { actorName: "", character: "" }]);
-  const removeCast = (i) => setCast((c) => c.filter((_, j) => j !== i));
-
-  // Crew
-  const addCrew = () => setCrew((c) => [...c, { name: "", role: "" }]);
-  const removeCrew = (i) => setCrew((c) => c.filter((_, j) => j !== i));
-
+  /* -------------------------- Submit Form -------------------------- */
   const submit = async (e) => {
     e.preventDefault();
+    console.log("submit called, posterFile:", posterFile);
 
     const data = new FormData();
     data.append("title", form.title);
@@ -202,18 +169,21 @@ function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
     data.append("cast", JSON.stringify((cast || []).filter((c) => (c?.actorName || "").trim())));
     data.append("crew", JSON.stringify((crew || []).filter((c) => (c?.name || "").trim())));
 
-    // IMPORTANT: send the file under the "image" field (server expects "image")
     if (posterFile) {
       data.append("image", posterFile);
+      console.log("Appended image:", posterFile.name, posterFile.type, posterFile.size);
     } else if (form.posterUrl) {
-      data.append("posterUrl", form.posterUrl); // preserve existing URL if no new file
+      data.append("posterUrl", form.posterUrl);
+      console.log("No new file, keeping old posterUrl:", form.posterUrl);
+    } else {
+      console.log("No image or posterUrl provided.");
     }
 
     try {
       setSaving(true);
       await onSave(data);
     } catch (err) {
-      console.error("Save failed", err);
+      console.error("Save failed:", err);
     } finally {
       setSaving(false);
     }
@@ -221,19 +191,17 @@ function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
 
   return (
     <form onSubmit={submit} className="space-y-4">
-      {/* Title */}
+      {/* --- form fields same as before --- */}
       <div>
         <label className="block text-[12px] font-semibold text-slate-600 mb-1">Title</label>
         <Field required value={form.title} onChange={change("title")} />
       </div>
 
-      {/* Synopsis */}
       <div>
         <label className="block text-[12px] font-semibold text-slate-600 mb-1">Synopsis</label>
         <Field as="textarea" rows={3} value={form.synopsis} onChange={change("synopsis")} />
       </div>
 
-      {/* Runtime / Genres / Release Date */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <div>
           <label className="block text-[12px] font-semibold text-slate-600 mb-1">Runtime (min)</label>
@@ -253,114 +221,7 @@ function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
         </div>
       </div>
 
-      {/* Languages */}
-      <div>
-        <label className="block text-[12px] font-semibold text-slate-600 mb-1">Languages</label>
-        <div className="flex flex-wrap gap-2 mt-1">
-          {languages.map((lang, i) => (
-            <div key={i} className="flex items-center gap-2 border border-slate-300 rounded-xl px-3 py-1 bg-white">
-              <input
-                value={lang}
-                onChange={(e) => {
-                  const copy = [...languages];
-                  copy[i] = e.target.value;
-                  setLanguages(copy);
-                }}
-                placeholder="Language"
-                className="bg-transparent outline-none text-sm text-slate-900"
-              />
-              <button type="button" onClick={() => removeLang(i)} className="text-rose-600 text-xs">
-                ✕
-              </button>
-            </div>
-          ))}
-          <SecondaryBtn type="button" onClick={addLang} className="text-sm">
-            + Add Language
-          </SecondaryBtn>
-        </div>
-      </div>
-
-      {/* Cast */}
-      <div>
-        <div className="flex justify-between items-center mb-2">
-          <label className="text-[12px] font-semibold text-slate-600">Cast</label>
-          <SecondaryBtn type="button" onClick={addCast} className="text-sm">
-            + Add Cast
-          </SecondaryBtn>
-        </div>
-        {cast.length === 0 && <p className="text-sm text-slate-600">No cast added yet.</p>}
-        <div className="space-y-2">
-          {cast.map((c, i) => (
-            <div key={i} className="grid grid-cols-5 gap-2">
-              <Field
-                value={c.actorName ?? ""}
-                onChange={(e) => {
-                  const next = [...cast];
-                  next[i] = { ...next[i], actorName: e.target.value };
-                  setCast(next);
-                }}
-                placeholder="Actor Name"
-                className="col-span-2"
-              />
-              <Field
-                value={c.character ?? ""}
-                onChange={(e) => {
-                  const next = [...cast];
-                  next[i] = { ...next[i], character: e.target.value };
-                  setCast(next);
-                }}
-                placeholder="Character"
-                className="col-span-2"
-              />
-              <SecondaryBtn type="button" onClick={() => removeCast(i)} className="justify-center">
-                ✕
-              </SecondaryBtn>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Crew */}
-      <div>
-        <div className="flex justify-between items-center mb-2">
-          <label className="text-[12px] font-semibold text-slate-600">Crew</label>
-          <SecondaryBtn type="button" onClick={addCrew} className="text-sm">
-            + Add Crew
-          </SecondaryBtn>
-        </div>
-        {crew.length === 0 && <p className="text-sm text-slate-600">No crew added yet.</p>}
-        <div className="space-y-2">
-          {crew.map((c, i) => (
-            <div key={i} className="grid grid-cols-5 gap-2">
-              <Field
-                value={c.name ?? ""}
-                onChange={(e) => {
-                  const next = [...crew];
-                  next[i] = { ...next[i], name: e.target.value };
-                  setCrew(next);
-                }}
-                placeholder="Crew Name"
-                className="col-span-2"
-              />
-              <Field
-                value={c.role ?? ""}
-                onChange={(e) => {
-                  const next = [...crew];
-                  next[i] = { ...next[i], role: e.target.value };
-                  setCrew(next);
-                }}
-                placeholder="Role (e.g. Director)"
-                className="col-span-2"
-              />
-              <SecondaryBtn type="button" onClick={() => removeCrew(i)} className="justify-center">
-                ✕
-              </SecondaryBtn>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Poster */}
+      {/* Poster Upload */}
       <div>
         <label className="block text-[12px] font-semibold text-slate-600 mb-1">Poster Image</label>
         <input type="file" accept="image/*" onChange={handleFile} />
@@ -373,7 +234,6 @@ function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
         )}
       </div>
 
-      {/* Sticky Buttons */}
       <div className="sticky bottom-0 bg-white pt-2">
         <div className="flex gap-2 justify-end border-t border-slate-200 pt-3">
           <SecondaryBtn type="button" onClick={onCancel}>
@@ -390,9 +250,7 @@ function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
 
 /* -------------------------- Admin Movies Page --------------------------- */
 export default function AdminMoviesPage() {
-  // guard to prevent duplicate submit (double-clicks, double-invoke)
   const submittingRef = useRef(false);
-
   const [movies, setMovies] = useState([]);
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(false);
@@ -402,13 +260,11 @@ export default function AdminMoviesPage() {
 
   async function fetchMovies() {
     setLoading(true);
-    setError("");
     try {
       const resp = await api.get("/api/movies", { params: { limit: 50, q } });
       const list = resp.data.movies || resp.data || [];
       setMovies(list.map(normalizeMovie));
     } catch (err) {
-      console.error(err);
       setError("Unable to fetch movies");
     } finally {
       setLoading(false);
@@ -416,11 +272,6 @@ export default function AdminMoviesPage() {
   }
 
   useEffect(() => {
-    // In dev React StrictMode can mount twice — guard so we don't double-fetch during dev
-    if (import.meta.env.DEV) {
-      if (window.__adminMoviesFetchedOnce) return;
-      window.__adminMoviesFetchedOnce = true;
-    }
     fetchMovies();
   }, []);
 
@@ -428,13 +279,11 @@ export default function AdminMoviesPage() {
     if (submittingRef.current) return;
     submittingRef.current = true;
     try {
-      // DON'T set Content-Type manually — let axios/browser add the multipart boundary
       const resp = await api.post("/api/admin/movies", formData);
       const created = resp?.data?.data || resp?.data?.movie || resp?.data;
       setMovies((m) => [normalizeMovie(created), ...m]);
       setCreating(false);
     } catch (err) {
-      console.error(err);
       alert("Create failed: " + (err?.response?.data?.message || err.message));
     } finally {
       submittingRef.current = false;
@@ -446,8 +295,7 @@ export default function AdminMoviesPage() {
     submittingRef.current = true;
     try {
       const id = editing?._id || editing?.id;
-      console.trace("doUpdate called"); // helpful to find duplicate callers in DevTools
-      // DON'T set Content-Type manually — let axios/browser add the multipart boundary
+      console.trace("doUpdate called");
       const resp = await api.put(`/api/admin/movies/${id}`, formData);
       const updated = normalizeMovie(resp?.data?.data || resp?.data?.movie || resp?.data);
       setMovies((m) =>
@@ -455,7 +303,6 @@ export default function AdminMoviesPage() {
       );
       setEditing(null);
     } catch (err) {
-      console.error(err);
       alert("Update failed: " + (err?.response?.data?.message || err.message));
     } finally {
       submittingRef.current = false;
@@ -467,19 +314,17 @@ export default function AdminMoviesPage() {
     try {
       await api.delete(`/api/admin/movies/${m._id || m.id}`);
       setMovies((x) => x.filter((t) => (t._id || t.id) !== (m._id || m.id)));
-    } catch (err) {
-      console.error(err);
+    } catch {
       alert("Delete failed");
     }
   };
 
   return (
-    <main className="min-h-screen w-screen [margin-inline:calc(50%-50vw)] bg-slate-50 text-slate-900 py-8 px-4 md:px-6">
-      {/* Header card */}
+    <main className="min-h-screen w-screen bg-slate-50 text-slate-900 py-8 px-4 md:px-6">
       <Card className="max-w-6xl mx-auto mb-6 p-5 md:p-6">
-        <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center justify-between flex-wrap gap-4">
           <div>
-            <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">Manage Movies</h1>
+            <h1 className="text-2xl md:text-3xl font-extrabold">Manage Movies</h1>
             <p className="text-sm text-slate-600 mt-1">Create, edit, and organize your catalog.</p>
           </div>
           <div className="flex items-center gap-2">
@@ -491,9 +336,7 @@ export default function AdminMoviesPage() {
           </div>
         </div>
         {error && (
-          <Card className="mt-3 p-3 bg-rose-50 border-rose-200 text-rose-700 font-semibold">
-            {error}
-          </Card>
+          <Card className="mt-3 p-3 bg-rose-50 border-rose-200 text-rose-700 font-semibold">{error}</Card>
         )}
       </Card>
 
@@ -519,23 +362,11 @@ export default function AdminMoviesPage() {
                   Runtime: {m.runtime || m.durationMins || "—"} min
                 </div>
                 {m.languages?.length > 0 && (
-                  <div className="text-xs text-slate-600 mt-1">
-                    Languages: {m.languages.join(", ")}
-                  </div>
-                )}
-                {m.cast?.length > 0 && (
-                  <div className="text-xs text-slate-600 mt-1">
-                    Cast: {m.cast.slice(0, 2).map((c) => c.actorName || c.name).join(", ")}
-                    {m.cast.length > 2 && ` +${m.cast.length - 2}`}
-                  </div>
+                  <div className="text-xs text-slate-600 mt-1">Languages: {m.languages.join(", ")}</div>
                 )}
                 <div className="mt-3 flex gap-2">
-                  <SecondaryBtn onClick={() => setEditing(m)} className="text-sm">
-                    Edit
-                  </SecondaryBtn>
-                  <SecondaryBtn onClick={() => doDelete(m)} className="text-sm">
-                    Delete
-                  </SecondaryBtn>
+                  <SecondaryBtn onClick={() => setEditing(m)} className="text-sm">Edit</SecondaryBtn>
+                  <SecondaryBtn onClick={() => doDelete(m)} className="text-sm">Delete</SecondaryBtn>
                 </div>
               </div>
             </Card>
@@ -543,7 +374,7 @@ export default function AdminMoviesPage() {
         )}
       </div>
 
-      {/* Create modal */}
+      {/* Create Modal */}
       {creating && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
           <Card className="w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
@@ -551,13 +382,13 @@ export default function AdminMoviesPage() {
               <h2 className="text-lg font-extrabold">Create Movie</h2>
             </div>
             <div className="px-5 py-4 overflow-y-auto">
-              <MovieForm initial={{}} onCancel={() => setCreating(false)} onSave={doCreate} isSaving={submittingRef.current} />
+              <MovieForm initial={{}} onCancel={() => setCreating(false)} onSave={doCreate} />
             </div>
           </Card>
         </div>
       )}
 
-      {/* Edit modal */}
+      {/* Edit Modal */}
       {editing && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
           <Card className="w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
@@ -565,7 +396,12 @@ export default function AdminMoviesPage() {
               <h2 className="text-lg font-extrabold">Edit Movie</h2>
             </div>
             <div className="px-5 py-4 overflow-y-auto">
-              <MovieForm initial={editing} onCancel={() => setEditing(null)} onSave={doUpdate} isSaving={submittingRef.current} />
+              <MovieForm
+                initial={editing}
+                onCancel={() => setEditing(null)}
+                onSave={doUpdate}
+                isSaving={submittingRef.current}
+              />
             </div>
           </Card>
         </div>
