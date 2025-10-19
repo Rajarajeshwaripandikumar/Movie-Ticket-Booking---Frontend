@@ -1,4 +1,6 @@
-// src/pages/AdminMovies.jsx — Walmart Style (clean, rounded, blue accents)
+
+// ------------------------------------------------------------------
+// File: src/pages/AdminMovies.jsx (updated)
 import React, { useEffect, useRef, useState } from "react";
 import api from "../api/api";
 
@@ -261,7 +263,8 @@ export default function AdminMoviesPage() {
   async function fetchMovies() {
     setLoading(true);
     try {
-      const resp = await api.get("/api/movies", { params: { limit: 50, q } });
+      // NOTE: api.baseURL already includes /api, so call /movies (not /api/movies)
+      const resp = await api.get("/movies", { params: { limit: 50, q } });
       const list = resp.data.movies || resp.data || [];
       setMovies(list.map(normalizeMovie));
     } catch (err) {
@@ -279,12 +282,18 @@ export default function AdminMoviesPage() {
     if (submittingRef.current) return;
     submittingRef.current = true;
     try {
-      const resp = await api.post("/api/admin/movies", formData);
+      const token = localStorage.getItem("token");
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      // POST to /admin/movies because api.baseURL already contains /api
+      const resp = await api.post("/admin/movies", formData, { headers });
+      console.log("Create response:", resp.status, resp.data);
       const created = resp?.data?.data || resp?.data?.movie || resp?.data;
       setMovies((m) => [normalizeMovie(created), ...m]);
       setCreating(false);
     } catch (err) {
-      alert("Create failed: " + (err?.response?.data?.message || err.message));
+      console.error("Create failed (full error):", err);
+      const serverMsg = err?.response?.data;
+      alert("Create failed: " + (serverMsg?.message || JSON.stringify(serverMsg) || err.message));
     } finally {
       submittingRef.current = false;
     }
@@ -295,15 +304,20 @@ export default function AdminMoviesPage() {
     submittingRef.current = true;
     try {
       const id = editing?._id || editing?.id;
+      const token = localStorage.getItem("token");
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
       console.trace("doUpdate called");
-      const resp = await api.put(`/api/admin/movies/${id}`, formData);
+      const resp = await api.put(`/admin/movies/${id}`, formData, { headers });
+      console.log("Update response:", resp.status, resp.data);
       const updated = normalizeMovie(resp?.data?.data || resp?.data?.movie || resp?.data);
       setMovies((m) =>
         m.map((x) => ((x._id || x.id) === (updated._id || updated.id) ? updated : x))
       );
       setEditing(null);
     } catch (err) {
-      alert("Update failed: " + (err?.response?.data?.message || err.message));
+      console.error("Update failed (full error):", err);
+      const serverMsg = err?.response?.data;
+      alert("Update failed: " + (serverMsg?.message || JSON.stringify(serverMsg) || err.message));
     } finally {
       submittingRef.current = false;
     }
@@ -312,10 +326,13 @@ export default function AdminMoviesPage() {
   const doDelete = async (m) => {
     if (!window.confirm(`Delete "${m.title}" ?`)) return;
     try {
-      await api.delete(`/api/admin/movies/${m._id || m.id}`);
+      const token = localStorage.getItem("token");
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      await api.delete(`/admin/movies/${m._id || m.id}`, { headers });
       setMovies((x) => x.filter((t) => (t._id || t.id) !== (m._id || m.id)));
-    } catch {
-      alert("Delete failed");
+    } catch (err) {
+      console.error("Delete failed:", err);
+      alert("Delete failed: " + (err?.response?.data?.message || err.message));
     }
   };
 
