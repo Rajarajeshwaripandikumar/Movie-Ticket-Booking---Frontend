@@ -131,18 +131,30 @@ export default function AdminTheaters() {
   const [msg, setMsg] = useState("");
   const [msgType, setMsgType] = useState("info");
 
-  /* Load theaters */
+  /* Load theaters — choose admin list if admin logged in */
   useEffect(() => {
-    if (token && role?.toLowerCase() === "admin") loadTheaters();
-  }, [token, role]);
+    loadTheaters();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function loadTheaters() {
     try {
-      const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
-      const { data } = await api.get("/theaters", { params: { limit: 100, ts: Date.now() }, headers });
-      const arr = Array.isArray(data?.theaters) ? data.theaters : Array.isArray(data) ? data : [];
-      setTheaters(arr.map(normalizeTheater));
       setMsg("");
+      const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
+      // If admin logged in, call admin endpoint to get full list; otherwise public list
+      const path = token && role?.toLowerCase() === "admin" ? "/admin/theaters" : "/theaters";
+      const res = await api.get(path, { params: { limit: 100, ts: Date.now() }, headers, timeout: 20000 });
+      const body = res?.data ?? res;
+      let arr = [];
+
+      if (Array.isArray(body.theaters)) arr = body.theaters;
+      else if (Array.isArray(body.data)) arr = body.data;
+      else if (Array.isArray(body)) arr = body;
+      else if (Array.isArray(body?.data?.theaters)) arr = body.data.theaters;
+      // final fallback: try known keys
+      else if (Array.isArray(body?.theaters?.data)) arr = body.theaters.data;
+
+      setTheaters(arr.map(normalizeTheater));
     } catch (err) {
       console.error("loadTheaters error:", err);
       setMsg("⚠️ Failed to load theaters (check API)");
@@ -194,13 +206,13 @@ export default function AdminTheaters() {
         if (api?.defaults?.headers?.post) delete api.defaults.headers.post["Content-Type"];
       } catch (e) {}
 
-      // attach token (route requires auth + admin)
       const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
 
+      // Expect upload endpoint at POST /api/upload that returns { url } or { secure_url }
       const { data } = await api.post("/upload", fd, { headers, timeout: 30000 });
-      // server returns { url, filename, ... }
-      const abs = resolveImageUrl(data.url || data.secure_url, Date.now());
-      setPreview(abs || data.url || data.secure_url);
+      const returnedUrl = data?.url || data?.secure_url || data?.secureUrl || data?.data?.url;
+      const abs = resolveImageUrl(returnedUrl, Date.now());
+      setPreview(abs || returnedUrl || data?.secure_url || "");
       setMsg("✅ Image uploaded successfully");
       setMsgType("success");
     } catch (err) {
@@ -210,7 +222,7 @@ export default function AdminTheaters() {
       setMsg("❌ Upload failed: " + serverMsg);
       setMsgType("error");
     } finally {
-      // cleanup local blob URL after some time — keep preview if upload succeeded (we already set it)
+      // cleanup local blob URL after a bit — keep preview if upload succeeded (we already set it)
       setTimeout(() => URL.revokeObjectURL(localUrl), 2000);
     }
   }
@@ -219,7 +231,7 @@ export default function AdminTheaters() {
   // Helper to prepare headers
   const authHeaders = () => (token ? { Authorization: `Bearer ${token}` } : undefined);
 
-  // If a file is selected (selectedFile), create/update will send multipart form directly.
+  // Create
   async function createTheater() {
     if (submittingRef.current) return;
     if (!name.trim() || !city.trim()) {
@@ -277,6 +289,7 @@ export default function AdminTheaters() {
     }
   }
 
+  // Update
   async function updateTheaterById() {
     if (!selectedId) return;
     setLoading(true);
@@ -326,6 +339,7 @@ export default function AdminTheaters() {
     }
   }
 
+  // Delete
   async function deleteTheater(id) {
     if (!confirm("Delete this theater?")) return;
     try {
@@ -366,9 +380,15 @@ export default function AdminTheaters() {
             </h1>
             <p className="text-sm text-slate-600">Add, edit, or remove theaters.</p>
           </div>
-          <SecondaryBtn onClick={loadTheaters}>
-            <RefreshCcw className="h-4 w-4" /> Refresh
-          </SecondaryBtn>
+          <div className="flex items-center gap-2">
+            <SecondaryBtn
+              onClick={() => {
+                loadTheaters();
+              }}
+            >
+              <RefreshCcw className="h-4 w-4" /> Refresh
+            </SecondaryBtn>
+          </div>
         </Card>
 
         {msg && (
@@ -419,7 +439,7 @@ export default function AdminTheaters() {
                   >
                     <ImageIcon className="h-4 w-4" /> Choose Image
                   </button>
-                  <div className="text-xs text-slate-500 mt-2">Tip: small JPG/PNG/WebP &lt;3MB recommended</div>
+                  <div className="text-xs text-slate-500 mt-2">Tip: small JPG/PNG/WebP &lt;5MB recommended</div>
                 </div>
               </div>
             </Card>
@@ -429,7 +449,7 @@ export default function AdminTheaters() {
                 <Building2 className="h-5 w-5" /> Existing Theaters
               </h2>
               {theaters.length === 0 ? (
-                <p>No theaters found.</p>
+                <p className="text-slate-600">No theaters found.</p>
               ) : (
                 <ul className="space-y-3 max-h-[60vh] overflow-y-auto">
                   {theaters.map((t) => (
@@ -525,7 +545,7 @@ export default function AdminTheaters() {
                       e.preventDefault();
                       updateTheaterById();
                     }}
-                    disabled={loading}
+                    disabled={loading || !selectedId}
                     className="bg-[#0A66C2] hover:bg-[#0956A3]"
                   >
                     Update
