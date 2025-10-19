@@ -1,12 +1,18 @@
 // frontend/src/api/api.js
 import axios from "axios";
 
-const BASE_URL = (
-  import.meta.env.VITE_API_BASE ||
-  "https://movie-ticket-booking-backend-o1m2.onrender.com/api"
-).replace(/\/+$/, "");
+/* -------------------------------------------------------------------------- */
+/*                                 BASE URL                                   */
+/* -------------------------------------------------------------------------- */
+/**
+ * Point to backend root (no trailing slash).
+ * The frontend will call endpoints with the `/api` prefix, e.g. api.get("/api/theaters")
+ */
+const BASE_URL = (import.meta.env.VITE_API_BASE || "https://movie-ticket-booking-backend-o1m2.onrender.com").replace(/\/+$/, "");
 
-/* Extract auth token and role safely */
+/* -------------------------------------------------------------------------- */
+/*                    Extract auth token + role from storage                  */
+/* -------------------------------------------------------------------------- */
 function getAuthFromStorage() {
   try {
     const raw = localStorage.getItem("auth");
@@ -20,7 +26,7 @@ function getAuthFromStorage() {
       const role =
         parsed?.role ||
         parsed?.user?.role ||
-        (Array.isArray(parsed?.roles) ? parsed?.roles[0] : undefined);
+        (Array.isArray(parsed?.roles) ? parsed.roles[0] : undefined);
       if (token) return { token, role };
     }
   } catch {}
@@ -29,46 +35,72 @@ function getAuthFromStorage() {
   return { token: null, role: undefined };
 }
 
-/* Axios instance */
+/* -------------------------------------------------------------------------- */
+/*                              Axios instance                                 */
+/* -------------------------------------------------------------------------- */
 const api = axios.create({
   baseURL: BASE_URL,
   timeout: 60000,
   withCredentials: false,
-  // DO NOT set Content-Type here — let the browser/axios decide per-request.
   headers: { Accept: "application/json" },
 });
 
-// Ensure we don't accidentally force JSON for FormData uploads
+/* -------------------------------------------------------------------------- */
+/*            Ensure axios doesn't override FormData content-type             */
+/* -------------------------------------------------------------------------- */
 if (api.defaults && api.defaults.headers) {
-  if (api.defaults.headers.post) delete api.defaults.headers.post["Content-Type"];
-  if (api.defaults.headers.put) delete api.defaults.headers.put["Content-Type"];
-  if (api.defaults.headers.patch) delete api.defaults.headers.patch["Content-Type"];
+  ["post", "put", "patch"].forEach((method) => {
+    if (api.defaults.headers[method]) {
+      delete api.defaults.headers[method]["Content-Type"];
+    }
+  });
 }
 
-/* Request interceptor: attach token */
+/* -------------------------------------------------------------------------- */
+/*                         Request interceptor (JWT)                          */
+/* -------------------------------------------------------------------------- */
 api.interceptors.request.use((config) => {
   const { token, role } = getAuthFromStorage();
   if (token) {
     config.headers = config.headers || {};
     config.headers.Authorization = `Bearer ${token}`;
     if (role) config.headers["X-Role"] = role;
-  } else {
-    // keep this warning if you want, but it's noisy in production
-    console.warn("[API] Missing JWT —", config.url);
   }
   return config;
 });
 
-/* Response handling */
+/* -------------------------------------------------------------------------- */
+/*                         Response interceptor (401 handler)                 */
+/* -------------------------------------------------------------------------- */
 api.interceptors.response.use(
   (res) => res,
-  async (error) => {
+  (error) => {
     if (error?.response?.status === 401) {
-      console.warn("[API] 401 Unauthorized:", error.config?.url);
       window.dispatchEvent(new CustomEvent("api:unauthorized"));
     }
     return Promise.reject(error);
   }
 );
 
+/* -------------------------------------------------------------------------- */
+/*                             Helper utilities                                */
+/* -------------------------------------------------------------------------- */
+export function apiUrl(path = "") {
+  const clean = path.startsWith("/") ? path : `/${path}`;
+  return `${BASE_URL}${clean}`;
+}
+
+export function makeAbsoluteImageUrl(url) {
+  if (!url) return "";
+  if (url.startsWith("http://") || url.startsWith("https://")) return url;
+  // if DB contains /uploads/... convert to absolute URL
+  if (url.startsWith("/uploads") || url.includes("/uploads/")) {
+    return `${BASE_URL}${url}`;
+  }
+  return url;
+}
+
+/* -------------------------------------------------------------------------- */
+/*                                 Exports                                     */
+/* -------------------------------------------------------------------------- */
 export default api;
