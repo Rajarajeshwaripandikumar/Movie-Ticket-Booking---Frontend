@@ -1,6 +1,5 @@
 // src/pages/AdminTheaters.jsx — Walmart Style (clean, rounded, blue accents)
-// Layout adjustments: narrower centered container to keep whole content centered
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import api from "../api/api";
 import { useAuth } from "../context/AuthContext";
 import {
@@ -123,7 +122,6 @@ export default function AdminTheaters() {
   const { token, role } = useAuth() || {};
   const [theaters, setTheaters] = useState([]);
 
-  // Form fields
   const [selectedId, setSelectedId] = useState(null);
   const [name, setName] = useState("");
   const [city, setCity] = useState("");
@@ -133,15 +131,11 @@ export default function AdminTheaters() {
   const [amenitiesDirty, setAmenitiesDirty] = useState(false);
   const [amenityInput, setAmenityInput] = useState("");
 
-  // Image upload
   const [preview, setPreview] = useState("");
   const [previewKey, setPreviewKey] = useState(0);
   const fileInputRef = useRef(null);
 
-  // Submit guard
   const submittingRef = useRef(false);
-
-  // UI state
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
   const [msgType, setMsgType] = useState("info");
@@ -153,13 +147,13 @@ export default function AdminTheaters() {
 
   async function loadTheaters() {
     try {
-      const { data } = await api.get("theaters", { params: { page: 1, limit: 500, ts: Date.now() } });
+      const { data } = await api.get("/theaters", { params: { limit: 100, ts: Date.now() } });
       const arr = Array.isArray(data?.theaters) ? data.theaters : Array.isArray(data) ? data : [];
       setTheaters(arr.map(normalizeTheater));
       setMsg("");
     } catch (err) {
       console.error("loadTheaters error:", err);
-      setMsg("⚠️ Failed to load theaters (check API_BASE)");
+      setMsg("⚠️ Failed to load theaters (check API)");
       setMsgType("error");
     }
   }
@@ -178,64 +172,36 @@ export default function AdminTheaters() {
     setPreviewKey((k) => k + 1);
   }
 
-  /* ------------------- Upload Handler (updated) ------------------- */
+  /* ------------------- Upload Handler ------------------- */
   async function onPickFile(e) {
-    const fileInput = e.target;
-    const file = fileInput.files?.[0];
+    const file = e.target.files?.[0];
     if (!file) return;
-
-    if (!["image/jpeg", "image/png", "image/webp", "image/gif"].includes(file.type)) {
-      setMsg("Only JPG/PNG/WEBP/GIF allowed");
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      setMsg("Only JPG, PNG, or WEBP allowed");
       setMsgType("error");
-      fileInput.value = "";
-      return;
-    }
-    if (file.size > 3 * 1024 * 1024) {
-      setMsg("Max file size is 3MB");
-      setMsgType("error");
-      fileInput.value = "";
       return;
     }
 
-    // Optional: show instant local preview while uploading
-    let localUrl = "";
-    try {
-      localUrl = URL.createObjectURL(file);
-      setPreview(localUrl);
-      setPreviewKey((k) => k + 1);
-    } catch {}
-
+    let localUrl = URL.createObjectURL(file);
+    setPreview(localUrl);
+    setPreviewKey((k) => k + 1);
     setMsg("Uploading image...");
     setMsgType("info");
-    setLoading(true);
 
     try {
       const fd = new FormData();
-      fd.append("image", file); // must match backend upload.single("image")
-
-      // Use axios instance so baseURL + auth interceptors apply
-      const { data } = await api.post("/upload", fd, {
-        headers: { "Content-Type": "multipart/form-data" },
-        timeout: 30000,
-      });
-
-      // Resolve to absolute URL so Netlify loads from Render backend
+      fd.append("image", file);
+      const { data } = await api.post("/upload", fd, { timeout: 30000 });
       const abs = resolveImageUrl(data.url, Date.now());
       setPreview(abs);
-      setPreviewKey((k) => k + 1);
       setMsg("✅ Image uploaded successfully");
       setMsgType("success");
     } catch (err) {
-      const status = err?.response?.status || err?.status;
-      const text = err?.response?.data?.error || err?.message || "Upload failed";
-      setMsg(`❌ Upload failed${status ? ` (${status})` : ""}: ${text}`);
+      console.error("Upload failed:", err);
+      setMsg("❌ Upload failed: " + (err?.response?.data?.error || err.message));
       setMsgType("error");
     } finally {
-      if (localUrl) {
-        try { URL.revokeObjectURL(localUrl); } catch {}
-      }
-      setLoading(false);
-      fileInput.value = ""; // allow selecting the same file again
+      URL.revokeObjectURL(localUrl);
     }
   }
 
@@ -243,18 +209,7 @@ export default function AdminTheaters() {
   async function createTheater() {
     if (submittingRef.current) return;
     if (!name.trim() || !city.trim()) {
-      setMsg("Name and City are required");
-      setMsgType("error");
-      return;
-    }
-
-    const exists = theaters.some(
-      (t) =>
-        (t.name || "").trim().toLowerCase() === name.trim().toLowerCase() &&
-        (t.city || "").trim().toLowerCase() === city.trim().toLowerCase()
-    );
-    if (exists) {
-      setMsg("A theater with this Name + City already exists.");
+      setMsg("Name and City required");
       setMsgType("error");
       return;
     }
@@ -263,55 +218,45 @@ export default function AdminTheaters() {
     setLoading(true);
     try {
       const payload = {
-        name: name.trim(),
-        city: city.trim(),
-        address: (address || "").trim(),
+        name,
+        city,
+        address,
         amenities: amenitiesList,
-        imageUrl: preview, // already absolute due to resolveImageUrl()
+        imageUrl: preview,
       };
-      const res = await api.post("theaters", payload, {
-        params: { ts: Date.now() },
-      });
+      const res = await api.post("/admin/theaters", payload);
       const created = normalizeTheater(res.data?.data || res.data);
       setTheaters((s) => [created, ...s]);
       setMsg("✅ Theater created!");
       setMsgType("success");
       resetForm();
     } catch (err) {
-      const m = err?.response?.data?.error || err?.response?.data?.message || err.message;
-      setMsg("❌ Create failed: " + m);
+      setMsg("❌ Create failed: " + (err?.response?.data?.message || err.message));
       setMsgType("error");
     } finally {
-      setLoading(false);
       submittingRef.current = false;
+      setLoading(false);
     }
   }
 
   async function updateTheaterById() {
-    if (!selectedId) {
-      setMsg("Pick a theater first.");
-      setMsgType("error");
-      return;
-    }
+    if (!selectedId) return;
     setLoading(true);
     try {
       const payload = {
-        name: name.trim(),
-        city: city.trim(),
-        address: (address || "").trim(),
+        name,
+        city,
+        address,
         amenities: amenitiesDirty ? amenitiesList : originalAmenities,
-        imageUrl: preview, // absolute
+        imageUrl: preview,
       };
-      const res = await api.put(`theaters/${selectedId}`, payload, { params: { ts: Date.now() } });
+      const res = await api.put(`/admin/theaters/${selectedId}`, payload);
       const updated = normalizeTheater(res.data?.data || res.data);
       setTheaters((list) => list.map((t) => (t._id === updated._id ? updated : t)));
-      setMsg("✅ Theater updated.");
+      setMsg("✅ Updated successfully");
       setMsgType("success");
-      setOriginalAmenities(updated.amenities || []);
-      setAmenitiesDirty(false);
     } catch (err) {
-      const m = err?.response?.data?.error || err?.response?.data?.message || err.message;
-      setMsg("❌ Update failed: " + m);
+      setMsg("❌ Update failed: " + (err?.response?.data?.message || err.message));
       setMsgType("error");
     } finally {
       setLoading(false);
@@ -321,43 +266,37 @@ export default function AdminTheaters() {
   async function deleteTheater(id) {
     if (!confirm("Delete this theater?")) return;
     try {
-      await api.delete(`theaters/${id}`, { params: { ts: Date.now() } });
+      await api.delete(`/admin/theaters/${id}`);
       setTheaters((s) => s.filter((t) => t._id !== id));
-      if (selectedId === id) resetForm();
-      setMsg("🗑️ Theater deleted");
+      setMsg("🗑️ Deleted");
       setMsgType("info");
     } catch (err) {
-      const m = err?.response?.data?.error || err?.response?.data?.message || err.message;
-      setMsg("❌ Delete failed: " + m);
+      setMsg("❌ Delete failed: " + (err?.response?.data?.message || err.message));
       setMsgType("error");
     }
   }
 
-  function fillFromTheater(tRaw) {
-    const t = normalizeTheater(tRaw);
+  function fillFromTheater(t) {
     setSelectedId(t._id);
-    setName(t.name || "");
-    setCity(t.city || "");
-    setAddress(t.address || "");
+    setName(t.name);
+    setCity(t.city);
+    setAddress(t.address);
     setAmenitiesList(t.amenities || []);
     setOriginalAmenities(t.amenities || []);
-    setPreview(t.imageUrl || "");
+    setPreview(t.imageUrl);
     setPreviewKey((k) => k + 1);
-    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   /* ------------------- Render ------------------- */
   return (
-    // NOTE: use w-full (not w-screen) to avoid viewport overflow and to center properly
     <main className="min-h-screen w-full bg-slate-50 text-slate-900 py-8">
-      {/* Tighter centered container: max-w-6xl makes the whole page visibly centered */}
-      <div className="w-full max-w-6xl mx-auto px-4 md:px-6 space-y-5">
-        <Card className="p-5 flex items-center justify-between">
+      <div className="max-w-6xl mx-auto px-4 space-y-5">
+        <Card className="p-5 flex justify-between items-center">
           <div>
-            <h1 className="text-2xl md:text-3xl font-extrabold flex items-center gap-2">
+            <h1 className="text-2xl font-extrabold flex items-center gap-2">
               <Building2 className="h-6 w-6" /> Manage Theaters
             </h1>
-            <p className="text-sm text-slate-600 mt-1">Add, edit, or remove theaters.</p>
+            <p className="text-sm text-slate-600">Add, edit, or remove theaters.</p>
           </div>
           <SecondaryBtn onClick={loadTheaters}>
             <RefreshCcw className="h-4 w-4" /> Refresh
@@ -378,82 +317,70 @@ export default function AdminTheaters() {
           </Card>
         )}
 
-        {/* ===== Balanced 2-column layout: left = Image + List, right = Form ===== */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* LEFT: stack Image upload + Existing Theaters (takes 2 cols on large screens) */}
+          {/* LEFT: Image + Theater list */}
           <div className="lg:col-span-2 space-y-5">
-            {/* Image upload */}
             <Card className="p-5">
-              <h2 className="text-lg font-extrabold border-b border-slate-200 pb-2 mb-4 flex items-center gap-2">
+              <h2 className="font-extrabold text-lg mb-4 flex items-center gap-2 border-b pb-2 border-slate-200">
                 <ImageIcon className="h-5 w-5" /> Theater Image
               </h2>
-              <div className="flex items-center gap-4">
-                <div className="w-24 h-24 rounded-xl overflow-hidden bg-slate-200 border border-slate-200 shadow-sm">
+              <div className="flex gap-4 items-center">
+                <div className="w-24 h-24 rounded-xl overflow-hidden bg-slate-200 border border-slate-200">
                   <img
                     key={previewKey}
                     src={preview || DEFAULT_IMG}
                     onError={(e) => (e.currentTarget.src = DEFAULT_IMG)}
                     alt="preview"
-                    className="w-full h-full object-cover"
+                    className="object-cover w-full h-full"
                   />
                 </div>
-                <div className="flex flex-col gap-1">
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={onPickFile}
-                  />
+                <div>
+                  <input ref={fileInputRef} type="file" className="hidden" onChange={onPickFile} />
                   <button
                     type="button"
-                    className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 font-semibold border border-slate-300 bg-white hover:bg-slate-50"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      fileInputRef.current?.click();
-                    }}
+                    onClick={() => fileInputRef.current?.click()}
+                    className="border border-slate-300 bg-white rounded-full px-3 py-1.5 hover:bg-slate-50 flex items-center gap-2"
                   >
                     <ImageIcon className="h-4 w-4" /> Choose Image
                   </button>
-                  <span className="text-xs text-slate-500">JPG/PNG/WEBP/GIF · up to 3MB</span>
                 </div>
               </div>
             </Card>
 
-            {/* Existing Theaters */}
             <Card className="p-5">
-              <h2 className="text-lg font-extrabold border-b border-slate-200 pb-2 mb-4 flex items-center gap-2">
+              <h2 className="font-extrabold text-lg mb-4 flex items-center gap-2 border-b pb-2 border-slate-200">
                 <Building2 className="h-5 w-5" /> Existing Theaters
               </h2>
               {theaters.length === 0 ? (
-                <p className="text-sm text-slate-700">No theaters found.</p>
+                <p>No theaters found.</p>
               ) : (
-                <ul className="space-y-3 max-h-[60vh] overflow-auto pr-1">
+                <ul className="space-y-3 max-h-[60vh] overflow-y-auto">
                   {theaters.map((t) => (
                     <li
                       key={t._id}
-                      className={`flex justify-between items-center border border-slate-200 bg-white rounded-2xl p-3 shadow-sm ${selectedId === t._id ? "ring-2 ring-[#0071DC]" : ""}`}
+                      className={`flex justify-between items-center border border-slate-200 rounded-2xl p-3 shadow-sm ${
+                        selectedId === t._id ? "ring-2 ring-[#0071DC]" : ""
+                      }`}
                     >
-                      <div className="flex items-center gap-3">
-                        <div className="w-14 h-14 rounded-xl overflow-hidden bg-slate-200 border border-slate-200 shadow-sm">
-                          <img
-                            src={t.imageUrl || DEFAULT_IMG}
-                            onError={(e) => (e.currentTarget.src = DEFAULT_IMG)}
-                            alt={t.name}
-                            className="w-full h-full object-cover"
-                          />
-                        </div>
+                      <div className="flex gap-3">
+                        <img
+                          src={t.imageUrl || DEFAULT_IMG}
+                          alt={t.name}
+                          className="w-14 h-14 rounded-xl object-cover border"
+                        />
                         <div>
-                          <div className="font-extrabold text-slate-900">{t.name}</div>
-                          <div className="text-sm text-slate-700">{t.city} — {t.address || "No address"}</div>
-                          <div className="text-xs text-slate-500 mt-0.5">
-                            {Array.isArray(t.amenities) && t.amenities.length ? t.amenities.join(" • ") : "No amenities"}
-                          </div>
+                          <div className="font-extrabold">{t.name}</div>
+                          <div className="text-sm text-slate-600">{t.city}</div>
                         </div>
                       </div>
                       <div className="flex gap-2">
-                        <PrimaryBtn onClick={() => fillFromTheater(t)} className="px-3 py-1 text-sm">Use</PrimaryBtn>
-                        <SecondaryBtn onClick={() => deleteTheater(t._id)} className="px-3 py-1 text-sm" title="Delete theater">
+                        <PrimaryBtn onClick={() => fillFromTheater(t)} className="px-3 py-1 text-sm">
+                          Use
+                        </PrimaryBtn>
+                        <SecondaryBtn
+                          onClick={() => deleteTheater(t._id)}
+                          className="px-3 py-1 text-sm"
+                        >
                           <Trash2 className="h-4 w-4" /> Delete
                         </SecondaryBtn>
                       </div>
@@ -464,10 +391,10 @@ export default function AdminTheaters() {
             </Card>
           </div>
 
-          {/* RIGHT: Add / Edit Form (fixed column visually) */}
+          {/* RIGHT: Add/Edit Form */}
           <div className="lg:col-span-1">
             <Card className="p-5 sticky top-6">
-              <h2 className="text-lg font-extrabold border-b border-slate-200 pb-2 mb-4 flex items-center gap-2">
+              <h2 className="font-extrabold text-lg mb-4 flex items-center gap-2 border-b pb-2 border-slate-200">
                 <PlusCircle className="h-5 w-5" /> Add / Edit Theater
               </h2>
 
@@ -478,50 +405,34 @@ export default function AdminTheaters() {
                 }}
                 className="space-y-4"
               >
-                {selectedId && (
-                  <div className="text-xs text-slate-600">
-                    Editing ID: <span className="font-mono">{selectedId}</span>
-                  </div>
-                )}
-
-                <Field label="Theater Name" value={name} onChange={(e) => setName(e.target.value)} icon={Building2} required />
-                <Field label="City" value={city} onChange={(e) => setCity(e.target.value)} icon={MapPin} required />
+                <Field label="Name" value={name} onChange={(e) => setName(e.target.value)} icon={Building2} />
+                <Field label="City" value={city} onChange={(e) => setCity(e.target.value)} icon={MapPin} />
                 <Field label="Address" value={address} onChange={(e) => setAddress(e.target.value)} icon={Home} />
 
                 {/* Amenities */}
-                <div className="space-y-2">
-                  <label className="block text-[12px] font-semibold text-slate-600">Amenities</label>
-                  <div className="flex flex-wrap gap-2">
+                <div>
+                  <label className="block text-[12px] font-semibold text-slate-600 mb-1">Amenities</label>
+                  <div className="flex flex-wrap gap-2 mb-2">
                     {amenitiesList.map((a) => (
-                      <span key={a} className="inline-flex items-center gap-1 text-xs border border-slate-300 rounded-lg bg-white px-2 py-1">
-                        <Check className="h-3.5 w-3.5 text-emerald-600" />
-                        {a}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const next = amenitiesList.filter((x) => x !== a);
-                            setAmenitiesList(next);
-                            setAmenitiesDirty(!sameStringArray(next, originalAmenities));
-                          }}
-                          className="ml-1 rounded-full hover:bg-slate-100 p-0.5"
-                        >
-                          <X className="h-3.5 w-3.5 text-slate-600" />
-                        </button>
+                      <span key={a} className="px-2 py-1 text-xs border rounded-full flex items-center gap-1">
+                        <Check className="h-3 w-3 text-emerald-600" /> {a}
+                        <X
+                          className="h-3 w-3 cursor-pointer text-slate-500"
+                          onClick={() => setAmenitiesList(amenitiesList.filter((x) => x !== a))}
+                        />
                       </span>
                     ))}
                   </div>
                   <Field
-                    placeholder="Type amenity and press Enter"
+                    placeholder="Type and press Enter"
                     value={amenityInput}
                     onChange={(e) => setAmenityInput(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         e.preventDefault();
                         const v = amenityInput.trim();
-                        if (v) {
-                          const next = Array.from(new Set([...amenitiesList, v]));
-                          setAmenitiesList(next);
-                          setAmenitiesDirty(!sameStringArray(next, originalAmenities));
+                        if (v && !amenitiesList.includes(v)) {
+                          setAmenitiesList([...amenitiesList, v]);
                           setAmenityInput("");
                         }
                       }
@@ -530,24 +441,18 @@ export default function AdminTheaters() {
                   />
                 </div>
 
-                {/* Buttons */}
-                <div className="flex gap-2 justify-between items-center pt-1">
-                  <div className="flex gap-2">
-                    <PrimaryBtn disabled={loading} type="submit">
-                      {loading ? "Saving..." : (<><PlusCircle className="h-4 w-4" /> Create Theater</>)}
-                    </PrimaryBtn>
-                    <PrimaryBtn
-                      disabled={loading}
-                      type="button"
-                      onClick={updateTheaterById}
-                      className="bg-[#0A66C2] hover:bg-[#0956A3]"
-                    >
-                      <PencilLine className="h-4 w-4" /> Update
-                    </PrimaryBtn>
-                  </div>
-                  <SecondaryBtn type="button" onClick={() => { resetForm(); setMsg(""); }}>
-                    Clear
-                  </SecondaryBtn>
+                <div className="flex justify-between items-center gap-2 pt-2">
+                  <PrimaryBtn type="submit" disabled={loading}>
+                    {loading ? "Saving..." : "Create Theater"}
+                  </PrimaryBtn>
+                  <PrimaryBtn
+                    onClick={updateTheaterById}
+                    disabled={loading}
+                    className="bg-[#0A66C2] hover:bg-[#0956A3]"
+                  >
+                    Update
+                  </PrimaryBtn>
+                  <SecondaryBtn onClick={resetForm}>Clear</SecondaryBtn>
                 </div>
               </form>
             </Card>
