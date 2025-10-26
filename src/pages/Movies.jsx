@@ -1,44 +1,35 @@
-// src/pages/Movies.jsx (updated resolvePosterUrl + sensible API_BASE default)
+// src/pages/Movies.jsx
 import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import api from "../api/api";
 
-/* ---------- Shared media helpers ---------- */
-// NOTE: prefer to set VITE_API_BASE in your Vite env for different environments.
-// Default uses your Render backend so relative poster paths resolve correctly in prod.
+/* ---------- Config ---------- */
+// prefer to set VITE_API_BASE in environment; fallback to known Render URL
 const API_BASE = import.meta.env.VITE_API_BASE || "https://movie-ticket-booking-backend-o1m2.onrender.com/api";
 const FILES_BASE = API_BASE.replace(/\/api\/?$/, "");
 
-/**
- * resolvePosterUrl(url)
- * - if url is falsy -> null
- * - if url is absolute (http(s)://) -> return as-is
- * - if url starts with /uploads/ or uploads/ -> prefix FILES_BASE
- * - otherwise, treat as relative and prefix FILES_BASE + '/' + url
- */
+/* ---------- Poster helpers ---------- */
 function resolvePosterUrl(url) {
   if (!url) return null;
   const s = String(url).trim();
   if (!s) return null;
-  if (/^https?:\/\//i.test(s)) return s; // already absolute
-  // Common case: "/uploads/xyz.jpg" or "uploads/xyz.jpg"
+  if (/^https?:\/\//i.test(s)) return s;
   if (s.startsWith("/uploads/")) return `${FILES_BASE}${s}`;
   if (s.startsWith("uploads/")) return `${FILES_BASE}/${s}`;
-  // Fallback: prefix with FILES_BASE (keeps behavior predictable)
   return `${FILES_BASE}/${s.replace(/^\/+/, "")}`;
 }
 
 const DEFAULT_POSTER =
   "data:image/svg+xml;utf8," +
   encodeURIComponent(`
-    <svg xmlns='http://www.w3.org/2000/svg' width='240' height='360'>
+    <svg xmlns='http://www.w3.org/2000/svg' width='240' height='360' role='img' aria-label='No image'>
       <rect width='100%' height='100%' fill='#f1f5f9'/>
       <text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle'
-            font-family='Arial' font-size='18' fill='#94a3b8'>No Image</text>
+            font-family='Inter, Arial, sans-serif' font-size='16' fill='#94a3b8'>No Image</text>
     </svg>
   `);
 
-/* ----------------------------- Helpers -------------------------------- */
+/* ---------- Data normalizers ---------- */
 const toArray = (v) =>
   Array.isArray(v)
     ? v
@@ -100,7 +91,7 @@ function parseCast(anyCast) {
 
 function normalizeMovie(m = {}) {
   const id = m._id || m.id;
-  const posterUrl = m.posterUrl || m.poster || "";
+  const posterUrl = m.posterUrl || m.poster || m.image || "";
   const genresArr = toArray(m.genres?.length ? m.genres : m.genre);
   const genreStr = genresArr.join(", ");
   const runtime =
@@ -116,6 +107,7 @@ function normalizeMovie(m = {}) {
   return { ...m, _id: id, posterUrl, genre: genreStr, runtime, languages, castPreview };
 }
 
+/* ---------- API helper: try multiple endpoints ---------- */
 async function tryGet(candidates, params = {}) {
   for (const ep of candidates) {
     try {
@@ -124,21 +116,21 @@ async function tryGet(candidates, params = {}) {
       if (Array.isArray(data?.movies)) return data.movies;
       if (Array.isArray(data?.data)) return data.data;
     } catch {
-      /* continue */
+      /* continue to next candidate */
     }
   }
   return [];
 }
 
-/* --------------------------- Walmart Primitives --------------------------- */
+/* --------------------------- UI Primitives --------------------------- */
+const cx = (...a) => a.filter(Boolean).join(" ");
+
 const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
   <Tag className={`bg-white border border-slate-200 rounded-2xl shadow-sm ${className}`} {...rest}>
     {children}
   </Tag>
 );
 
-/* polymorphic buttons (Link-compatible) */
-const cx = (...a) => a.filter(Boolean).join(" ");
 const PrimaryBtn = ({ as: As = "button", to, href, className = "", children, ...props }) => (
   <As
     {...(to ? { to } : {})}
@@ -153,6 +145,7 @@ const PrimaryBtn = ({ as: As = "button", to, href, className = "", children, ...
     {children}
   </As>
 );
+
 const GhostBtn = ({ as: As = "button", to, href, className = "", children, ...props }) => (
   <As
     {...(to ? { to } : {})}
@@ -169,15 +162,26 @@ const GhostBtn = ({ as: As = "button", to, href, className = "", children, ...pr
 );
 
 const IconSearch = ({ className = "w-5 h-5" }) => (
-  <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
     <circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" />
   </svg>
 );
+
 const IconArrow = ({ className = "w-4 h-4" }) => (
-  <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
     <path d="M5 12h14" /><path d="M13 5l7 7-7 7" />
   </svg>
 );
+
+/* ---------- Debounce hook ---------- */
+function useDebounce(value, delay = 300) {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const id = setTimeout(() => setV(value), delay);
+    return () => clearTimeout(id);
+  }, [value, delay]);
+  return v;
+}
 
 /* -------------------------- Movies Page --------------------------- */
 export default function Movies() {
@@ -195,28 +199,31 @@ export default function Movies() {
     const fetchMovies = async () => {
       setLoading(true);
       setErr("");
-      const list = await (async () => {
-        try {
+      try {
+        const list = await (async () => {
           if (debouncedQ) return await tryGet(["/api/movies/search", "/movies/search"], { q: debouncedQ });
           return await tryGet(["/api/movies", "/movies"]);
-        } catch (e) {
-          console.error("Movies fetch failed:", e);
-          setErr(e?.response?.data?.message || "Failed to fetch movies");
-          return [];
-        }
-      })();
-      if (!mounted) return;
-      setMovies(list.map(normalizeMovie));
-      if (debouncedQ) setParams({ q: debouncedQ }); else setParams({});
-      setLoading(false);
+        })();
+
+        if (!mounted) return;
+        setMovies(list.map(normalizeMovie));
+        if (debouncedQ) setParams({ q: debouncedQ }); else setParams({});
+      } catch (e) {
+        console.error("Movies fetch failed:", e);
+        setErr(e?.response?.data?.message || "Failed to fetch movies");
+      } finally {
+        if (mounted) setLoading(false);
+      }
     };
     fetchMovies();
-    return () => { mounted = false; };
-  }, [debouncedQ]);
+    return () => {
+      mounted = false;
+    };
+  }, [debouncedQ, setParams]);
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-900">
-      {/* Centered header + search */}
+      {/* Header + search */}
       <div className="max-w-6xl mx-auto px-3 sm:px-4 md:px-6 lg:px-8 pt-4 pb-3">
         <header className="mb-3 flex items-center justify-between">
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Only in Theatres</h1>
@@ -233,18 +240,21 @@ export default function Movies() {
         </div>
       </div>
 
-      {/* Centered cards area, left-aligned inside */}
+      {/* Cards area */}
       <section className="pb-10">
         <div className="max-w-6xl mx-auto px-3 sm:px-4 md:px-6 lg:px-8">
           {err && (
-            <Card className="mb-6 p-4 bg-rose-50 border-rose-200 text-rose-700 font-semibold">{err}</Card>
+            <Card className="mb-6 p-4 bg-rose-50 border-rose-200 text-rose-700 font-semibold" role="alert">
+              {err}
+            </Card>
           )}
 
+          {/* Loading skeleton */}
           {loading && (
             <div className="flex flex-wrap gap-4 justify-start">
-              {Array.from({ length: 16 }).map((_, i) => (
+              {Array.from({ length: 12 }).map((_, i) => (
                 <div key={i} className="w-[240px]">
-                  <Card className="p-3 animate-pulse">
+                  <Card className="p-3 animate-pulse" aria-hidden>
                     <div className="bg-slate-200 aspect-[2/3] w-full mb-3 rounded-xl" />
                     <div className="h-4 w-3/4 bg-slate-200 mb-2 rounded" />
                     <div className="h-3 w-1/2 bg-slate-200 rounded" />
@@ -254,19 +264,26 @@ export default function Movies() {
             </div>
           )}
 
+          {/* Movies list */}
           {!loading && movies.length > 0 && (
             <ul className="flex flex-wrap gap-4 justify-start">
               {movies.map((m) => (
-                <li key={m._id} className="group w-[240px]">
+                <li key={m._id} className="group w-[240px]" aria-labelledby={`movie-${m._id}-title`}>
                   <Card className="p-3 transition-transform duration-200 group-hover:-translate-y-0.5">
                     <PosterBox movie={m} />
+
                     <div className="mt-3">
-                      <h3 className="text-sm sm:text-base font-extrabold leading-snug line-clamp-2">{m.title}</h3>
+                      <h3 id={`movie-${m._id}-title`} className="text-sm sm:text-base font-extrabold leading-snug line-clamp-2">
+                        {m.title}
+                      </h3>
+
                       <p className="mt-1 text-xs text-slate-600 line-clamp-1">
                         {m.genre || (m.languages?.length ? m.languages.slice(0, 3).join(", ") : " ")}
                       </p>
+
                       <div className="mt-3 flex items-center gap-2">
                         <GhostBtn as={Link} to={`/movies/${m._id}`}>Details</GhostBtn>
+
                         <PrimaryBtn
                           as={Link}
                           to={`/showtimes?movieId=${m._id}&date=${today}`}
@@ -282,10 +299,13 @@ export default function Movies() {
             </ul>
           )}
 
+          {/* Empty state */}
           {!loading && movies.length === 0 && !err && (
             <div className="py-16 text-center">
               <Card className="inline-flex flex-col items-center justify-center px-10 py-12">
-                <div className="mb-4 text-slate-600"><span className="text-4xl">🎬</span></div>
+                <div className="mb-4 text-slate-600">
+                  <span className="text-4xl">🎬</span>
+                </div>
                 <h2 className="text-lg sm:text-xl font-extrabold text-slate-900">No movies found</h2>
                 <p className="mt-2 text-sm text-slate-600">Try searching a different title, cast, or genre.</p>
                 <div className="mt-5">
@@ -302,7 +322,7 @@ export default function Movies() {
   );
 }
 
-/* ---------- SearchBar (Walmart) ---------- */
+/* ------------------------------ SearchBar ------------------------------ */
 function SearchBar({ value, onChange, onClear, placeholder = "Search", className = "" }) {
   const inputRef = useRef(null);
 
@@ -324,7 +344,8 @@ function SearchBar({ value, onChange, onClear, placeholder = "Search", className
   return (
     <div className={`w-full ${className}`}>
       <Card className="px-4 py-2.5 flex items-center gap-3">
-        <span className="text-slate-500"><IconSearch className="w-5 h-5" /></span>
+        <span className="text-slate-500" aria-hidden><IconSearch className="w-5 h-5" /></span>
+
         <input
           ref={inputRef}
           type="text"
@@ -332,7 +353,9 @@ function SearchBar({ value, onChange, onClear, placeholder = "Search", className
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
           className="flex-1 px-2 py-1.5 outline-none bg-transparent text-sm sm:text-base placeholder:text-slate-400"
+          aria-label="Search movies"
         />
+
         {value ? (
           <GhostBtn type="button" onClick={onClear}>Clear</GhostBtn>
         ) : (
@@ -343,7 +366,7 @@ function SearchBar({ value, onChange, onClear, placeholder = "Search", className
   );
 }
 
-/* ---------- PosterBox ---------- */
+/* ------------------------------ PosterBox ------------------------------ */
 function PosterBox({ movie }) {
   const src = resolvePosterUrl(movie.posterUrl) || DEFAULT_POSTER;
   return (
@@ -357,14 +380,4 @@ function PosterBox({ movie }) {
       />
     </div>
   );
-}
-
-/* ---------- Debounce ---------- */
-function useDebounce(value, delay = 300) {
-  const [v, setV] = useState(value);
-  useEffect(() => {
-    const id = setTimeout(() => setV(value), delay);
-    return () => clearTimeout(id);
-  }, [value, delay]);
-  return v;
 }
