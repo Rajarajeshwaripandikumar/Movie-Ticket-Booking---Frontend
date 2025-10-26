@@ -149,7 +149,6 @@ function IconButton({ children, className = "", ...props }) {
   );
 }
 
-/* Defensive renderer: convert various value shapes to a readable string */
 function renderValueToString(v) {
   if (v == null) return "";
   if (typeof v === "string") return v;
@@ -170,7 +169,6 @@ function renderValueToString(v) {
   return String(v);
 }
 
-/* Dynamic list editor for cast (actorName + character) and crew (name + role) */
 function ListEditor({ label, items, setItems, itemShape = { a: "", b: "" }, leftPlaceholder, rightPlaceholder }) {
   const updateAt = (i, patch) => {
     setItems((s) => s.map((it, idx) => (idx === i ? { ...it, ...patch } : it)));
@@ -211,7 +209,6 @@ function ListEditor({ label, items, setItems, itemShape = { a: "", b: "" }, left
   );
 }
 
-/* Language tag input (preset multi-select + custom tag add) */
 const COMMON_LANGS = ["English", "Tamil", "Hindi", "Telugu", "Malayalam", "Kannada", "Bengali", "Marathi", "Punjabi"];
 
 function LanguageEditor({ languages, setLanguages }) {
@@ -272,7 +269,6 @@ function LanguageEditor({ languages, setLanguages }) {
 function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
   const norm = normalizeMovie(initial || {});
 
-  // defensive defaults
   const safeLanguages = Array.isArray(norm.languages) ? norm.languages : (norm.languages ? toArray(norm.languages) : []);
   const safeCast = Array.isArray(norm.cast) ? norm.cast : [];
   const safeCrew = Array.isArray(norm.crew) ? norm.crew : [];
@@ -351,7 +347,6 @@ function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
   const submit = async (e) => {
     e.preventDefault();
 
-    // Build formData
     const data = new FormData();
     data.append("title", form.title);
     data.append("description", form.synopsis ?? "");
@@ -359,16 +354,12 @@ function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
     else data.append("runtimeMinutes", "");
     data.append("genres", form.genresStr || "");
     data.append("releasedAt", form.releaseDate || "");
-    // languages -> send as CSV (backend accepts CSV or JSON)
     data.append("languages", (languages || []).map((x) => String(x).trim()).filter(Boolean).join(","));
 
-    // ---- IMPORTANT: normalize cast to { name, character } for the backend ----
     const normalizedCast = (cast || [])
       .filter((c) => String(c?.actorName || c?.name || "").trim().length > 0)
       .map((c) => {
-        // c may have actorName property
         const name = c.actorName ?? c.name ?? "";
-        // flatten arrays/objects if they slipped in
         const resolvedName = Array.isArray(name)
           ? name.map((x) => (typeof x === "string" ? x : x?.name || JSON.stringify(x))).join(", ")
           : typeof name === "object"
@@ -381,7 +372,6 @@ function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
 
     data.append("cast", JSON.stringify(normalizedCast));
 
-    // normalize crew to { name, role }
     const normalizedCrew = (crew || [])
       .filter((c) => String(c?.name || "").trim().length > 0)
       .map((c) => ({ name: String(c.name).trim(), role: String(c.role || "").trim() }));
@@ -399,7 +389,6 @@ function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
       await onSave(data);
     } catch (err) {
       console.error("Save failed (MovieForm):", err);
-      // show helpful server-sent message if present
       const server = err?.response?.data;
       let msg = err?.message || "Save failed";
       if (server) {
@@ -447,10 +436,8 @@ function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
         </div>
       </div>
 
-      {/* Languages */}
       <LanguageEditor languages={languages} setLanguages={setLanguages} />
 
-      {/* Cast & Crew editors */}
       <div className="grid md:grid-cols-2 gap-4">
         <ListEditor
           label="Cast"
@@ -539,7 +526,6 @@ export default function AdminMoviesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // NEW: fetch single movie document for editing to ensure full shape (cast/crew/languages)
   async function openEdit(movieItem) {
     try {
       setLoading(true);
@@ -548,7 +534,6 @@ export default function AdminMoviesPage() {
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
       const id = movieItem._id || movieItem.id;
       if (!id) {
-        // fallback to using the provided item
         setEditing(normalizeMovie(movieItem));
         return;
       }
@@ -621,13 +606,11 @@ export default function AdminMoviesPage() {
       if (serverMsg) {
         console.error("server response:", serverMsg);
         let msg = serverMsg?.message || JSON.stringify(serverMsg);
-        // try to present validation array nicely
         if (Array.isArray(serverMsg?.errors)) {
           msg = serverMsg.errors.map((e) => `${e.path || ""}: ${e.message || JSON.stringify(e)}`).join("\n");
         }
         alert("Update failed: " + msg);
       } else if (err?.request && !err?.response) {
-        // no response from server
         alert("Update failed: No response from server (network/CORS). Check server logs and CORS settings.");
       } else {
         alert("Update failed: " + (err.message || "Unknown error"));
@@ -663,12 +646,10 @@ export default function AdminMoviesPage() {
       title=""
       rightSlot={
         <div className="flex items-center gap-2">
-          
-          <div className="inline-flex items-center gap-2">
-           
-          </div>
+          <div className="inline-flex items-center gap-2"></div>
         </div>
       }
+      hideHeaderRow={true}
       maxWidth="max-w-6xl"
     >
       {/* Header card */}
