@@ -290,14 +290,44 @@ const toDauDaily = (arr = []) =>
     };
   });
 
+/* ---------- Robust movie name resolution to avoid "Unknown" ---------- */
 const toMovies = (arr = []) =>
   (arr || []).map((m = {}) => {
-    // m might already be shaped, or may be { movie: 'Title', bookings, revenue }
-    const title = m.movieName ?? m.title ?? (m.movie && m.movie.title) ?? "Unknown";
+    // helper: return first non-empty string
+    const tryStr = (...vals) => {
+      for (const v of vals) {
+        if (typeof v === "string" && v.trim()) return v.trim();
+      }
+      return null;
+    };
+
+    // candidates: many possible shapes your backend might return
+    const candidates = [
+      m.movieName,
+      m.movieTitle,
+      m.movie?.title,
+      m.movie?.name,
+      m.title,
+      m.name,
+      m.displayName,
+      m.m?.title,
+      m.m?.name,
+      m.m?.movie?.title,
+      m.movie?.title,
+      // sometimes lookup result uses `m` or `movie` or `movie[0]` etc.
+      Array.isArray(m.movie) && m.movie[0] && (m.movie[0].title || m.movie[0].name),
+      Array.isArray(m.m) && m.m[0] && (m.m[0].title || m.m[0].name),
+      // if movieId is objectId-like, leave as id string fallback
+      typeof m.movieId === "string" ? m.movieId : null,
+      typeof m._id === "string" ? m._id : null,
+    ];
+
+    const title = tryStr(...candidates) || "Unknown";
+
     return {
       title,
-      revenue: Number(m.totalRevenue ?? m.revenue ?? m.revenue ?? 0),
-      bookings: Number(m.totalBookings ?? m.bookings ?? m.bookings ?? 0),
+      revenue: Number(m.totalRevenue ?? m.revenue ?? 0),
+      bookings: Number(m.totalBookings ?? m.bookings ?? 0),
       seatsBooked: Number(m.seatsBooked ?? 0),
     };
   });
@@ -572,9 +602,9 @@ export default function AdminAnalyticsDashboard() {
         else if (payload) {
           setTopMovies((prev) => {
             const copy = [...prev];
-            const title = payload.movieName || payload.title;
+            const title = payload.movieName || payload.title || payload.movie?.title;
             const i = copy.findIndex((m) => m.title === title);
-            const updated = { title, revenue: Number(payload.totalRevenue ?? payload.revenue ?? 0), bookings: Number(payload.totalBookings ?? payload.bookings ?? 0), seatsBooked: Number(payload.seatsBooked ?? 0) };
+            const updated = { title: title || "Unknown", revenue: Number(payload.totalRevenue ?? payload.revenue ?? 0), bookings: Number(payload.totalBookings ?? payload.bookings ?? 0), seatsBooked: Number(payload.seatsBooked ?? 0) };
             if (i >= 0) copy[i] = updated;
             else copy.unshift(updated);
             return copy.slice(0, 50);
