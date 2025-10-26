@@ -8,7 +8,6 @@ import TheaterCard from "../components/TheaterCard";
 /* ✅ Master amenities list (always show all 7) */
 const MASTER_AMENITIES = ["Parking", "Snacks", "AC", "Wheelchair", "3D", "IMAX", "Dolby Atmos"];
 
-/* --------------------------- Walmart primitives --------------------------- */
 const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
   <Tag className={`bg-white border border-slate-200 rounded-2xl shadow-sm ${className}`} {...rest}>
     {children}
@@ -48,7 +47,6 @@ export default function TheatersPage() {
   const navigate = useNavigate();
   const { search } = useLocation();
 
-  /* ------------------------------ State ------------------------------ */
   const [query, setQuery] = useState("");
   const [cityFilter, setCityFilter] = useState("All");
   const [amenityFilter, setAmenityFilter] = useState("All");
@@ -63,9 +61,6 @@ export default function TheatersPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  /* ------------------------------ Helpers ------------------------------ */
-
-  // Build full image URL when API returns relative paths
   const apiBase = useMemo(() => {
     try {
       const u = new URL(api?.defaults?.baseURL || window.location.origin);
@@ -83,7 +78,6 @@ export default function TheatersPage() {
     return v ? `${full}${full.includes("?") ? "&" : "?"}v=${v}` : full;
   };
 
-  // Normalize amenities: array|string, also handle 'amentities' typo
   const normalizeTheater = (t) => {
     let rawAmenities =
       Array.isArray(t?.amenities)
@@ -96,7 +90,6 @@ export default function TheatersPage() {
         ? t.amentities
         : [];
 
-    // rawAmenities might be a JSON string like '["AC","Parking"]' — handle that
     if (typeof rawAmenities === "string") {
       const s = rawAmenities.trim();
       if (s.startsWith("[") && s.endsWith("]")) {
@@ -104,7 +97,6 @@ export default function TheatersPage() {
           const parsed = JSON.parse(s);
           if (Array.isArray(parsed)) rawAmenities = parsed;
         } catch {
-          // fallback to comma-split
           rawAmenities = s.split(",").map((x) => x.trim());
         }
       } else {
@@ -116,11 +108,10 @@ export default function TheatersPage() {
     return { ...t, amenities: normAmenities, imageUrl: resolveImageUrl(t) };
   };
 
-  // 🔎 Apply client-side filters (fallback if backend ignores them)
-  const applyFilters = (items) => {
-    const q = norm(query);
-    const cityN = norm(cityFilter);
-    const amenN = norm(amenityFilter);
+  const applyFilters = (items, localQuery = query, localCity = cityFilter, localAmen = amenityFilter) => {
+    const q = norm(localQuery);
+    const cityN = norm(localCity);
+    const amenN = norm(localAmen);
 
     return items.filter((t) => {
       const tCity = norm(t.city);
@@ -128,8 +119,8 @@ export default function TheatersPage() {
       const tAmenities = (t.amenities || []).map(norm);
 
       const matchesQuery = !q || tName.includes(q) || tCity.includes(q);
-      const matchesCity = cityFilter === "All" || tCity === cityN;
-      const matchesAmenity = amenityFilter === "All" || tAmenities.includes(amenN);
+      const matchesCity = localCity === "All" || tCity === cityN;
+      const matchesAmenity = localAmen === "All" || tAmenities.includes(amenN);
 
       return matchesQuery && matchesCity && matchesAmenity;
     });
@@ -150,13 +141,11 @@ export default function TheatersPage() {
     navigate({ search: `?${sp.toString()}` }, { replace: true });
   };
 
-  /* ------------------------------ Keep cityFilter valid when cities change ------------------------------ */
   useEffect(() => {
     if (!cities || cities.length === 0) return;
     if (cityFilter && cityFilter !== "All") {
       const found = cities.some((c) => String(c).trim().toLowerCase() === String(cityFilter).trim().toLowerCase());
       if (!found) {
-        // Reset to All and update URL (use setTimeout to avoid React warning in render cycle)
         setTimeout(() => {
           setCityFilter("All");
           setUrlParams();
@@ -166,7 +155,6 @@ export default function TheatersPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cities]);
 
-  /* ------------------------------ URL → State ------------------------------ */
   useEffect(() => {
     const sp = new URLSearchParams(search);
     const q = sp.get("q");
@@ -180,45 +168,46 @@ export default function TheatersPage() {
     setPage(1);
   }, [search]);
 
-  /* ------------------------------ Data load ------------------------------ */
-  useEffect(() => {
-    loadTheaters({ reset: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, cityFilter, amenityFilter]);
-
-  async function loadTheaters({ reset = false } = {}) {
+  // allow override object so onChange can call immediately
+  async function loadTheaters({ reset = false, override = {} } = {}) {
     setLoading(true);
     setError("");
     try {
-      const resp = await api.get("/theaters", {
-        params: {
-          q: query || undefined,
-          city: cityFilter === "All" ? undefined : cityFilter,
-          amenity: amenityFilter === "All" ? undefined : amenityFilter,
-          page: reset ? 1 : page,
-          limit: 12, // denser grid
-          ts: Date.now(), // cache buster
-        },
-      });
+      const params = {
+        q: override.q ?? query ?? undefined,
+        city: override.city ?? (cityFilter === "All" ? undefined : cityFilter),
+        amenity: override.amenity ?? (amenityFilter === "All" ? undefined : amenityFilter),
+        page: reset ? 1 : page,
+        limit: 12,
+        ts: Date.now(),
+      };
 
-      // --- DEBUG: inspect API response so we can see amenities shape ---
-      console.debug("API response /theaters:", resp?.data);
+      // Debug log to verify outgoing params
+      console.debug("[loadTheaters] requesting /theaters with params:", params);
+
+      const resp = await api.get("/theaters", { params });
+
+      // Debug API response
+      console.debug("[loadTheaters] response.data:", resp?.data);
 
       const fetched = resp?.data?.theaters ?? resp?.data ?? [];
       const normalized = Array.isArray(fetched) ? fetched.map(normalizeTheater) : [];
 
-      // ✅ Apply client-side filters so selecting an amenity hides other theaters
-      const filtered = applyFilters(normalized);
+      // use applyFilters with local override values — guarantees UI matches expected filters even if backend ignoring params
+      const filtered = applyFilters(
+        normalized,
+        override.q ?? query,
+        override.city ?? cityFilter,
+        override.amenity ?? amenityFilter
+      );
 
-      // 🔁 Merge & update cities + amenities lists from API (but always keep MASTER_AMENITIES)
       if (reset) {
-        // build an array, sort, then dedupe
+        // build city list and amenity list
         const cityArr = normalized
           .map((t) => (t.city || "").trim())
           .filter(Boolean)
           .map((c) => String(c))
           .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-
         const uniqueCities = Array.from(new Set(cityArr));
         setCities(["All", ...uniqueCities]);
 
@@ -238,8 +227,12 @@ export default function TheatersPage() {
       const apiHasMore = typeof resp?.data?.hasMore === "boolean" ? resp.data.hasMore : null;
       setHasMore(apiHasMore ?? (Array.isArray(fetched) && fetched.length > 0));
 
-      // Keep URL synced
-      setUrlParams();
+      // Keep URL synced (use override values if provided)
+      setUrlParams({
+        q: override.q ?? undefined,
+        city: override.city ?? undefined,
+        amenity: override.amenity ?? undefined,
+      });
     } catch (e) {
       console.error("❌ Failed to load theaters:", e);
       setError("Unable to load theaters. Please try again later.");
@@ -247,6 +240,28 @@ export default function TheatersPage() {
       setLoading(false);
     }
   }
+
+  // initial load and when filters change (fallback)
+  useEffect(() => {
+    loadTheaters({ reset: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, cityFilter, amenityFilter]);
+
+  // immediate handlers that clear UI and call load with overrides so there's no race
+  const handleCityChange = (value) => {
+    const v = value || "All";
+    setCityFilter(v);
+    setTheaters([]); // clear old items immediately
+    // call load with explicit override so request uses the intended city (no setState race)
+    loadTheaters({ reset: true, override: { city: v === "All" ? undefined : v } });
+  };
+
+  const handleAmenityChange = (value) => {
+    const v = value || "All";
+    setAmenityFilter(v);
+    setTheaters([]);
+    loadTheaters({ reset: true, override: { amenity: v === "All" ? undefined : v } });
+  };
 
   /* ------------------------------ Auto-refresh hooks ------------------------------ */
   useEffect(() => {
@@ -269,7 +284,6 @@ export default function TheatersPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ------------------------------ Navigation ------------------------------ */
   const handleViewShowtimes = (t) => {
     const ymd = new Date().toISOString().slice(0, 10);
     const city = t.city || (cityFilter !== "All" ? cityFilter : "");
@@ -298,18 +312,15 @@ export default function TheatersPage() {
     }
   };
 
-  /* ------------------------------ Render ------------------------------ */
   return (
     <main className="min-h-screen bg-slate-50">
-      {/* Main Section */}
       <section className="max-w-7xl mx-auto px-6 mt-8">
-        {/* Filters */}
         <Card className="p-4">
           <div className="flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
             <div className="flex-1">
               <SearchBarTheaters
                 value={query}
-                onChange={setQuery}
+                onChange={(v) => setQuery(v)}
                 onClear={() => setQuery("")}
                 onSubmit={() => loadTheaters({ reset: true })}
                 placeholder="Search by theater name or city"
@@ -317,17 +328,11 @@ export default function TheatersPage() {
             </div>
 
             <div className="flex gap-3 items-center">
-              {/* City Filter */}
               <div className="min-w-[160px]">
                 <div className="flex items-center gap-2 border border-slate-300 rounded-full bg-white px-4 py-2 focus-within:ring-2 focus-within:ring-[#0071DC]">
                   <select
                     value={cityFilter}
-                    onChange={(e) => {
-                      // clear current list visually to avoid mixing old + new while new fetch runs
-                      setTheaters([]);
-                      setCityFilter(e.target.value || "All");
-                      // load handled by useEffect (it listens to cityFilter)
-                    }}
+                    onChange={(e) => handleCityChange(e.target.value)}
                     className="bg-transparent outline-none text-sm w-full min-w-[120px]"
                     aria-label="Filter by city"
                   >
@@ -340,15 +345,11 @@ export default function TheatersPage() {
                 </div>
               </div>
 
-              {/* Amenity Filter */}
               <div className="min-w-[160px]">
                 <div className="flex items-center gap-2 border border-slate-300 rounded-full bg-white px-4 py-2 focus-within:ring-2 focus-within:ring-[#0071DC]">
                   <select
                     value={amenityFilter}
-                    onChange={(e) => {
-                      setTheaters([]);
-                      setAmenityFilter(e.target.value || "All");
-                    }}
+                    onChange={(e) => handleAmenityChange(e.target.value)}
                     className="bg-transparent outline-none text-sm w-full"
                     aria-label="Filter by amenity"
                   >
@@ -361,14 +362,12 @@ export default function TheatersPage() {
                 </div>
               </div>
 
-              {/* Search button */}
               <PrimaryBtn onClick={() => loadTheaters({ reset: true })} className="text-sm">
                 Search
               </PrimaryBtn>
             </div>
           </div>
 
-          {/* Quick Refresh under filters */}
           <div className="mt-4 flex justify-end">
             <GhostBtn onClick={() => loadTheaters({ reset: true })} className="text-sm">
               Refresh
@@ -376,28 +375,16 @@ export default function TheatersPage() {
           </div>
         </Card>
 
-        {/* Loading */}
-        {loading && theaters.length === 0 && (
-          <div className="text-center py-12 text-slate-600">Loading theaters...</div>
-        )}
+        {loading && theaters.length === 0 && <div className="text-center py-12 text-slate-600">Loading theaters...</div>}
 
-        {/* Error */}
         {error && !loading && <div className="text-center py-8 text-rose-600 font-medium">{error}</div>}
 
-        {/* Grid */}
         {!loading && !error && (
           <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
             {theaters.length === 0 ? (
               <div className="col-span-full flex justify-center py-12">
                 <Card className="px-10 py-12 text-center">
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    strokeWidth="1.5"
-                    stroke="currentColor"
-                    className="w-14 h-14 text-slate-400 mb-4 mx-auto"
-                  >
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" strokeWidth="1.5" stroke="currentColor" className="w-14 h-14 text-slate-400 mb-4 mx-auto">
                     <rect x="3" y="4" width="18" height="16" rx="2" ry="2" />
                     <path d="M7 4v16M17 4v16M3 8h18M3 16h18" />
                   </svg>
@@ -423,7 +410,6 @@ export default function TheatersPage() {
                   theater={{
                     ...t,
                     imageUrl: t.imageUrl,
-                    // NOTE: we keep amenities on the theater object for detail pages
                   }}
                 />
               ))
@@ -431,7 +417,6 @@ export default function TheatersPage() {
           </div>
         )}
 
-        {/* Load More */}
         {!error && theaters.length > 0 && hasMore && (
           <div className="mt-8 flex justify-center">
             <GhostBtn onClick={() => loadTheaters({ reset: false })} className="px-5">
@@ -441,8 +426,7 @@ export default function TheatersPage() {
         )}
       </section>
 
-      {/* Simple list beneath for admin-like view showing master amenities per theater
-          Only show when no filters/search active — avoids confusing filtered UI */}
+      {/* show admin overview only when no active filter/search */}
       {!query && cityFilter === "All" && amenityFilter === "All" && (
         <section className="max-w-7xl mx-auto px-6 mt-10">
           <Card className="p-5">
@@ -458,7 +442,6 @@ export default function TheatersPage() {
                     </div>
                   </div>
 
-                  {/* Amenities: always show MASTER_AMENITIES and mark present ones */}
                   <div className="flex-1 px-4">
                     <div className="flex flex-wrap gap-2">
                       {MASTER_AMENITIES.map((m) => {
@@ -476,12 +459,11 @@ export default function TheatersPage() {
                         );
                       })}
 
-                      {/* Extra amenities (not in MASTER_AMENITIES) */}
                       {(t.amenities || [])
                         .map((a) => String(a).trim())
                         .filter(Boolean)
                         .filter((a) => !MASTER_AMENITIES.map((x) => x.toLowerCase()).includes(a.toLowerCase()))
-                        .slice(0, 6) // safety cap
+                        .slice(0, 6)
                         .map((extra) => (
                           <span key={extra} className="text-[11px] px-2 py-0.5 rounded-full border bg-white text-slate-700 border-slate-200">
                             {extra}
@@ -512,7 +494,6 @@ export default function TheatersPage() {
 function SearchBarTheaters({ value, onChange, onClear, onSubmit, placeholder = "Search" }) {
   const inputRef = useRef(null);
 
-  // Focus with "/" key (if not in input/textarea)
   useEffect(() => {
     const onKey = (e) => {
       if (
@@ -537,7 +518,6 @@ function SearchBarTheaters({ value, onChange, onClear, onSubmit, placeholder = "
         Search theaters
       </label>
       <div className="relative">
-        {/* Left icon */}
         <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4">
           <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5 text-slate-400">
             <path
@@ -561,7 +541,6 @@ function SearchBarTheaters({ value, onChange, onClear, onSubmit, placeholder = "
           className="w-full rounded-full border border-slate-200 bg-white pl-12 pr-28 py-3 text-sm sm:text-base outline-none placeholder:text-slate-400 focus:ring-2 focus:ring-[#0071DC]"
         />
 
-        {/* Right actions: clear + hint */}
         <div className="absolute inset-y-0 right-0 flex items-center pr-2 gap-1.5">
           {value ? (
             <button
@@ -576,15 +555,12 @@ function SearchBarTheaters({ value, onChange, onClear, onSubmit, placeholder = "
               </svg>
             </button>
           ) : (
-            <kbd className="hidden sm:inline-flex select-none rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] text-slate-500">
-              /
-            </kbd>
+            <kbd className="hidden sm:inline-flex select-none rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] text-slate-500">/</kbd>
           )}
         </div>
       </div>
       <div className="mt-2 text-xs text-slate-500">
-        Type to search. Press <span className="font-medium">/</span> to focus. Press{" "}
-        <span className="font-medium">Enter</span> to search.
+        Type to search. Press <span className="font-medium">/</span> to focus. Press <span className="font-medium">Enter</span> to search.
       </div>
     </div>
   );
