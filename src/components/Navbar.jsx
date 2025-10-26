@@ -439,15 +439,26 @@ export default function Navbar() {
               ) : (
                 !isAdminRoute && (
                   <div className="hidden sm:flex items-center gap-2">
+                    {/* Upgraded Login button (desktop) */}
                     <button
                       onClick={() => {
                         closeAllMenus();
                         navigate("/login");
                       }}
-                      className="text-sm font-semibold px-3 py-2 rounded-full hover:text-[#0654BA]"
+                      className={cn(
+                        "inline-flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-full transition-all duration-200",
+                        "border border-[#0071DC]/30 text-[#0071DC]",
+                        "bg-gradient-to-r from-[#E8F1FF] to-white",
+                        "hover:from-[#0071DC] hover:to-[#0654BA] hover:text-white hover:shadow-md",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071DC]"
+                      )}
+                      aria-label="Login"
                     >
+                      <UserRound className="w-4 h-4" />
                       Login
                     </button>
+
+                    {/* Register stays as PrimaryBtn (filled) to pair with Login */}
                     <PrimaryBtn
                       onClick={() => {
                         closeAllMenus();
@@ -554,15 +565,23 @@ export default function Navbar() {
             ) : (
               !isAdminRoute && (
                 <>
+                  {/* Upgraded mobile Login (full-width pill) */}
                   <button
                     onClick={() => {
                       closeAllMenus();
                       navigate("/login");
                     }}
-                    className="block w-full text-left text-sm font-semibold hover:text-[#0654BA]"
+                    className={cn(
+                      "w-full inline-flex items-center justify-center gap-2 text-sm font-semibold px-4 py-2 rounded-full transition-all duration-200",
+                      "border border-[#0071DC]/30 text-[#0071DC] bg-white",
+                      "hover:bg-[#0071DC] hover:text-white hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071DC]"
+                    )}
+                    aria-label="Login"
                   >
+                    <UserRound className="w-4 h-4" />
                     Login
                   </button>
+
                   <PrimaryBtn
                     className="w-full justify-center"
                     onClick={() => {
