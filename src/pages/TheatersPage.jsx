@@ -150,6 +150,22 @@ export default function TheatersPage() {
     navigate({ search: `?${sp.toString()}` }, { replace: true });
   };
 
+  /* ------------------------------ Keep cityFilter valid when cities change ------------------------------ */
+  useEffect(() => {
+    if (!cities || cities.length === 0) return;
+    if (cityFilter && cityFilter !== "All") {
+      const found = cities.some((c) => String(c).trim().toLowerCase() === String(cityFilter).trim().toLowerCase());
+      if (!found) {
+        // Reset to All and update URL (use setTimeout to avoid React warning in render cycle)
+        setTimeout(() => {
+          setCityFilter("All");
+          setUrlParams();
+        }, 0);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cities]);
+
   /* ------------------------------ URL → State ------------------------------ */
   useEffect(() => {
     const sp = new URLSearchParams(search);
@@ -196,13 +212,15 @@ export default function TheatersPage() {
 
       // 🔁 Merge & update cities + amenities lists from API (but always keep MASTER_AMENITIES)
       if (reset) {
-        const citySet = new Set(
-          normalized
-            .map((t) => (t.city || "").trim())
-            .filter(Boolean)
-            .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))
-        );
-        setCities(["All", ...Array.from(citySet)]);
+        // build an array, sort, then dedupe
+        const cityArr = normalized
+          .map((t) => (t.city || "").trim())
+          .filter(Boolean)
+          .map((c) => String(c))
+          .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+
+        const uniqueCities = Array.from(new Set(cityArr));
+        setCities(["All", ...uniqueCities]);
 
         const amenSet = new Set(MASTER_AMENITIES);
         normalized.forEach((t) => (t.amenities || []).forEach((a) => a && amenSet.add(String(a).trim())));
@@ -304,8 +322,8 @@ export default function TheatersPage() {
                 <div className="flex items-center gap-2 border border-slate-300 rounded-full bg-white px-4 py-2 focus-within:ring-2 focus-within:ring-[#0071DC]">
                   <select
                     value={cityFilter}
-                    onChange={(e) => setCityFilter(e.target.value)}
-                    className="bg-transparent outline-none text-sm w-full"
+                    onChange={(e) => setCityFilter(e.target.value || "All")}
+                    className="bg-transparent outline-none text-sm w-full min-w-[120px]"
                     aria-label="Filter by city"
                   >
                     {cities.map((c) => (
