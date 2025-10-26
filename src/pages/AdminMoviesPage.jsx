@@ -406,6 +406,8 @@ function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
         if (server.message) msg = server.message;
         else if (server.errors) msg = JSON.stringify(server.errors);
         else msg = JSON.stringify(server);
+      } else if (err?.request && !err?.response) {
+        msg = "No response from server (network/CORS). Check server logs and CORS config.";
       }
       alert(`Update failed: ${msg}`);
       throw err;
@@ -519,7 +521,14 @@ export default function AdminMoviesPage() {
     } catch (err) {
       console.error("fetchMovies failed:", err);
       const server = err?.response?.data;
-      setError(server?.message || "Unable to fetch movies");
+      if (server) {
+        console.error("server response:", server);
+        setError(server?.message || JSON.stringify(server));
+      } else if (err?.request && !err?.response) {
+        setError("No response from server (network/CORS).");
+      } else {
+        setError("Unable to fetch movies");
+      }
     } finally {
       setLoading(false);
     }
@@ -549,6 +558,7 @@ export default function AdminMoviesPage() {
     } catch (err) {
       console.error("openEdit failed:", err);
       const server = err?.response?.data;
+      if (server) console.error("server response:", server);
       alert("Failed to load movie details: " + (server?.message || err.message));
     } finally {
       setLoading(false);
@@ -573,7 +583,14 @@ export default function AdminMoviesPage() {
     } catch (err) {
       console.error("Create failed (full error):", err);
       const serverMsg = err?.response?.data;
-      alert("Create failed: " + (serverMsg?.message || JSON.stringify(serverMsg) || err.message));
+      if (serverMsg) {
+        console.error("server response:", serverMsg);
+        alert("Create failed: " + (serverMsg?.message || JSON.stringify(serverMsg)));
+      } else if (err?.request && !err?.response) {
+        alert("Create failed: No response from server (network/CORS). Check server logs.");
+      } else {
+        alert("Create failed: " + (err.message || "unknown error"));
+      }
     } finally {
       submittingRef.current = false;
     }
@@ -599,14 +616,22 @@ export default function AdminMoviesPage() {
       setEditing(null);
     } catch (err) {
       console.error("Update failed (full error):", err);
+
       const serverMsg = err?.response?.data;
-      let msg = err.message || "Failed to update movie";
       if (serverMsg) {
-        if (serverMsg.message) msg = serverMsg.message;
-        else if (serverMsg.errors) msg = JSON.stringify(serverMsg.errors);
-        else msg = JSON.stringify(serverMsg);
+        console.error("server response:", serverMsg);
+        let msg = serverMsg?.message || JSON.stringify(serverMsg);
+        // try to present validation array nicely
+        if (Array.isArray(serverMsg?.errors)) {
+          msg = serverMsg.errors.map((e) => `${e.path || ""}: ${e.message || JSON.stringify(e)}`).join("\n");
+        }
+        alert("Update failed: " + msg);
+      } else if (err?.request && !err?.response) {
+        // no response from server
+        alert("Update failed: No response from server (network/CORS). Check server logs and CORS settings.");
+      } else {
+        alert("Update failed: " + (err.message || "Unknown error"));
       }
-      alert("Update failed: " + msg);
     } finally {
       submittingRef.current = false;
     }
@@ -621,8 +646,15 @@ export default function AdminMoviesPage() {
       setMovies((x) => x.filter((t) => (t._id || t.id) !== (m._id || m.id)));
     } catch (err) {
       console.error("Delete failed:", err);
-      const msg = err?.response?.data?.message || err.message;
-      alert("Delete failed: " + msg);
+      const server = err?.response?.data;
+      if (server) {
+        console.error("server response:", server);
+        alert("Delete failed: " + (server?.message || JSON.stringify(server)));
+      } else if (err?.request && !err?.response) {
+        alert("Delete failed: No response from server (network/CORS).");
+      } else {
+        alert("Delete failed: " + (err.message || "unknown error"));
+      }
     }
   };
 
