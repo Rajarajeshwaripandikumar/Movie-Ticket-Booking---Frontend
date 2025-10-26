@@ -63,7 +63,7 @@ const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
 const Pill = ({ children, className = "", ...props }) => (
   <button
     {...props}
-    className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[${BLUE}] ${className}`}
+    className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071DC] ${className}`}
   >
     {children}
   </button>
@@ -72,7 +72,7 @@ const Pill = ({ children, className = "", ...props }) => (
 const Primary = ({ children, className = "", ...props }) => (
   <button
     {...props}
-    className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold bg-[${BLUE}] text-white hover:bg-[${BLUE_DARK}] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[${BLUE}] ${className}`}
+    className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold bg-[#0071DC] text-white hover:bg-[#0654BA] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071DC] ${className}`}
   >
     {children}
   </button>
