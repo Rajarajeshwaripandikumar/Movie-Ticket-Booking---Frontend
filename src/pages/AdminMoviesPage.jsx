@@ -84,17 +84,17 @@ function toArray(v) {
 function normalizeMovie(m = {}) {
   const title = m.title || "";
   const synopsis = m.synopsis ?? m.description ?? "";
-  const runtime = m.runtime ?? m.durationMins ?? "";
-  const releaseDate = m.releaseDate ?? "";
+  const runtime = m.runtime ?? m.durationMins ?? m.runtimeMinutes ?? "";
+  const releaseDate = m.releaseDate ?? (m.releasedAt ? String(m.releasedAt).slice(0, 10) : "");
   const genresArr = Array.isArray(m.genres)
     ? m.genres
     : Array.isArray(m.genre)
     ? m.genre
-    : toArray(m.genre || "");
+    : toArray(m.genre || m.genres || "");
   const genresStr = genresArr.join(", ");
   const languages = Array.isArray(m.languages) ? m.languages : toArray(m.languages ?? m.language ?? "");
   const cast = Array.isArray(m.cast)
-    ? m.cast.map((c) => (typeof c === "string" ? { actorName: c } : c))
+    ? m.cast.map((c) => (typeof c === "string" ? { actorName: c } : c || { actorName: "" }))
     : [];
   const crew = Array.isArray(m.crew)
     ? m.crew.map((c) =>
@@ -224,40 +224,47 @@ function LanguageEditor({ languages, setLanguages }) {
 
 /* ------------------------- Movie Form Component ------------------------- */
 function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
-  const norm = normalizeMovie(initial);
+  const norm = normalizeMovie(initial || {});
+
+  // defensive defaults
+  const safeLanguages = Array.isArray(norm.languages) ? norm.languages : (norm.languages ? toArray(norm.languages) : []);
+  const safeCast = Array.isArray(norm.cast) ? norm.cast : [];
+  const safeCrew = Array.isArray(norm.crew) ? norm.crew : [];
+
   const [form, setForm] = useState({
-    title: norm.title,
-    synopsis: norm.synopsis,
-    runtime: norm.runtime,
-    genresStr: norm.genresStr,
-    releaseDate: norm.releaseDate,
-    posterUrl: norm.posterUrl,
+    title: norm.title || "",
+    synopsis: norm.synopsis || "",
+    runtime: norm.runtime || "",
+    genresStr: norm.genresStr || "",
+    releaseDate: norm.releaseDate || "",
+    posterUrl: norm.posterUrl || "",
   });
-  const [languages, setLanguages] = useState(norm.languages && norm.languages.length ? norm.languages : ["English"]);
+  const [languages, setLanguages] = useState(safeLanguages.length ? safeLanguages : ["English"]);
   const [cast, setCast] = useState(
-    norm.cast.length ? norm.cast.map((c) => ({ actorName: c.actorName || c.name || "", character: c.character || "" })) : []
+    safeCast.length ? safeCast.map((c) => ({ actorName: c.actorName || c.name || "", character: c.character || "" })) : []
   );
   const [crew, setCrew] = useState(
-    norm.crew.length ? norm.crew.map((c) => ({ name: c.name || "", role: c.role || c.job || "" })) : []
+    safeCrew.length ? safeCrew.map((c) => ({ name: c.name || "", role: c.role || c.job || "" })) : []
   );
   const [posterFile, setPosterFile] = useState(null);
   const [preview, setPreview] = useState(norm.posterUrl ? resolvePosterUrl(norm.posterUrl) : "");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
+    const n = normalizeMovie(initial || {});
     setForm({
-      title: norm.title,
-      synopsis: norm.synopsis,
-      runtime: norm.runtime,
-      genresStr: norm.genresStr,
-      releaseDate: norm.releaseDate,
-      posterUrl: norm.posterUrl,
+      title: n.title || "",
+      synopsis: n.synopsis || "",
+      runtime: n.runtime || "",
+      genresStr: n.genresStr || "",
+      releaseDate: n.releaseDate || "",
+      posterUrl: n.posterUrl || "",
     });
-    setLanguages(norm.languages && norm.languages.length ? norm.languages : ["English"]);
-    setCast(norm.cast.length ? norm.cast.map((c) => ({ actorName: c.actorName || c.name || "", character: c.character || "" })) : []);
-    setCrew(norm.crew.length ? norm.crew.map((c) => ({ name: c.name || "", role: c.role || c.job || "" })) : []);
-    setPreview(norm.posterUrl ? resolvePosterUrl(norm.posterUrl) : "");
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    setLanguages(Array.isArray(n.languages) && n.languages.length ? n.languages : ["English"]);
+    setCast(Array.isArray(n.cast) ? n.cast.map((c) => ({ actorName: c.actorName || c.name || "", character: c.character || "" })) : []);
+    setCrew(Array.isArray(n.crew) ? n.crew.map((c) => ({ name: c.name || "", role: c.role || c.job || "" })) : []);
+    setPreview(n.posterUrl ? resolvePosterUrl(n.posterUrl) : "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initial]);
 
   const change = (k) => (e) => setForm((s) => ({ ...s, [k]: e.target.value }));
@@ -427,6 +434,31 @@ export default function AdminMoviesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // NEW: fetch single movie document for editing to ensure full shape (cast/crew/languages)
+  async function openEdit(movieItem) {
+    try {
+      setLoading(true);
+      setError("");
+      const token = localStorage.getItem("token");
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const id = movieItem._id || movieItem.id;
+      if (!id) {
+        // fallback to using the provided item
+        setEditing(normalizeMovie(movieItem));
+        return;
+      }
+      const resp = await api.get(`/movies/${id}`, { headers });
+      const serverMovie = resp?.data?.data || resp?.data || movieItem;
+      setEditing(normalizeMovie(serverMovie));
+    } catch (err) {
+      console.error("openEdit failed:", err);
+      const server = err?.response?.data;
+      alert("Failed to load movie details: " + (server?.message || err.message));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   const doCreate = async (formData) => {
     if (submittingRef.current) return;
     submittingRef.current = true;
@@ -553,7 +585,7 @@ export default function AdminMoviesPage() {
                   <div className="text-xs text-slate-600 mt-1">Languages: {m.languages.join(", ")}</div>
                 )}
                 <div className="mt-3 flex gap-2">
-                  <SecondaryBtn onClick={() => setEditing(m)} className="text-sm">Edit</SecondaryBtn>
+                  <SecondaryBtn onClick={() => openEdit(m)} className="text-sm">Edit</SecondaryBtn>
                   <SecondaryBtn onClick={() => doDelete(m)} className="text-sm">Delete</SecondaryBtn>
                 </div>
               </div>
