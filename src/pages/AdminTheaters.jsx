@@ -25,11 +25,12 @@ const API_BASE = (
 ).replace(/\/+$/, "");
 
 const FILES_BASE = API_BASE.replace(/\/api$/, "");
-const UPLOAD_WITH_CREDENTIALS = false;
 
-/* -------------------------------------------------------------------------- */
-/* Fallback image                                                             */
-/* -------------------------------------------------------------------------- */
+/* Retry and credentials settings for uploads */
+const MAX_UPLOAD_RETRIES = 2; // retry times for transient server errors
+const UPLOAD_WITH_CREDENTIALS = false; // set true if backend relies on cookies
+
+/* Inline fallback image */
 const DEFAULT_IMG =
   "data:image/svg+xml;utf8," +
   encodeURIComponent(`
@@ -94,25 +95,37 @@ const resolveImageUrl = (url, updatedAt) => {
   return v ? `${abs}${abs.includes("?") ? "&" : "?"}v=${v}` : abs;
 };
 
+/**
+ * Parse amenities coming from backend into a clean array.
+ * Accepts arrays, JSON strings '["A","B"]', or comma-separated strings 'A,B'
+ */
 const parseAmenities = (raw) => {
   if (!raw && raw !== 0) return [];
   if (Array.isArray(raw)) return raw.map((r) => String(r).trim()).filter(Boolean);
+
   const s = String(raw).trim();
   if (!s) return [];
+
   if (s.startsWith("[") && s.endsWith("]")) {
     try {
       const parsed = JSON.parse(s);
       if (Array.isArray(parsed)) return parsed.map((r) => String(r).trim()).filter(Boolean);
-    } catch {}
+    } catch {
+      // fall through to comma-split
+    }
   }
+
   return s.split(",").map((r) => String(r).trim()).filter(Boolean);
 };
 
-const normalizeTheater = (t = {}) => ({
-  ...t,
-  amenities: parseAmenities(t.amenities),
-  imageUrl: resolveImageUrl(t.imageUrl || t.poster || t.theaterImage || t.image, t.updatedAt) || "",
-});
+const normalizeTheater = (t = {}) => {
+  const amenities = parseAmenities(t.amenities);
+  return {
+    ...t,
+    amenities,
+    imageUrl: resolveImageUrl(t.imageUrl || t.poster || t.theaterImage || t.image, t.updatedAt) || "",
+  };
+};
 
 /* -------------------------------------------------------------------------- */
 /* Component                                                                  */
@@ -120,6 +133,7 @@ const normalizeTheater = (t = {}) => ({
 export default function AdminTheaters() {
   const { token, role } = useAuth() || {};
   const [theaters, setTheaters] = useState([]);
+
   const [selectedId, setSelectedId] = useState(null);
   const [name, setName] = useState("");
   const [city, setCity] = useState("");
@@ -128,139 +142,45 @@ export default function AdminTheaters() {
   const [originalAmenities, setOriginalAmenities] = useState([]);
   const [amenitiesDirty, setAmenitiesDirty] = useState(false);
   const [amenityInput, setAmenityInput] = useState("");
+
   const [preview, setPreview] = useState("");
   const [previewKey, setPreviewKey] = useState(0);
   const fileInputRef = useRef(null);
-  const [selectedFile, setSelectedFile] = useState(null);
+  const [selectedFile, setSelectedFile] = useState(null); // keep the chosen file for direct multipart create/update
+
   const submittingRef = useRef(false);
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
   const [msgType, setMsgType] = useState("info");
 
-  const authHeaders = () => (token ? { Authorization: `Bearer ${token}` } : undefined);
+  /* Load theaters — choose admin list if admin logged in */
+  useEffect(() => {
+    loadTheaters();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  /* ------------------- Load Theaters ------------------- */
   async function loadTheaters() {
     try {
+      setMsg("");
       const headers = authHeaders();
+      const axiosOpts = { params: { limit: 100, ts: Date.now() }, headers, timeout: 20000, withCredentials: UPLOAD_WITH_CREDENTIALS };
+      // If admin logged in, call admin endpoint to get full list; otherwise public list
       const path = token && role?.toLowerCase() === "admin" ? "/theaters/admin/list" : "/theaters";
-      const res = await api.get(path, { headers, withCredentials: UPLOAD_WITH_CREDENTIALS });
+      const res = await api.get(path, axiosOpts);
       const body = res?.data ?? res;
-      const arr = Array.isArray(body.data)
-        ? body.data
-        : Array.isArray(body.theaters)
-        ? body.theaters
-        : Array.isArray(body)
-        ? body
-        : [];
+      let arr = [];
+
+      if (Array.isArray(body.theaters)) arr = body.theaters;
+      else if (Array.isArray(body.data)) arr = body.data;
+      else if (Array.isArray(body)) arr = body;
+      else if (Array.isArray(body?.data?.theaters)) arr = body.data.theaters;
+      // final fallback: try known keys
+      else if (Array.isArray(body?.theaters?.data)) arr = body.theaters.data;
+
       setTheaters(arr.map(normalizeTheater));
     } catch (err) {
       console.error("loadTheaters error:", err);
       setMsg("⚠️ Failed to load theaters (check API)");
-      setMsgType("error");
-    }
-  }
-
-  useEffect(() => {
-    loadTheaters();
-  }, []);
-
-  /* ------------------- File Upload ------------------- */
-  const onPickFile = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const localUrl = URL.createObjectURL(file);
-    setPreview(localUrl);
-    setPreviewKey((k) => k + 1);
-    setSelectedFile(file);
-    setMsg("Image selected (will upload on save).");
-    setMsgType("info");
-  };
-
-  /* ------------------- CRUD ------------------- */
-  async function createTheater() {
-    if (submittingRef.current) return;
-    if (!name.trim() || !city.trim()) {
-      setMsg("Name and City required");
-      setMsgType("error");
-      return;
-    }
-    submittingRef.current = true;
-    setLoading(true);
-    try {
-      if (selectedFile) {
-        const fd = new FormData();
-        fd.append("image", selectedFile);
-        fd.append("name", name);
-        fd.append("city", city);
-        if (address) fd.append("address", address);
-        fd.append("amenities", JSON.stringify(amenitiesList || []));
-        const { data } = await api.post("/theaters/admin", fd, { headers: authHeaders() });
-        await loadTheaters();
-        setMsg("✅ Theater created!");
-        setMsgType("success");
-        resetForm();
-        return;
-      }
-      const payload = { name, city, address, amenities: amenitiesList, imageUrl: preview };
-      await api.post("/theaters/admin", payload, { headers: authHeaders() });
-      await loadTheaters();
-      setMsg("✅ Theater created!");
-      setMsgType("success");
-      resetForm();
-    } catch (err) {
-      console.error("Create failed:", err);
-      setMsg("❌ Create failed: " + (err?.response?.data?.message || err.message));
-      setMsgType("error");
-    } finally {
-      submittingRef.current = false;
-      setLoading(false);
-    }
-  }
-
-  async function updateTheaterById() {
-    if (!selectedId) return;
-    setLoading(true);
-    try {
-      if (selectedFile) {
-        const fd = new FormData();
-        fd.append("image", selectedFile);
-        fd.append("name", name);
-        fd.append("city", city);
-        if (address) fd.append("address", address);
-        const am = amenitiesDirty ? amenitiesList : originalAmenities;
-        fd.append("amenities", JSON.stringify(am || []));
-        await api.put(`/theaters/admin/${selectedId}`, fd, { headers: authHeaders() });
-        await loadTheaters();
-        setMsg("✅ Updated successfully");
-        setMsgType("success");
-        resetForm();
-        return;
-      }
-      const payload = { name, city, address, amenities: amenitiesDirty ? amenitiesList : originalAmenities };
-      await api.put(`/theaters/admin/${selectedId}`, payload, { headers: authHeaders() });
-      await loadTheaters();
-      setMsg("✅ Updated successfully");
-      setMsgType("success");
-      resetForm();
-    } catch (err) {
-      console.error("Update failed:", err);
-      setMsg("❌ Update failed: " + (err?.response?.data?.message || err.message));
-      setMsgType("error");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function deleteTheater(id) {
-    if (!window.confirm("Delete this theater?")) return;
-    try {
-      await api.delete(`/theaters/admin/${id}`, { headers: authHeaders() });
-      await loadTheaters();
-      setMsg("🗑️ Deleted");
-      setMsgType("info");
-    } catch (err) {
-      setMsg("❌ Delete failed: " + (err?.response?.data?.message || err.message));
       setMsgType("error");
     }
   }
@@ -274,10 +194,171 @@ export default function AdminTheaters() {
     setOriginalAmenities([]);
     setAmenitiesDirty(false);
     setAmenityInput("");
+    if (preview?.startsWith("blob:")) URL.revokeObjectURL(preview);
     setPreview("");
     setPreviewKey((k) => k + 1);
     setSelectedFile(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  /* ------------------- Upload Handler (improved) ------------------- */
+  async function onPickFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // client-side validations
+    if (!["image/jpeg", "image/png", "image/webp", "image/gif"].includes(file.type)) {
+      setMsg("Only JPG, PNG, WEBP, or GIF allowed");
+      setMsgType("error");
+      return;
+    }
+
+    // Local preview while uploading (we still keep file for submit)
+    const localUrl = URL.createObjectURL(file);
+    setPreview(localUrl);
+    setPreviewKey((k) => k + 1);
+    setSelectedFile(file);
+    setMsg("Image selected (will upload on save).");
+    setMsgType("info");
+
+    // cleanup local blob URL after a bit (keeps preview for UX)
+    setTimeout(() => {
+      try {
+        URL.revokeObjectURL(localUrl);
+      } catch {}
+    }, 10000);
+  }
+
+  /* ------------------- CRUD ------------------- */
+  // Helper to prepare headers
+  const authHeaders = () => (token ? { Authorization: `Bearer ${token}` } : undefined);
+
+  // Create
+  async function createTheater() {
+    if (submittingRef.current) return;
+    if (!name.trim() || !city.trim()) {
+      setMsg("Name and City required");
+      setMsgType("error");
+      return;
+    }
+
+    submittingRef.current = true;
+    setLoading(true);
+    try {
+      // if a file is selected, use FormData to send image + fields to the admin create endpoint
+      if (selectedFile) {
+        const fd = new FormData();
+        fd.append("image", selectedFile);
+        fd.append("name", name);
+        fd.append("city", city);
+        if (address) fd.append("address", address);
+        // send amenities as JSON string (backend accepts JSON-array or comma string)
+        if (amenitiesList?.length) fd.append("amenities", JSON.stringify(amenitiesList));
+
+        try {
+          if (api?.defaults?.headers?.post) delete api.defaults.headers.post["Content-Type"];
+        } catch (e) {}
+
+        const { data } = await api.post("/theaters/admin", fd, { headers: authHeaders(), withCredentials: UPLOAD_WITH_CREDENTIALS });
+        const created = normalizeTheater(data?.data || data);
+        setTheaters((s) => [created, ...s]);
+        setMsg("✅ Theater created!");
+        setMsgType("success");
+        resetForm();
+        return;
+      }
+
+      // Otherwise, send JSON payload (amenities as array)
+      const payload = {
+        name,
+        city,
+        address,
+        amenities: amenitiesList,
+        imageUrl: preview,
+      };
+      const res = await api.post("/theaters/admin", payload, { headers: authHeaders(), withCredentials: UPLOAD_WITH_CREDENTIALS });
+      const created = normalizeTheater(res.data?.data || res.data);
+      setTheaters((s) => [created, ...s]);
+      setMsg("✅ Theater created!");
+      setMsgType("success");
+      resetForm();
+    } catch (err) {
+      console.error("Create theater failed:", err);
+      setMsg("❌ Create failed: " + (err?.response?.data?.message || err.message));
+      setMsgType("error");
+    } finally {
+      submittingRef.current = false;
+      setLoading(false);
+    }
+  }
+
+  // Update
+  async function updateTheaterById() {
+    if (!selectedId) return;
+    setLoading(true);
+    try {
+      // If a new file is selected, send FormData with image to replace
+      if (selectedFile) {
+        const fd = new FormData();
+        fd.append("image", selectedFile);
+        fd.append("name", name);
+        fd.append("city", city);
+        if (address) fd.append("address", address);
+        // send amenities as JSON string (if dirty use updated list, otherwise original)
+        const am = amenitiesDirty ? amenitiesList : originalAmenities;
+        fd.append("amenities", JSON.stringify(am));
+
+        try {
+          if (api?.defaults?.headers?.post) delete api.defaults.headers.post["Content-Type"];
+        } catch (e) {}
+
+        const { data } = await api.put(`/theaters/admin/${selectedId}`, fd, { headers: authHeaders(), withCredentials: UPLOAD_WITH_CREDENTIALS });
+        const updated = normalizeTheater(data?.data || data);
+        setTheaters((list) => list.map((t) => (t._id === updated._id ? updated : t)));
+        setMsg("✅ Updated successfully");
+        setMsgType("success");
+        resetForm();
+        return;
+      }
+
+      // Otherwise send JSON payload
+      const payload = {
+        name,
+        city,
+        address,
+        amenities: amenitiesDirty ? amenitiesList : originalAmenities,
+        imageUrl: preview,
+      };
+      const res = await api.put(`/theaters/admin/${selectedId}`, payload, { headers: authHeaders(), withCredentials: UPLOAD_WITH_CREDENTIALS });
+      const updated = normalizeTheater(res.data?.data || res.data);
+      setTheaters((list) => list.map((t) => (t._id === updated._id ? updated : t)));
+      setMsg("✅ Updated successfully");
+      setMsgType("success");
+      resetForm();
+    } catch (err) {
+      console.error("Update failed:", err);
+      setMsg("❌ Update failed: " + (err?.response?.data?.message || err.message));
+      setMsgType("error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Delete
+  async function deleteTheater(id) {
+    if (!window.confirm("Delete this theater?")) return;
+    try {
+      await api.delete(`/theaters/admin/${id}`, { headers: authHeaders(), withCredentials: UPLOAD_WITH_CREDENTIALS });
+      setTheaters((s) => s.filter((t) => t._id !== id));
+      setMsg("🗑️ Deleted");
+      setMsgType("info");
+      // clear form if deleted item was selected
+      if (id === selectedId) resetForm();
+    } catch (err) {
+      console.error("Delete failed:", err);
+      setMsg("❌ Delete failed: " + (err?.response?.data?.message || err.message));
+      setMsgType("error");
+    }
   }
 
   function fillFromTheater(t) {
@@ -289,6 +370,9 @@ export default function AdminTheaters() {
     setOriginalAmenities(t.amenities || []);
     setAmenitiesDirty(false);
     setPreview(t.imageUrl);
+    setPreviewKey((k) => k + 1);
+    setSelectedFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
   /* ------------------- Render ------------------- */
@@ -302,9 +386,15 @@ export default function AdminTheaters() {
             </h1>
             <p className="text-sm text-slate-600">Add, edit, or remove theaters.</p>
           </div>
-          <SecondaryBtn onClick={loadTheaters}>
-            <RefreshCcw className="h-4 w-4" /> Refresh
-          </SecondaryBtn>
+          <div className="flex items-center gap-2">
+            <SecondaryBtn
+              onClick={() => {
+                loadTheaters();
+              }}
+            >
+              <RefreshCcw className="h-4 w-4" /> Refresh
+            </SecondaryBtn>
+          </div>
         </Card>
 
         {msg && (
@@ -322,11 +412,47 @@ export default function AdminTheaters() {
         )}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* LEFT: List */}
+          {/* LEFT: Image + Theater list */}
           <div className="lg:col-span-2 space-y-5">
             <Card className="p-5">
               <h2 className="font-extrabold text-lg mb-4 flex items-center gap-2 border-b pb-2 border-slate-200">
-                <ImageIcon className="h-5 w-5" /> Existing Theaters
+                <ImageIcon className="h-5 w-5" /> Theater Image
+              </h2>
+              <div className="flex gap-4 items-center">
+                <div className="w-24 h-24 rounded-xl overflow-hidden bg-slate-200 border border-slate-200">
+                  <img
+                    key={previewKey}
+                    src={preview || DEFAULT_IMG}
+                    onError={(e) => (e.currentTarget.src = DEFAULT_IMG)}
+                    alt="preview"
+                    className="object-cover w-full h-full"
+                  />
+                </div>
+                <div>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    className="hidden"
+                    onChange={(e) => {
+                      onPickFile(e);
+                    }}
+                    accept="image/*"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="border border-slate-300 bg-white rounded-full px-3 py-1.5 hover:bg-slate-50 flex items-center gap-2"
+                  >
+                    <ImageIcon className="h-4 w-4" /> Choose Image
+                  </button>
+                  <div className="text-xs text-slate-500 mt-2">Tip: small JPG/PNG/WebP &lt;5MB recommended</div>
+                </div>
+              </div>
+            </Card>
+
+            <Card className="p-5">
+              <h2 className="font-extrabold text-lg mb-4 flex items-center gap-2 border-b pb-2 border-slate-200">
+                <Building2 className="h-5 w-5" /> Existing Theaters
               </h2>
               {theaters.length === 0 ? (
                 <p className="text-slate-600">No theaters found.</p>
@@ -340,7 +466,11 @@ export default function AdminTheaters() {
                       }`}
                     >
                       <div className="flex gap-3">
-                        <img src={t.imageUrl || DEFAULT_IMG} alt={t.name} className="w-14 h-14 rounded-xl object-cover border" />
+                        <img
+                          src={t.imageUrl || DEFAULT_IMG}
+                          alt={t.name}
+                          className="w-14 h-14 rounded-xl object-cover border"
+                        />
                         <div>
                           <div className="font-extrabold">{t.name}</div>
                           <div className="text-sm text-slate-600">{t.city}</div>
@@ -364,7 +494,7 @@ export default function AdminTheaters() {
             </Card>
           </div>
 
-          {/* RIGHT: Add/Edit */}
+          {/* RIGHT: Add/Edit Form */}
           <div className="lg:col-span-1">
             <Card className="p-5 sticky top-6">
               <h2 className="font-extrabold text-lg mb-4 flex items-center gap-2 border-b pb-2 border-slate-200">
