@@ -149,6 +149,27 @@ function IconButton({ children, className = "", ...props }) {
   );
 }
 
+/* Defensive renderer: convert various value shapes to a readable string */
+function renderValueToString(v) {
+  if (v == null) return "";
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (Array.isArray(v)) {
+    return v
+      .map((x) => {
+        if (typeof x === "string") return x;
+        if (typeof x === "object" && x !== null) return x.name || x.actorName || JSON.stringify(x);
+        return String(x);
+      })
+      .filter(Boolean)
+      .join(", ");
+  }
+  if (typeof v === "object") {
+    return v.name || v.actorName || v.fullName || JSON.stringify(v);
+  }
+  return String(v);
+}
+
 /* Dynamic list editor for cast (actorName + character) and crew (name + role) */
 function ListEditor({ label, items, setItems, itemShape = { a: "", b: "" }, leftPlaceholder, rightPlaceholder }) {
   const updateAt = (i, patch) => {
@@ -170,12 +191,12 @@ function ListEditor({ label, items, setItems, itemShape = { a: "", b: "" }, left
         {items.map((it, idx) => (
           <div key={idx} className="flex gap-2">
             <Field
-              value={String(it.actorName ?? it.name ?? "")}
+              value={renderValueToString(it.actorName ?? it.name ?? "")}
               onChange={(e) => updateAt(idx, { actorName: e.target.value, name: e.target.value })}
               placeholder={leftPlaceholder}
             />
             <Field
-              value={String(it.character ?? it.role ?? "")}
+              value={renderValueToString(it.character ?? it.role ?? "")}
               onChange={(e) => updateAt(idx, { character: e.target.value, role: e.target.value })}
               placeholder={rightPlaceholder}
             />
@@ -340,23 +361,32 @@ function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
     data.append("releasedAt", form.releaseDate || "");
     // languages -> send as CSV (backend accepts CSV or JSON)
     data.append("languages", (languages || []).map((x) => String(x).trim()).filter(Boolean).join(","));
-    // cast & crew -> JSON arrays (backend normalizer will parse)
-    data.append(
-      "cast",
-      JSON.stringify(
-        (cast || [])
-          .filter((c) => (String(c?.actorName || "").trim()))
-          .map((c) => ({ actorName: String(c.actorName).trim(), character: String(c.character || "").trim() }))
-      )
-    );
-    data.append(
-      "crew",
-      JSON.stringify(
-        (crew || [])
-          .filter((c) => (String(c?.name || "").trim()))
-          .map((c) => ({ name: String(c.name).trim(), role: String(c.role || "").trim() }))
-      )
-    );
+
+    // ---- IMPORTANT: normalize cast to { name, character } for the backend ----
+    const normalizedCast = (cast || [])
+      .filter((c) => String(c?.actorName || c?.name || "").trim().length > 0)
+      .map((c) => {
+        // c may have actorName property
+        const name = c.actorName ?? c.name ?? "";
+        // flatten arrays/objects if they slipped in
+        const resolvedName = Array.isArray(name)
+          ? name.map((x) => (typeof x === "string" ? x : x?.name || JSON.stringify(x))).join(", ")
+          : typeof name === "object"
+          ? name.name || name.actorName || JSON.stringify(name)
+          : String(name);
+        const char = c.character ?? c.role ?? "";
+        const resolvedChar = Array.isArray(char) ? char.join(", ") : typeof char === "object" ? JSON.stringify(char) : String(char);
+        return { name: String(resolvedName).trim(), character: String(resolvedChar).trim() };
+      });
+
+    data.append("cast", JSON.stringify(normalizedCast));
+
+    // normalize crew to { name, role }
+    const normalizedCrew = (crew || [])
+      .filter((c) => String(c?.name || "").trim().length > 0)
+      .map((c) => ({ name: String(c.name).trim(), role: String(c.role || "").trim() }));
+
+    data.append("crew", JSON.stringify(normalizedCrew));
 
     if (posterFile) {
       data.append("poster", posterFile);
@@ -369,6 +399,15 @@ function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
       await onSave(data);
     } catch (err) {
       console.error("Save failed (MovieForm):", err);
+      // show helpful server-sent message if present
+      const server = err?.response?.data;
+      let msg = err?.message || "Save failed";
+      if (server) {
+        if (server.message) msg = server.message;
+        else if (server.errors) msg = JSON.stringify(server.errors);
+        else msg = JSON.stringify(server);
+      }
+      alert(`Update failed: ${msg}`);
       throw err;
     } finally {
       setSaving(false);
@@ -561,7 +600,13 @@ export default function AdminMoviesPage() {
     } catch (err) {
       console.error("Update failed (full error):", err);
       const serverMsg = err?.response?.data;
-      alert("Update failed: " + (serverMsg?.message || JSON.stringify(serverMsg) || err.message));
+      let msg = err.message || "Failed to update movie";
+      if (serverMsg) {
+        if (serverMsg.message) msg = serverMsg.message;
+        else if (serverMsg.errors) msg = JSON.stringify(serverMsg.errors);
+        else msg = JSON.stringify(serverMsg);
+      }
+      alert("Update failed: " + msg);
     } finally {
       submittingRef.current = false;
     }
