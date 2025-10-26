@@ -91,11 +91,28 @@ export default function TheatersPage() {
         : Array.isArray(t?.amentities)
         ? t.amentities
         : typeof t?.amenities === "string"
-        ? t.amenities.split(",")
+        ? t.amenities
         : typeof t?.amentities === "string"
-        ? t.amentities.split(",")
+        ? t.amentities
         : [];
-    const normAmenities = Array.from(new Set(rawAmenities.map((a) => String(a).trim()).filter(Boolean)));
+
+    // rawAmenities might be a JSON string like '["AC","Parking"]' — handle that
+    if (typeof rawAmenities === "string") {
+      const s = rawAmenities.trim();
+      if (s.startsWith("[") && s.endsWith("]")) {
+        try {
+          const parsed = JSON.parse(s);
+          if (Array.isArray(parsed)) rawAmenities = parsed;
+        } catch {
+          // fallback to comma-split
+          rawAmenities = s.split(",").map((x) => x.trim());
+        }
+      } else {
+        rawAmenities = s.split(",").map((x) => x.trim());
+      }
+    }
+
+    const normAmenities = Array.from(new Set((rawAmenities || []).map((a) => String(a || "").trim()).filter(Boolean)));
     return { ...t, amenities: normAmenities, imageUrl: resolveImageUrl(t) };
   };
 
@@ -167,6 +184,9 @@ export default function TheatersPage() {
           ts: Date.now(), // cache buster
         },
       });
+
+      // --- DEBUG: inspect API response so we can see amenities shape ---
+      console.debug("API response /theaters:", resp?.data);
 
       const fetched = resp?.data?.theaters ?? resp?.data ?? [];
       const normalized = Array.isArray(fetched) ? fetched.map(normalizeTheater) : [];
@@ -263,8 +283,6 @@ export default function TheatersPage() {
   /* ------------------------------ Render ------------------------------ */
   return (
     <main className="min-h-screen bg-slate-50">
-     
-
       {/* Main Section */}
       <section className="max-w-7xl mx-auto px-6 mt-8">
         {/* Filters */}
@@ -338,17 +356,14 @@ export default function TheatersPage() {
         )}
 
         {/* Error */}
-        {error && !loading && (
-          <div className="text-center py-8 text-rose-600 font-medium">{error}</div>
-        )}
+        {error && !loading && <div className="text-center py-8 text-rose-600 font-medium">{error}</div>}
 
-        {/* Grid (smaller like Movies) */}
+        {/* Grid */}
         {!loading && !error && (
           <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
             {theaters.length === 0 ? (
               <div className="col-span-full flex justify-center py-12">
                 <Card className="px-10 py-12 text-center">
-                  {/* Flat film icon */}
                   <svg
                     xmlns="http://www.w3.org/2000/svg"
                     viewBox="0 0 24 24"
@@ -379,10 +394,14 @@ export default function TheatersPage() {
               theaters.map((t) => (
                 <TheaterCard
                   key={t._id || t.id}
-                  theater={{ ...t, imageUrl: t.imageUrl }}
-                  onViewShowtimes={() => handleViewShowtimes(t)}
-                  onViewFirstScreen={() => handleViewFirstScreen(t)}
-                />
+                  theater={{
+                    ...t,
+                    imageUrl: t.imageUrl,
+                    // NOTE: we keep amenities on the theater object for detail pages
+                  }}
+                >
+                  {/* TheaterCard children are not used here; we render pills below in the list items */}
+                </TheaterCard>
               ))
             )}
           </div>
@@ -396,6 +415,67 @@ export default function TheatersPage() {
             </GhostBtn>
           </div>
         )}
+      </section>
+
+      {/* Simple list beneath for admin-like view showing master amenities per theater */}
+      <section className="max-w-7xl mx-auto px-6 mt-10">
+        <Card className="p-5">
+          <h3 className="text-lg font-extrabold mb-4">All Theaters (Amenities overview)</h3>
+          <div className="space-y-3">
+            {theaters.map((t) => (
+              <div key={t._id || t.id} className="flex items-center justify-between gap-4 p-3 border rounded-2xl">
+                <div className="flex items-center gap-3">
+                  <img src={t.imageUrl || "/no-image.png"} alt={t.name} className="w-12 h-12 rounded-xl object-cover border" />
+                  <div>
+                    <div className="font-semibold">{t.name}</div>
+                    <div className="text-sm text-slate-600">{t.city}</div>
+                  </div>
+                </div>
+
+                {/* Amenities: always show MASTER_AMENITIES and mark present ones */}
+                <div className="flex-1 px-4">
+                  <div className="flex flex-wrap gap-2">
+                    {MASTER_AMENITIES.map((m) => {
+                      const present = (t.amenities || []).map((x) => String(x).trim().toLowerCase()).includes(m.toLowerCase());
+                      return (
+                        <span
+                          key={m}
+                          className={`text-[11px] px-2 py-0.5 rounded-full border ${
+                            present ? "bg-[#0071DC] text-white border-[#0071DC]" : "bg-white text-slate-500 border-slate-200"
+                          }`}
+                          title={present ? `${m} — available` : `${m} — not available`}
+                        >
+                          {m}
+                        </span>
+                      );
+                    })}
+
+                    {/* Extra amenities (not in MASTER_AMENITIES) */}
+                    {(t.amenities || [])
+                      .map((a) => String(a).trim())
+                      .filter(Boolean)
+                      .filter((a) => !MASTER_AMENITIES.map((x) => x.toLowerCase()).includes(a.toLowerCase()))
+                      .slice(0, 6) // safety cap
+                      .map((extra) => (
+                        <span key={extra} className="text-[11px] px-2 py-0.5 rounded-full border bg-white text-slate-700 border-slate-200">
+                          {extra}
+                        </span>
+                      ))}
+                  </div>
+                </div>
+
+                <div className="flex gap-2">
+                  <PrimaryBtn onClick={() => handleViewShowtimes(t)} className="px-3 py-1 text-sm">
+                    View showtimes
+                  </PrimaryBtn>
+                  <GhostBtn onClick={() => handleViewFirstScreen(t)} className="px-3 py-1 text-sm">
+                    Open screen
+                  </GhostBtn>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
       </section>
     </main>
   );
