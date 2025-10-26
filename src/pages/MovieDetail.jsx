@@ -51,48 +51,26 @@ function LinkBtn({ children, className = "", ...props }) {
 const iconClass = "h-5 w-5 flex-shrink-0 text-slate-600";
 const stroke = { stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round", fill: "none" };
 
-const IconX = (p) => (
-  <svg viewBox="0 0 24 24" className={iconClass} {...p}><path {...stroke} d="M6 6l12 12M18 6L6 18"/></svg>
-);
+const IconX = (p) => <svg viewBox="0 0 24 24" className={iconClass} {...p}><path {...stroke} d="M6 6l12 12M18 6L6 18"/></svg>;
 const IconGlobe = (p) => (
   <svg viewBox="0 0 24 24" className={iconClass} {...p}>
     <circle {...stroke} cx="12" cy="12" r="9"/>
     <path {...stroke} d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/>
   </svg>
 );
-const IconTag = (p) => (
-  <svg viewBox="0 0 24 24" className={iconClass} {...p}>
-    <path {...stroke} d="M20 13l-7 7-9-9V4h7l9 9z"/><circle {...stroke} cx="7.5" cy="7.5" r="1.5"/>
-  </svg>
-);
-const IconClock = (p) => (
-  <svg viewBox="0 0 24 24" className={iconClass} {...p}>
-    <circle {...stroke} cx="12" cy="12" r="9"/><path {...stroke} d="M12 7v6l4 2"/>
-  </svg>
-);
-const IconCalendar = (p) => (
-  <svg viewBox="0 0 24 24" className={iconClass} {...p}>
-    <rect {...stroke} x="3" y="4.5" width="18" height="16" rx="2"/><path {...stroke} d="M8 3v3M16 3v3M3 10h18"/>
-  </svg>
-);
-const IconImage = (p) => (
-  <svg viewBox="0 0 24 24" className={iconClass} {...p}>
-    <rect {...stroke} x="3.5" y="5.5" width="17" height="13" rx="2"/><circle {...stroke} cx="9" cy="10" r="1.5"/><path {...stroke} d="M5.5 16l4-3 3 2 3.5-3.5 4.5 4.5"/>
-  </svg>
-);
-const IconArrow = (p) => (
-  <svg viewBox="0 0 24 24" className="h-4 w-4" {...p}><path {...stroke} d="M5 12h14M13 5l7 7-7 7"/></svg>
-);
+const IconTag = (p) => <svg viewBox="0 0 24 24" className={iconClass} {...p}><path {...stroke} d="M20 13l-7 7-9-9V4h7l9 9z"/><circle {...stroke} cx="7.5" cy="7.5" r="1.5"/></svg>;
+const IconClock = (p) => <svg viewBox="0 0 24 24" className={iconClass} {...p}><circle {...stroke} cx="12" cy="12" r="9"/><path {...stroke} d="M12 7v6l4 2"/></svg>;
+const IconCalendar = (p) => <svg viewBox="0 0 24 24" className={iconClass} {...p}><rect {...stroke} x="3" y="4.5" width="18" height="16" rx="2"/><path {...stroke} d="M8 3v3M16 3v3M3 10h18"/></svg>;
+const IconImage = (p) => <svg viewBox="0 0 24 24" className={iconClass} {...p}><rect {...stroke} x="3.5" y="5.5" width="17" height="13" rx="2"/><circle {...stroke} cx="9" cy="10" r="1.5"/><path {...stroke} d="M5.5 16l4-3 3 2 3.5-3.5 4.5 4.5"/></svg>;
+const IconArrow = (p) => <svg viewBox="0 0 24 24" className="h-4 w-4" {...p}><path {...stroke} d="M5 12h14M13 5l7 7-7 7"/></svg>;
 
 /* ---------------- helpers ---------------- */
 const toYMD = (d) => {
   const dt = d instanceof Date ? d : new Date(d);
   return dt.toISOString().slice(0, 10);
 };
-const humanDate = (d) =>
-  new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" });
-const humanTime = (iso) =>
-  new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+const humanDate = (d) => new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" });
+const humanTime = (iso) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 const titleCase = (s = "") => s.toLowerCase().replace(/\b\w/g, (m) => m.toUpperCase());
 const uniqSorted = (arr) =>
@@ -108,7 +86,7 @@ const toArray = (v) =>
     ? v.split(",").map((s) => s.trim()).filter(Boolean)
     : [];
 
-/* ---------- helpers for cast normalization ---------- */
+/* ---------- Cast parsing helpers ---------- */
 function fromPerCharObject(objLike) {
   const vals = Object.values(objLike).filter(Boolean);
   const perChar = vals.length > 5 && vals.every((v) => typeof v === "string" && v.length === 1);
@@ -148,7 +126,6 @@ function normalizeCastItem(item) {
   return { actorName: String(item ?? "").trim() };
 }
 
-/* ----- ultra-robust cast parser ----- */
 function parseCast(anyCast) {
   if (!anyCast) return [];
   if (Array.isArray(anyCast)) return anyCast.map((c) => normalizeCastItem(c)).filter((x) => x && x.actorName);
@@ -169,20 +146,32 @@ function parseCast(anyCast) {
   return [];
 }
 
-/* Normalize movie into a single UI-friendly shape */
+/* ---------- normalizeMovie (fixed) ---------- */
 function normalizeMovie(m = {}) {
-  const genres = m.genres ? toArray(m.genres) : m.genre ? [m.genre] : [];
-  const languages = m.languages ? toArray(m.languages) : m.language ? [m.language] : [];
+  const genres = m.genres ? toArray(m.genres) : m.genre ? [String(m.genre)] : [];
+  const languages = m.languages ? toArray(m.languages) : m.language ? [String(m.language)] : ["English"];
+
   const runtime =
-    typeof m.runtime === "number" ? m.runtime :
-    typeof m.durationMins === "number" ? m.durationMins : typeof m.runtimeMinutes === "number" ? m.runtimeMinutes : undefined;
+    typeof m.runtime === "number"
+      ? m.runtime
+      : typeof m.durationMins === "number"
+      ? m.durationMins
+      : typeof m.runtimeMinutes === "number"
+      ? m.runtimeMinutes
+      : m.runtime
+      ? Number(m.runtime)
+      : undefined;
+
+  const releasedAt = m.releasedAt ?? m.releaseDate ?? m.released_at ?? null;
+  const releaseDate = m.releaseDate ?? m.releasedAt ?? (releasedAt ? new Date(releasedAt).toISOString() : null);
 
   const cast = parseCast(m.cast);
-  const crew = Array.isArray(m.crew) ? m.crew : [];
+  const crew = Array.isArray(m.crew) ? m.crew : (m.crew ? parseCast(m.crew) : []);
 
-  return { ...m, genres, languages, runtime, cast, crew };
+  return { ...m, genres, languages, runtime, cast, crew, releasedAt, releaseDate };
 }
 
+/* -------------------------------------------------------------------------- */
 export default function MovieDetail() {
   const { movieId: routeMovieId } = useParams();
   const navigate = useNavigate();
@@ -197,10 +186,10 @@ export default function MovieDetail() {
   const [showtimes, setShowtimes] = useState([]);
   const [loadingShowtimes, setLoadingShowtimes] = useState(false);
 
-  const [tab, setTab] = useState("synopsis"); // synopsis | cast | posters
+  const [tab, setTab] = useState("synopsis");
   const dialogRef = useRef(null);
 
-  /* fetch movie — FIXED: unwrap axios response properly */
+  /* ------------------------ Fetch movie details ------------------------ */
   useEffect(() => {
     if (!routeMovieId) return;
     (async () => {
@@ -208,10 +197,11 @@ export default function MovieDetail() {
         setLoadingMovie(true);
         setErr("");
         const resp = await api.get(`/movies/${routeMovieId}`);
-        // backend returns { ok: true, data: movie } — support that shape and also plain movie body
         const movieData = resp?.data?.data ?? resp?.data ?? resp;
+        console.log("🎬 Movie data fetched:", movieData); // debug log
         setMovie(normalizeMovie(movieData));
       } catch (e) {
+        console.error("❌ Movie fetch failed:", e);
         setErr(e?.response?.data?.message || "❌ Failed to load movie details.");
       } finally {
         setLoadingMovie(false);
@@ -219,7 +209,7 @@ export default function MovieDetail() {
     })();
   }, [routeMovieId]);
 
-  /* load city list */
+  /* --------------------- Fetch city list & showtimes --------------------- */
   useEffect(() => {
     if (!routeMovieId || !date) return;
     let cancelled = false;
@@ -250,7 +240,6 @@ export default function MovieDetail() {
     return () => { cancelled = true; };
   }, [routeMovieId, date]);
 
-  /* fetch showtimes for selected city/date */
   useEffect(() => {
     if (!routeMovieId || !date || !city) { setShowtimes([]); return; }
     (async () => {
@@ -268,7 +257,7 @@ export default function MovieDetail() {
     })();
   }, [routeMovieId, city, date]);
 
-  /* group showtimes by theater */
+  /* ---------------------- Group showtimes by theater ---------------------- */
   const grouped = useMemo(() => {
     const map = new Map();
     for (const s of showtimes) {
@@ -290,12 +279,12 @@ export default function MovieDetail() {
   }, [showtimes]);
 
   const goToShowtimesPage = () => {
-    const mid = routeMovieId || movie?.id || movie?._id;
+    const mid = routeMovieId || movie?._id;
     if (!mid || !city) return;
     navigate(`/showtimes/${mid}?movieId=${mid}&date=${date}&city=${encodeURIComponent(city)}`);
   };
 
-  /* close handlers (overlay click + ESC) */
+  /* ----------------------------- Close handlers ---------------------------- */
   const close = () => navigate(-1);
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") close(); };
@@ -303,7 +292,7 @@ export default function MovieDetail() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  /* UI states */
+  /* ------------------------------- UI States ------------------------------ */
   if (loadingMovie)
     return (
       <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur">
@@ -327,7 +316,7 @@ export default function MovieDetail() {
 
   if (!movie) return null;
 
-  /* JSX — Walmart-style modal */
+  /* ---------------------------- Render Modal ----------------------------- */
   return (
     <div
       className="fixed inset-0 z-50 flex items-start md:items-center justify-center bg-black/40 backdrop-blur-sm p-3 md:p-6"
@@ -335,10 +324,7 @@ export default function MovieDetail() {
       aria-modal="true"
       role="dialog"
     >
-      <Card
-        ref={dialogRef}
-        className="w-full max-w-3xl md:max-w-4xl overflow-hidden"
-      >
+      <Card ref={dialogRef} className="w-full max-w-3xl md:max-w-4xl overflow-hidden">
         {/* Header */}
         <div className="px-6 md:px-8 pt-5 md:pt-6 pb-3 border-b border-slate-200">
           <div className="flex items-start justify-between">
@@ -349,8 +335,6 @@ export default function MovieDetail() {
             <button
               onClick={close}
               className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 font-semibold text-slate-700 border border-slate-300 hover:bg-slate-50"
-              aria-label="Close"
-              title="Close"
             >
               <IconX /><span className="hidden sm:inline">Close</span>
             </button>
@@ -366,11 +350,7 @@ export default function MovieDetail() {
               <button
                 key={key}
                 onClick={() => setTab(key)}
-                className={`px-3 py-1.5 rounded-full font-semibold transition ${
-                  tab === key
-                    ? "bg-[#0071DC] text-white"
-                    : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                }`}
+                className={`px-3 py-1.5 rounded-full font-semibold transition ${tab === key ? "bg-[#0071DC] text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}
               >
                 {label}
               </button>
@@ -416,8 +396,8 @@ export default function MovieDetail() {
                   <div>
                     <div className="text-xs text-slate-500">Release</div>
                     <div className="font-semibold text-slate-800">
-                      {movie.releaseDate
-                        ? new Date(movie.releaseDate).toLocaleDateString("en-IN", {
+                      {(movie.releaseDate || movie.releasedAt)
+                        ? new Date(movie.releaseDate || movie.releasedAt).toLocaleDateString("en-IN", {
                             year: "numeric",
                             month: "long",
                             day: "numeric",
@@ -561,9 +541,7 @@ export default function MovieDetail() {
                           <Link
                             key={s._id}
                             to={`/seats/${s._id}`}
-                            className={`inline-flex items-center rounded-full px-3 py-1.5 font-semibold border border-slate-300 transition ${
-                              disabled ? "opacity-60 cursor-not-allowed bg-slate-100" : "bg-white hover:bg-slate-50"
-                            }`}
+                            className={`inline-flex items-center rounded-full px-3 py-1.5 font-semibold border border-slate-300 transition ${disabled ? "opacity-60 cursor-not-allowed bg-slate-100" : "bg-white hover:bg-slate-50"}`}
                           >
                             {humanTime(s.startTime)}{s.screenName ? ` • ${s.screenName}` : ""}
                           </Link>
