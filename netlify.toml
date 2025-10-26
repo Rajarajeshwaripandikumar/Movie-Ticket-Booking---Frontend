@@ -1,18 +1,72 @@
-# netlify.toml
+###########################################
+# 🏗️ Netlify Build Configuration
+# For: Vite + React (Frontend) Project
+# Backend API: https://movie-ticket-booking-backend-o1m2.onrender.com/api
+###########################################
+
 [build]
-  command = "npm run build"
+  # Command to build your project
+  command = "npm ci && npm run build"
+
+  # Folder that contains your final build output
   publish = "dist"
 
+  # Optional: add any subdirectories Netlify should cache to speed up builds
+  # Netlify automatically caches node_modules by default
+  # If you use pnpm or yarn, you can enable caching in your site settings
+
+###########################################
+# 🌐 Environment Variables
+###########################################
+
+# Default environment variables for all deploy contexts (optional)
 [build.environment]
   NODE_VERSION = "20"
+
+###########################################
+# 🏭 Production Context
+# These variables & settings apply only to production deploys
+###########################################
+
+[context.production.environment]
   VITE_API_BASE = "https://movie-ticket-booking-backend-o1m2.onrender.com/api"
+  NODE_ENV = "production"
 
-# If you ever add Netlify Functions later:
-#[functions]
-#  node_bundler = "esbuild"
+###########################################
+# 🧪 Deploy Preview Context (optional)
+# You can point previews to a staging backend or mock API if desired
+###########################################
 
-# Optional: force SPA-style routing for React/Vite apps
+[context.deploy-preview.environment]
+  VITE_API_BASE = "https://staging-movie-ticket-booking.onrender.com/api"
+  NODE_ENV = "development"
+
+###########################################
+# 🚦 Redirects and SPA Routing
+# Required for React Router / Vite SPA apps
+###########################################
+
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
+
+###########################################
+# 🧩 Optional Headers (performance, CORS, etc.)
+###########################################
+
+# Uncomment below if you want to enforce CORS or caching headers
+# [[headers]]
+#   for = "/*"
+#   [headers.values]
+#     Access-Control-Allow-Origin = "*"
+#     Cache-Control = "public, max-age=0, must-revalidate"
+
+###########################################
+# ⚡ Optional Netlify Functions Config
+# If you add functions in future (e.g., serverless endpoints)
+###########################################
+
+# [functions]
+#   node_bundler = "esbuild"
+#   included_files = ["src/functions/**"]
