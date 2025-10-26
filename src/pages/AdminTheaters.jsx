@@ -95,13 +95,31 @@ const resolveImageUrl = (url, updatedAt) => {
   return v ? `${abs}${abs.includes("?") ? "&" : "?"}v=${v}` : abs;
 };
 
+/**
+ * Parse amenities coming from backend into a clean array.
+ * Accepts arrays, JSON strings '["A","B"]', or comma-separated strings 'A,B'
+ */
+const parseAmenities = (raw) => {
+  if (!raw && raw !== 0) return [];
+  if (Array.isArray(raw)) return raw.map((r) => String(r).trim()).filter(Boolean);
+
+  const s = String(raw).trim();
+  if (!s) return [];
+
+  if (s.startsWith("[") && s.endsWith("]")) {
+    try {
+      const parsed = JSON.parse(s);
+      if (Array.isArray(parsed)) return parsed.map((r) => String(r).trim()).filter(Boolean);
+    } catch {
+      // fall through to comma-split
+    }
+  }
+
+  return s.split(",").map((r) => String(r).trim()).filter(Boolean);
+};
+
 const normalizeTheater = (t = {}) => {
-  const raw = Array.isArray(t.amenities)
-    ? t.amenities
-    : typeof t.amenities === "string"
-    ? t.amenities.split(",")
-    : [];
-  const amenities = Array.from(new Set(raw.map((a) => String(a).trim()).filter(Boolean)));
+  const amenities = parseAmenities(t.amenities);
   return {
     ...t,
     amenities,
@@ -195,127 +213,20 @@ export default function AdminTheaters() {
       return;
     }
 
-    // Local preview while uploading
+    // Local preview while uploading (we still keep file for submit)
     const localUrl = URL.createObjectURL(file);
     setPreview(localUrl);
     setPreviewKey((k) => k + 1);
     setSelectedFile(file);
-    setMsg("Uploading image...");
+    setMsg("Image selected (will upload on save).");
     setMsgType("info");
 
-    // prepare form data
-    const fd = new FormData();
-    fd.append("image", file);
-
-    // ensure axios doesn't forcibly set Content-Type header (browser sets boundary)
-    try {
-      if (api?.defaults?.headers?.post) delete api.defaults.headers.post["Content-Type"];
-    } catch (e) {}
-
-    const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
-
-    // per-request axios config
-    const axiosConfig = {
-      headers, // Authorization if present
-      timeout: 30000,
-      // do not set Content-Type — let the browser set multipart/form-data boundary
-      withCredentials: UPLOAD_WITH_CREDENTIALS,
-    };
-
-    // attempt upload with small retry logic for transient errors (502 / 503)
-    let attempt = 0;
-    let lastErr = null;
-    while (attempt <= MAX_UPLOAD_RETRIES) {
-      try {
-        attempt++;
-        const resp = await api.post("/upload", fd, axiosConfig);
-        const data = resp?.data ?? resp;
-        // robustly find returned url
-        const returnedUrl =
-          data?.url ||
-          data?.secure_url ||
-          data?.secureUrl ||
-          data?.data?.url ||
-          data?.data?.secure_url ||
-          (typeof data === "string" ? data : null);
-
-        // If server returned partial object, try safe fallback
-        if (!returnedUrl) {
-          // if server returned raw cloudinary payload inside `data.raw` or `raw`
-          const raw = data?.raw || data?.data?.raw || data?.result;
-          const maybe = raw?.secure_url || raw?.url || raw?.secureUrl;
-          if (maybe) {
-            const abs = resolveImageUrl(maybe, Date.now());
-            setPreview(abs || maybe);
-            setMsg("✅ Image uploaded successfully (raw payload)");
-            setMsgType("success");
-            return;
-          }
-          // no usable URL found — surface server response for debug
-          console.warn("Upload response did not contain a recognized url:", data);
-          setMsg("❌ Upload succeeded but response missing URL (check backend).");
-          setMsgType("error");
-          return;
-        }
-
-        // normalize and set preview — support relative URLs from your /uploads static host
-        const abs = resolveImageUrl(returnedUrl, Date.now());
-        setPreview(abs || returnedUrl);
-        setMsg("✅ Image uploaded successfully");
-        setMsgType("success");
-        return;
-      } catch (err) {
-        lastErr = err;
-        // parse status code safely
-        const status = err?.response?.status || err?.status || null;
-
-        // CORS vs network - if there's no response, could be CORS or network/502 from host
-        if (!err?.response) {
-          // show a clearer message for CORS
-          console.error("Upload failed (no response) — Possible CORS or network issue:", err);
-          setMsg(
-            "❌ Upload failed: No response from server. Possible CORS or network issue — ensure backend allows your origin and is reachable."
-          );
-          setMsgType("error");
-          break; // don't retry on CORS/no-response
-        }
-
-        // Retry on server-side transient errors
-        if (status === 502 || status === 503 || status === 504) {
-          console.warn(`Upload attempt ${attempt} failed with ${status} — retrying...`);
-          if (attempt > MAX_UPLOAD_RETRIES) break;
-          await new Promise((r) => setTimeout(r, 700 * attempt)); // backoff
-          continue;
-        }
-
-        // handle multer/file validation errors (400/413)
-        const serverMsg =
-          err?.response?.data?.error ||
-          err?.response?.data?.message ||
-          JSON.stringify(err?.response?.data) ||
-          err?.message;
-        console.error("Upload failed:", serverMsg, err);
-        setMsg("❌ Upload failed: " + serverMsg);
-        setMsgType("error");
-        break; // bail on client errors
-      }
-    } // end retry loop
-
-    // if we reach here, upload ultimately failed
-    if (lastErr && lastErr?.response?.status) {
-      const s = lastErr.response.status;
-      if (s >= 500 && s < 600) {
-        setMsg("❌ Upload failed due to server error. Try again later.");
-        setMsgType("error");
-      }
-    }
-
-    // cleanup local blob URL after a bit
+    // cleanup local blob URL after a bit (keeps preview for UX)
     setTimeout(() => {
       try {
         URL.revokeObjectURL(localUrl);
       } catch {}
-    }, 2000);
+    }, 10000);
   }
 
   /* ------------------- CRUD ------------------- */
@@ -341,7 +252,8 @@ export default function AdminTheaters() {
         fd.append("name", name);
         fd.append("city", city);
         if (address) fd.append("address", address);
-        if (amenitiesList?.length) fd.append("amenities", amenitiesList.join(","));
+        // send amenities as JSON string (backend accepts JSON-array or comma string)
+        if (amenitiesList?.length) fd.append("amenities", JSON.stringify(amenitiesList));
 
         try {
           if (api?.defaults?.headers?.post) delete api.defaults.headers.post["Content-Type"];
@@ -356,7 +268,7 @@ export default function AdminTheaters() {
         return;
       }
 
-      // Otherwise, send JSON payload (imageUrl is preview if previously uploaded)
+      // Otherwise, send JSON payload (amenities as array)
       const payload = {
         name,
         city,
@@ -392,7 +304,9 @@ export default function AdminTheaters() {
         fd.append("name", name);
         fd.append("city", city);
         if (address) fd.append("address", address);
-        fd.append("amenities", amenitiesDirty ? amenitiesList.join(",") : originalAmenities.join(","));
+        // send amenities as JSON string (if dirty use updated list, otherwise original)
+        const am = amenitiesDirty ? amenitiesList : originalAmenities;
+        fd.append("amenities", JSON.stringify(am));
 
         try {
           if (api?.defaults?.headers?.post) delete api.defaults.headers.post["Content-Type"];
@@ -432,7 +346,7 @@ export default function AdminTheaters() {
 
   // Delete
   async function deleteTheater(id) {
-    if (!confirm("Delete this theater?")) return;
+    if (!window.confirm("Delete this theater?")) return;
     try {
       await api.delete(`/theaters/admin/${id}`, { headers: authHeaders(), withCredentials: UPLOAD_WITH_CREDENTIALS });
       setTheaters((s) => s.filter((t) => t._id !== id));
@@ -449,11 +363,12 @@ export default function AdminTheaters() {
 
   function fillFromTheater(t) {
     setSelectedId(t._id);
-    setName(t.name);
-    setCity(t.city);
+    setName(t.name || "");
+    setCity(t.city || "");
     setAddress(t.address || "");
     setAmenitiesList(t.amenities || []);
     setOriginalAmenities(t.amenities || []);
+    setAmenitiesDirty(false);
     setPreview(t.imageUrl);
     setPreviewKey((k) => k + 1);
     setSelectedFile(null);
@@ -559,6 +474,9 @@ export default function AdminTheaters() {
                         <div>
                           <div className="font-extrabold">{t.name}</div>
                           <div className="text-sm text-slate-600">{t.city}</div>
+                          <div className="text-xs text-slate-500 mt-1">
+                            {t.amenities?.length ? t.amenities.join(", ") : "No amenities"}
+                          </div>
                         </div>
                       </div>
                       <div className="flex gap-2">
@@ -603,7 +521,10 @@ export default function AdminTheaters() {
                         <Check className="h-3 w-3 text-emerald-600" /> {a}
                         <X
                           className="h-3 w-3 cursor-pointer text-slate-500"
-                          onClick={() => setAmenitiesList(amenitiesList.filter((x) => x !== a))}
+                          onClick={() => {
+                            setAmenitiesList((prev) => prev.filter((x) => x !== a));
+                            setAmenitiesDirty(true);
+                          }}
                         />
                       </span>
                     ))}
@@ -617,7 +538,7 @@ export default function AdminTheaters() {
                         e.preventDefault();
                         const v = amenityInput.trim();
                         if (v && !amenitiesList.includes(v)) {
-                          setAmenitiesList([...amenitiesList, v]);
+                          setAmenitiesList((prev) => [...prev, v]);
                           setAmenityInput("");
                           setAmenitiesDirty(true);
                         }
