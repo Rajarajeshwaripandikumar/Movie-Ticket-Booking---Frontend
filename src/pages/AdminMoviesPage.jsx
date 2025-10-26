@@ -663,9 +663,9 @@ export default function AdminMoviesPage() {
       title=""
       rightSlot={
         <div className="flex items-center gap-2">
-          <button className="rounded-full p-2 hover:bg-slate-50">🔔</button>
+          
           <div className="inline-flex items-center gap-2">
-            <div className="text-sm text-slate-600 hidden sm:block">Admins ▾</div>
+           
           </div>
         </div>
       }
