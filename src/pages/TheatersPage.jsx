@@ -127,7 +127,7 @@ export default function TheatersPage() {
   };
 
   const setUrlParams = (overrides = {}) => {
-    const sp = new URLSearchParams(search);
+    const sp = new URLSearchParams(window.location.search);
     const next = {
       q: query || "",
       city: cityFilter !== "All" ? cityFilter : "",
@@ -141,15 +141,23 @@ export default function TheatersPage() {
     navigate({ search: `?${sp.toString()}` }, { replace: true });
   };
 
+  // Only validate cityFilter against the cities list after we have a real set of cities
   useEffect(() => {
-    if (!cities || cities.length === 0) return;
+    if (!cities || cities.length <= 1) return; // wait until real city list is populated
     if (cityFilter && cityFilter !== "All") {
       const found = cities.some((c) => String(c).trim().toLowerCase() === String(cityFilter).trim().toLowerCase());
       if (!found) {
-        setTimeout(() => {
-          setCityFilter("All");
+        // if the URL had a city value but it doesn't match the populated list, try to find a case-insensitive match
+        const ciMatch = cities.find((c) => String(c).trim().toLowerCase() === String(cityFilter).trim().toLowerCase());
+        if (ciMatch) {
+          setCityFilter(ciMatch);
           setUrlParams();
-        }, 0);
+        } else {
+          setTimeout(() => {
+            setCityFilter("All");
+            setUrlParams();
+          }, 0);
+        }
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -166,6 +174,7 @@ export default function TheatersPage() {
     if (amen !== null && amen.trim()) setAmenityFilter(amen);
 
     setPage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
 
   // allow override object so onChange can call immediately
@@ -249,7 +258,7 @@ export default function TheatersPage() {
 
   // immediate handlers that clear UI and call load with overrides so there's no race
   const handleCityChange = (value) => {
-    const v = value || "All";
+    const v = String(value || "All").trim() || "All";
     setCityFilter(v);
     setTheaters([]); // clear old items immediately
     // call load with explicit override so request uses the intended city (no setState race)
@@ -257,7 +266,7 @@ export default function TheatersPage() {
   };
 
   const handleAmenityChange = (value) => {
-    const v = value || "All";
+    const v = String(value || "All").trim() || "All";
     setAmenityFilter(v);
     setTheaters([]);
     loadTheaters({ reset: true, override: { amenity: v === "All" ? undefined : v } });
@@ -426,66 +435,7 @@ export default function TheatersPage() {
         )}
       </section>
 
-      {/* show admin overview only when no active filter/search */}
-      {!query && cityFilter === "All" && amenityFilter === "All" && (
-        <section className="max-w-7xl mx-auto px-6 mt-10">
-          <Card className="p-5">
-            <h3 className="text-lg font-extrabold mb-4">All Theaters (Amenities overview)</h3>
-            <div className="space-y-3">
-              {theaters.map((t) => (
-                <div key={t._id || t.id} className="flex items-center justify-between gap-4 p-3 border rounded-2xl">
-                  <div className="flex items-center gap-3">
-                    <img src={t.imageUrl || "/no-image.png"} alt={t.name} className="w-12 h-12 rounded-xl object-cover border" />
-                    <div>
-                      <div className="font-semibold">{t.name}</div>
-                      <div className="text-sm text-slate-600">{t.city}</div>
-                    </div>
-                  </div>
-
-                  <div className="flex-1 px-4">
-                    <div className="flex flex-wrap gap-2">
-                      {MASTER_AMENITIES.map((m) => {
-                        const present = (t.amenities || []).map((x) => String(x).trim().toLowerCase()).includes(m.toLowerCase());
-                        return (
-                          <span
-                            key={m}
-                            className={`text-[11px] px-2 py-0.5 rounded-full border ${
-                              present ? "bg-[#0071DC] text-white border-[#0071DC]" : "bg-white text-slate-500 border-slate-200"
-                            }`}
-                            title={present ? `${m} — available` : `${m} — not available`}
-                          >
-                            {m}
-                          </span>
-                        );
-                      })}
-
-                      {(t.amenities || [])
-                        .map((a) => String(a).trim())
-                        .filter(Boolean)
-                        .filter((a) => !MASTER_AMENITIES.map((x) => x.toLowerCase()).includes(a.toLowerCase()))
-                        .slice(0, 6)
-                        .map((extra) => (
-                          <span key={extra} className="text-[11px] px-2 py-0.5 rounded-full border bg-white text-slate-700 border-slate-200">
-                            {extra}
-                          </span>
-                        ))}
-                    </div>
-                  </div>
-
-                  <div className="flex gap-2">
-                    <PrimaryBtn onClick={() => handleViewShowtimes(t)} className="px-3 py-1 text-sm">
-                      View showtimes
-                    </PrimaryBtn>
-                    <GhostBtn onClick={() => handleViewFirstScreen(t)} className="px-3 py-1 text-sm">
-                      Open screen
-                    </GhostBtn>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Card>
-        </section>
-      )}
+      {/* NOTE: removed the "All Theaters (Amenities overview)" admin section as requested */}
     </main>
   );
 }
