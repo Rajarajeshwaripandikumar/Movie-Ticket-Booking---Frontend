@@ -93,15 +93,32 @@ function normalizeMovie(m = {}) {
     : toArray(m.genre || m.genres || "");
   const genresStr = genresArr.join(", ");
   const languages = Array.isArray(m.languages) ? m.languages : toArray(m.languages ?? m.language ?? "");
+
+  // Defensive, shape-normalizing cast array
   const cast = Array.isArray(m.cast)
-    ? m.cast.map((c) => (typeof c === "string" ? { actorName: c } : c || { actorName: "" }))
+    ? m.cast.map((c) => {
+        // handle many shapes: string, { name }, { actorName }, { actor: { name } }, { person: { name } }
+        if (typeof c === "string") return { actorName: String(c), character: "" };
+        if (!c || typeof c !== "object") return { actorName: String(c || ""), character: "" };
+        const actorName =
+          c.actorName ||
+          c.name ||
+          (c.actor && (c.actor.name || c.actor.fullName)) ||
+          (c.person && (c.person.name || c.person.fullName)) ||
+          "";
+        const character = c.character || c.role || "";
+        return { actorName: String(actorName), character: String(character) };
+      })
     : [];
+
+  // Defensive crew normalization
   const crew = Array.isArray(m.crew)
-    ? m.crew.map((c) =>
-        c && typeof c === "object"
-          ? { name: c.name || c.actorName || "", role: c.role || c.job || "" }
-          : { name: String(c || ""), role: "" }
-      )
+    ? m.crew.map((c) => {
+        if (!c || typeof c !== "object") return { name: String(c || ""), role: "" };
+        const name = c.name || c.fullName || (c.person && (c.person.name || c.person.fullName)) || "";
+        const role = c.role || c.job || "";
+        return { name: String(name), role: String(role) };
+      })
     : [];
 
   return {
@@ -152,8 +169,16 @@ function ListEditor({ label, items, setItems, itemShape = { a: "", b: "" }, left
       <div className="space-y-2">
         {items.map((it, idx) => (
           <div key={idx} className="flex gap-2">
-            <Field value={it.actorName ?? it.name ?? ""} onChange={(e) => updateAt(idx, { actorName: e.target.value, name: e.target.value })} placeholder={leftPlaceholder} />
-            <Field value={it.character ?? it.role ?? ""} onChange={(e) => updateAt(idx, { character: e.target.value, role: e.target.value })} placeholder={rightPlaceholder} />
+            <Field
+              value={String(it.actorName ?? it.name ?? "")}
+              onChange={(e) => updateAt(idx, { actorName: e.target.value, name: e.target.value })}
+              placeholder={leftPlaceholder}
+            />
+            <Field
+              value={String(it.character ?? it.role ?? "")}
+              onChange={(e) => updateAt(idx, { character: e.target.value, role: e.target.value })}
+              placeholder={rightPlaceholder}
+            />
             <IconButton onClick={() => removeAt(idx)} aria-label="Remove">
               ✕
             </IconButton>
@@ -241,10 +266,17 @@ function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
   });
   const [languages, setLanguages] = useState(safeLanguages.length ? safeLanguages : ["English"]);
   const [cast, setCast] = useState(
-    safeCast.length ? safeCast.map((c) => ({ actorName: c.actorName || c.name || "", character: c.character || "" })) : []
+    safeCast.length
+      ? safeCast.map((c) => ({
+          actorName: String(c.actorName || c.name || (c.actor && c.actor.name) || ""),
+          character: String(c.character || c.role || ""),
+        }))
+      : []
   );
   const [crew, setCrew] = useState(
-    safeCrew.length ? safeCrew.map((c) => ({ name: c.name || "", role: c.role || c.job || "" })) : []
+    safeCrew.length
+      ? safeCrew.map((c) => ({ name: String(c.name || ""), role: String(c.role || c.job || "") }))
+      : []
   );
   const [posterFile, setPosterFile] = useState(null);
   const [preview, setPreview] = useState(norm.posterUrl ? resolvePosterUrl(norm.posterUrl) : "");
@@ -261,8 +293,19 @@ function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
       posterUrl: n.posterUrl || "",
     });
     setLanguages(Array.isArray(n.languages) && n.languages.length ? n.languages : ["English"]);
-    setCast(Array.isArray(n.cast) ? n.cast.map((c) => ({ actorName: c.actorName || c.name || "", character: c.character || "" })) : []);
-    setCrew(Array.isArray(n.crew) ? n.crew.map((c) => ({ name: c.name || "", role: c.role || c.job || "" })) : []);
+    setCast(
+      Array.isArray(n.cast)
+        ? n.cast.map((c) => ({
+            actorName: String(c.actorName || c.name || (c.actor && c.actor.name) || ""),
+            character: String(c.character || c.role || ""),
+          }))
+        : []
+    );
+    setCrew(
+      Array.isArray(n.crew)
+        ? n.crew.map((c) => ({ name: String(c.name || ""), role: String(c.role || c.job || "") }))
+        : []
+    );
     setPreview(n.posterUrl ? resolvePosterUrl(n.posterUrl) : "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initial]);
@@ -298,8 +341,22 @@ function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
     // languages -> send as CSV (backend accepts CSV or JSON)
     data.append("languages", (languages || []).map((x) => String(x).trim()).filter(Boolean).join(","));
     // cast & crew -> JSON arrays (backend normalizer will parse)
-    data.append("cast", JSON.stringify((cast || []).filter((c) => (c?.actorName || "").trim()).map((c) => ({ actorName: String(c.actorName).trim(), character: String(c.character || "").trim() }))));
-    data.append("crew", JSON.stringify((crew || []).filter((c) => (c?.name || "").trim()).map((c) => ({ name: String(c.name).trim(), role: String(c.role || "").trim() }))));
+    data.append(
+      "cast",
+      JSON.stringify(
+        (cast || [])
+          .filter((c) => (String(c?.actorName || "").trim()))
+          .map((c) => ({ actorName: String(c.actorName).trim(), character: String(c.character || "").trim() }))
+      )
+    );
+    data.append(
+      "crew",
+      JSON.stringify(
+        (crew || [])
+          .filter((c) => (String(c?.name || "").trim()))
+          .map((c) => ({ name: String(c.name).trim(), role: String(c.role || "").trim() }))
+      )
+    );
 
     if (posterFile) {
       data.append("poster", posterFile);
