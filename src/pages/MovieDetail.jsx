@@ -175,7 +175,7 @@ function normalizeMovie(m = {}) {
   const languages = m.languages ? toArray(m.languages) : m.language ? [m.language] : [];
   const runtime =
     typeof m.runtime === "number" ? m.runtime :
-    typeof m.durationMins === "number" ? m.durationMins : undefined;
+    typeof m.durationMins === "number" ? m.durationMins : typeof m.runtimeMinutes === "number" ? m.runtimeMinutes : undefined;
 
   const cast = parseCast(m.cast);
   const crew = Array.isArray(m.crew) ? m.crew : [];
@@ -200,15 +200,17 @@ export default function MovieDetail() {
   const [tab, setTab] = useState("synopsis"); // synopsis | cast | posters
   const dialogRef = useRef(null);
 
-  /* fetch movie */
+  /* fetch movie — FIXED: unwrap axios response properly */
   useEffect(() => {
     if (!routeMovieId) return;
     (async () => {
       try {
         setLoadingMovie(true);
         setErr("");
-        const { data } = await api.get(`/movies/${routeMovieId}`);
-        setMovie(normalizeMovie(data));
+        const resp = await api.get(`/movies/${routeMovieId}`);
+        // backend returns { ok: true, data: movie } — support that shape and also plain movie body
+        const movieData = resp?.data?.data ?? resp?.data ?? resp;
+        setMovie(normalizeMovie(movieData));
       } catch (e) {
         setErr(e?.response?.data?.message || "❌ Failed to load movie details.");
       } finally {
