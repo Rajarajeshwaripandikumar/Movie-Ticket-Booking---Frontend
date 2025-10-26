@@ -1,56 +1,8 @@
-###########################################
-# 🚀 Netlify Build Configuration (Vite + React)
-###########################################
-
 [build]
-  # Use npm ci for reproducible builds
   command = "npm ci && npm run build"
   publish = "dist"
 
-###########################################
-# 🌐 Global Environment
-###########################################
 [build.environment]
   NODE_VERSION = "20"
-  NPM_VERSION = "9"
-
-###########################################
-# 🏭 Production Environment Variables
-###########################################
-[context.production.environment]
-  VITE_API_BASE = "https://movie-ticket-booking-backend-o1m2.onrender.com/api"
-  NODE_ENV = "production"
-
-###########################################
-# 🧪 Preview Deploys (optional)
-# point to staging backend if available
-###########################################
-[context.deploy-preview.environment]
-  VITE_API_BASE = "https://staging-movie-ticket-booking.onrender.com/api"
-  NODE_ENV = "development"
-
-###########################################
-# 🔁 SPA Routing for React Router
-###########################################
-[[redirects]]
-  from = "/*"
-  to = "/index.html"
-  status = 200
-
-###########################################
-# 🧩 Optional Security + Caching Headers
-###########################################
-[[headers]]
-  for = "/*"
-  [headers.values]
-    Strict-Transport-Security = "max-age=31536000; includeSubDomains; preload"
-    X-Frame-Options = "DENY"
-    X-Content-Type-Options = "nosniff"
-    Referrer-Policy = "strict-origin-when-cross-origin"
-    Cache-Control = "public, max-age=0, must-revalidate"
-
-###########################################
-# ⚡ Future Netlify Functions Support
-###########################################
-# [functions]
-#   node_bundler = "esbuild"
+  # ensure devDependencies (including vite) are installed
+  NPM_FLAGS = "--include=dev"
