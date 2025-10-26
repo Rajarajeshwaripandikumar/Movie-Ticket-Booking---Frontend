@@ -118,6 +118,110 @@ function normalizeMovie(m = {}) {
   };
 }
 
+/* ---------------------- Helper UI: List Editors + Language Tags --------- */
+
+function IconButton({ children, className = "", ...props }) {
+  return (
+    <button
+      type="button"
+      className={`inline-flex items-center justify-center rounded-full p-1.5 border border-slate-200 bg-white shadow-sm ${className}`}
+      {...props}
+    >
+      {children}
+    </button>
+  );
+}
+
+/* Dynamic list editor for cast (actorName + character) and crew (name + role) */
+function ListEditor({ label, items, setItems, itemShape = { a: "", b: "" }, leftPlaceholder, rightPlaceholder }) {
+  const updateAt = (i, patch) => {
+    setItems((s) => s.map((it, idx) => (idx === i ? { ...it, ...patch } : it)));
+  };
+  const add = () => setItems((s) => [...s, { ...itemShape }]);
+  const removeAt = (i) => setItems((s) => s.filter((_, idx) => idx !== i));
+
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <label className="block text-[12px] font-semibold text-slate-600 mb-1">{label}</label>
+        <button type="button" onClick={add} className="text-sm text-blue-600 hover:underline">
+          + Add
+        </button>
+      </div>
+
+      <div className="space-y-2">
+        {items.map((it, idx) => (
+          <div key={idx} className="flex gap-2">
+            <Field value={it.actorName ?? it.name ?? ""} onChange={(e) => updateAt(idx, { actorName: e.target.value, name: e.target.value })} placeholder={leftPlaceholder} />
+            <Field value={it.character ?? it.role ?? ""} onChange={(e) => updateAt(idx, { character: e.target.value, role: e.target.value })} placeholder={rightPlaceholder} />
+            <IconButton onClick={() => removeAt(idx)} aria-label="Remove">
+              ✕
+            </IconButton>
+          </div>
+        ))}
+        {items.length === 0 && <div className="text-xs text-slate-500">No entries yet — click “+ Add” to create one</div>}
+      </div>
+    </div>
+  );
+}
+
+/* Language tag input (preset multi-select + custom tag add) */
+const COMMON_LANGS = ["English", "Tamil", "Hindi", "Telugu", "Malayalam", "Kannada", "Bengali", "Marathi", "Punjabi"];
+
+function LanguageEditor({ languages, setLanguages }) {
+  const [custom, setCustom] = useState("");
+
+  const togglePreset = (lang) => {
+    setLanguages((s) => (s.includes(lang) ? s.filter((x) => x !== lang) : [...s, lang]));
+  };
+  const addCustom = () => {
+    const v = (custom || "").trim();
+    if (!v) return;
+    if (languages.includes(v)) {
+      setCustom("");
+      return;
+    }
+    setLanguages((s) => [...s, v]);
+    setCustom("");
+  };
+  const remove = (lang) => setLanguages((s) => s.filter((x) => x !== lang));
+
+  return (
+    <div>
+      <div className="mb-2">
+        <label className="block text-[12px] font-semibold text-slate-600 mb-1">Languages</label>
+        <div className="flex flex-wrap gap-2">
+          {COMMON_LANGS.map((lang) => (
+            <button
+              type="button"
+              key={lang}
+              onClick={() => togglePreset(lang)}
+              className={`text-sm px-3 py-1 rounded-full border ${languages.includes(lang) ? "bg-[#0071DC] text-white border-[#0071DC]" : "bg-white text-slate-700 border-slate-200"}`}
+            >
+              {lang}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex gap-2 items-center mb-2">
+        <Field value={custom} onChange={(e) => setCustom(e.target.value)} placeholder="Add custom language e.g. 'Urdu'" />
+        <PrimaryBtn type="button" onClick={addCustom}>Add</PrimaryBtn>
+      </div>
+
+      <div className="flex gap-2 flex-wrap">
+        {languages.map((l) => (
+          <span key={l} className="inline-flex items-center gap-2 text-sm px-3 py-1 rounded-full bg-slate-100 border border-slate-200">
+            <span>{l}</span>
+            <button type="button" onClick={() => remove(l)} className="text-slate-500">✕</button>
+          </span>
+        ))}
+        {languages.length === 0 && <div className="text-xs text-slate-500">No languages selected</div>}
+      </div>
+    </div>
+  );
+}
+
 /* ------------------------- Movie Form Component ------------------------- */
 function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
   const norm = normalizeMovie(initial);
@@ -129,16 +233,32 @@ function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
     releaseDate: norm.releaseDate,
     posterUrl: norm.posterUrl,
   });
-  const [languages, setLanguages] = useState(norm.languages);
+  const [languages, setLanguages] = useState(norm.languages && norm.languages.length ? norm.languages : ["English"]);
   const [cast, setCast] = useState(
-    norm.cast.map((c) => ({ actorName: c.actorName || c.name || "", character: c.character || "" }))
+    norm.cast.length ? norm.cast.map((c) => ({ actorName: c.actorName || c.name || "", character: c.character || "" })) : []
   );
   const [crew, setCrew] = useState(
-    norm.crew.map((c) => ({ name: c.name || "", role: c.role || c.job || "" }))
+    norm.crew.length ? norm.crew.map((c) => ({ name: c.name || "", role: c.role || c.job || "" })) : []
   );
   const [posterFile, setPosterFile] = useState(null);
   const [preview, setPreview] = useState(norm.posterUrl ? resolvePosterUrl(norm.posterUrl) : "");
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setForm({
+      title: norm.title,
+      synopsis: norm.synopsis,
+      runtime: norm.runtime,
+      genresStr: norm.genresStr,
+      releaseDate: norm.releaseDate,
+      posterUrl: norm.posterUrl,
+    });
+    setLanguages(norm.languages && norm.languages.length ? norm.languages : ["English"]);
+    setCast(norm.cast.length ? norm.cast.map((c) => ({ actorName: c.actorName || c.name || "", character: c.character || "" })) : []);
+    setCrew(norm.crew.length ? norm.crew.map((c) => ({ name: c.name || "", role: c.role || c.job || "" })) : []);
+    setPreview(norm.posterUrl ? resolvePosterUrl(norm.posterUrl) : "");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initial]);
 
   const change = (k) => (e) => setForm((s) => ({ ...s, [k]: e.target.value }));
 
@@ -149,8 +269,8 @@ function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
       alert("Only JPG, PNG, or WEBP allowed.");
       return;
     }
-    if (file.size > 3 * 1024 * 1024) {
-      alert("Max file size 3MB.");
+    if (file.size > 8 * 1024 * 1024) {
+      alert("Max file size 8MB.");
       return;
     }
     setPosterFile(file);
@@ -160,16 +280,19 @@ function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
   const submit = async (e) => {
     e.preventDefault();
 
+    // Build formData
     const data = new FormData();
     data.append("title", form.title);
     data.append("description", form.synopsis ?? "");
-    if (form.runtime !== "" && form.runtime !== null) data.append("durationMins", String(Number(form.runtime)));
-    else data.append("durationMins", "");
-    data.append("genre", form.genresStr || "");
-    data.append("releaseDate", form.releaseDate || "");
+    if (form.runtime !== "" && form.runtime !== null) data.append("runtimeMinutes", String(Number(form.runtime)));
+    else data.append("runtimeMinutes", "");
+    data.append("genres", form.genresStr || "");
+    data.append("releasedAt", form.releaseDate || "");
+    // languages -> send as CSV (backend accepts CSV or JSON)
     data.append("languages", (languages || []).map((x) => String(x).trim()).filter(Boolean).join(","));
-    data.append("cast", JSON.stringify((cast || []).filter((c) => (c?.actorName || "").trim())));
-    data.append("crew", JSON.stringify((crew || []).filter((c) => (c?.name || "").trim())));
+    // cast & crew -> JSON arrays (backend normalizer will parse)
+    data.append("cast", JSON.stringify((cast || []).filter((c) => (c?.actorName || "").trim()).map((c) => ({ actorName: String(c.actorName).trim(), character: String(c.character || "").trim() }))));
+    data.append("crew", JSON.stringify((crew || []).filter((c) => (c?.name || "").trim()).map((c) => ({ name: String(c.name).trim(), role: String(c.role || "").trim() }))));
 
     if (posterFile) {
       data.append("poster", posterFile);
@@ -217,6 +340,30 @@ function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
             onChange={change("releaseDate")}
           />
         </div>
+      </div>
+
+      {/* Languages */}
+      <LanguageEditor languages={languages} setLanguages={setLanguages} />
+
+      {/* Cast & Crew editors */}
+      <div className="grid md:grid-cols-2 gap-4">
+        <ListEditor
+          label="Cast"
+          items={cast}
+          setItems={setCast}
+          itemShape={{ actorName: "", character: "" }}
+          leftPlaceholder="Actor name"
+          rightPlaceholder="Character (optional)"
+        />
+
+        <ListEditor
+          label="Crew"
+          items={crew}
+          setItems={setCrew}
+          itemShape={{ name: "", role: "" }}
+          leftPlaceholder="Name"
+          rightPlaceholder="Role (Director, Writer, etc.)"
+        />
       </div>
 
       <div>
