@@ -251,9 +251,9 @@ export default function Movies() {
 
           {/* Loading skeleton */}
           {loading && (
-            <div className="flex flex-wrap gap-4 justify-start">
+            <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
               {Array.from({ length: 12 }).map((_, i) => (
-                <div key={i} className="w-[240px]">
+                <div key={i} className="w-full">
                   <Card className="p-3 animate-pulse" aria-hidden>
                     <div className="bg-slate-200 aspect-[2/3] w-full mb-3 rounded-xl" />
                     <div className="h-4 w-3/4 bg-slate-200 mb-2 rounded" />
@@ -264,16 +264,16 @@ export default function Movies() {
             </div>
           )}
 
-          {/* Movies list */}
+          {/* Movies list - responsive grid (smaller cards) */}
           {!loading && movies.length > 0 && (
-            <ul className="flex flex-wrap gap-4 justify-start">
+            <ul className="grid gap-4 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
               {movies.map((m) => (
-                <li key={m._id} className="group w-[240px]" aria-labelledby={`movie-${m._id}-title`}>
+                <li key={m._id} className="group w-full" aria-labelledby={`movie-${m._id}-title`}>
                   <Card className="p-3 transition-transform duration-200 group-hover:-translate-y-0.5">
                     <PosterBox movie={m} />
 
                     <div className="mt-3">
-                      <h3 id={`movie-${m._id}-title`} className="text-sm sm:text-base font-extrabold leading-snug line-clamp-2">
+                      <h3 id={`movie-${m._id}-title`} className="text-sm sm:text-sm font-extrabold leading-snug line-clamp-2">
                         {m.title}
                       </h3>
 
