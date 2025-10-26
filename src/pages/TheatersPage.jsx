@@ -322,7 +322,12 @@ export default function TheatersPage() {
                 <div className="flex items-center gap-2 border border-slate-300 rounded-full bg-white px-4 py-2 focus-within:ring-2 focus-within:ring-[#0071DC]">
                   <select
                     value={cityFilter}
-                    onChange={(e) => setCityFilter(e.target.value || "All")}
+                    onChange={(e) => {
+                      // clear current list visually to avoid mixing old + new while new fetch runs
+                      setTheaters([]);
+                      setCityFilter(e.target.value || "All");
+                      // load handled by useEffect (it listens to cityFilter)
+                    }}
                     className="bg-transparent outline-none text-sm w-full min-w-[120px]"
                     aria-label="Filter by city"
                   >
@@ -340,7 +345,10 @@ export default function TheatersPage() {
                 <div className="flex items-center gap-2 border border-slate-300 rounded-full bg-white px-4 py-2 focus-within:ring-2 focus-within:ring-[#0071DC]">
                   <select
                     value={amenityFilter}
-                    onChange={(e) => setAmenityFilter(e.target.value)}
+                    onChange={(e) => {
+                      setTheaters([]);
+                      setAmenityFilter(e.target.value || "All");
+                    }}
                     className="bg-transparent outline-none text-sm w-full"
                     aria-label="Filter by amenity"
                   >
@@ -417,9 +425,7 @@ export default function TheatersPage() {
                     imageUrl: t.imageUrl,
                     // NOTE: we keep amenities on the theater object for detail pages
                   }}
-                >
-                  {/* TheaterCard children are not used here; we render pills below in the list items */}
-                </TheaterCard>
+                />
               ))
             )}
           </div>
@@ -435,66 +441,69 @@ export default function TheatersPage() {
         )}
       </section>
 
-      {/* Simple list beneath for admin-like view showing master amenities per theater */}
-      <section className="max-w-7xl mx-auto px-6 mt-10">
-        <Card className="p-5">
-          <h3 className="text-lg font-extrabold mb-4">All Theaters (Amenities overview)</h3>
-          <div className="space-y-3">
-            {theaters.map((t) => (
-              <div key={t._id || t.id} className="flex items-center justify-between gap-4 p-3 border rounded-2xl">
-                <div className="flex items-center gap-3">
-                  <img src={t.imageUrl || "/no-image.png"} alt={t.name} className="w-12 h-12 rounded-xl object-cover border" />
-                  <div>
-                    <div className="font-semibold">{t.name}</div>
-                    <div className="text-sm text-slate-600">{t.city}</div>
+      {/* Simple list beneath for admin-like view showing master amenities per theater
+          Only show when no filters/search active — avoids confusing filtered UI */}
+      {!query && cityFilter === "All" && amenityFilter === "All" && (
+        <section className="max-w-7xl mx-auto px-6 mt-10">
+          <Card className="p-5">
+            <h3 className="text-lg font-extrabold mb-4">All Theaters (Amenities overview)</h3>
+            <div className="space-y-3">
+              {theaters.map((t) => (
+                <div key={t._id || t.id} className="flex items-center justify-between gap-4 p-3 border rounded-2xl">
+                  <div className="flex items-center gap-3">
+                    <img src={t.imageUrl || "/no-image.png"} alt={t.name} className="w-12 h-12 rounded-xl object-cover border" />
+                    <div>
+                      <div className="font-semibold">{t.name}</div>
+                      <div className="text-sm text-slate-600">{t.city}</div>
+                    </div>
+                  </div>
+
+                  {/* Amenities: always show MASTER_AMENITIES and mark present ones */}
+                  <div className="flex-1 px-4">
+                    <div className="flex flex-wrap gap-2">
+                      {MASTER_AMENITIES.map((m) => {
+                        const present = (t.amenities || []).map((x) => String(x).trim().toLowerCase()).includes(m.toLowerCase());
+                        return (
+                          <span
+                            key={m}
+                            className={`text-[11px] px-2 py-0.5 rounded-full border ${
+                              present ? "bg-[#0071DC] text-white border-[#0071DC]" : "bg-white text-slate-500 border-slate-200"
+                            }`}
+                            title={present ? `${m} — available` : `${m} — not available`}
+                          >
+                            {m}
+                          </span>
+                        );
+                      })}
+
+                      {/* Extra amenities (not in MASTER_AMENITIES) */}
+                      {(t.amenities || [])
+                        .map((a) => String(a).trim())
+                        .filter(Boolean)
+                        .filter((a) => !MASTER_AMENITIES.map((x) => x.toLowerCase()).includes(a.toLowerCase()))
+                        .slice(0, 6) // safety cap
+                        .map((extra) => (
+                          <span key={extra} className="text-[11px] px-2 py-0.5 rounded-full border bg-white text-slate-700 border-slate-200">
+                            {extra}
+                          </span>
+                        ))}
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <PrimaryBtn onClick={() => handleViewShowtimes(t)} className="px-3 py-1 text-sm">
+                      View showtimes
+                    </PrimaryBtn>
+                    <GhostBtn onClick={() => handleViewFirstScreen(t)} className="px-3 py-1 text-sm">
+                      Open screen
+                    </GhostBtn>
                   </div>
                 </div>
-
-                {/* Amenities: always show MASTER_AMENITIES and mark present ones */}
-                <div className="flex-1 px-4">
-                  <div className="flex flex-wrap gap-2">
-                    {MASTER_AMENITIES.map((m) => {
-                      const present = (t.amenities || []).map((x) => String(x).trim().toLowerCase()).includes(m.toLowerCase());
-                      return (
-                        <span
-                          key={m}
-                          className={`text-[11px] px-2 py-0.5 rounded-full border ${
-                            present ? "bg-[#0071DC] text-white border-[#0071DC]" : "bg-white text-slate-500 border-slate-200"
-                          }`}
-                          title={present ? `${m} — available` : `${m} — not available`}
-                        >
-                          {m}
-                        </span>
-                      );
-                    })}
-
-                    {/* Extra amenities (not in MASTER_AMENITIES) */}
-                    {(t.amenities || [])
-                      .map((a) => String(a).trim())
-                      .filter(Boolean)
-                      .filter((a) => !MASTER_AMENITIES.map((x) => x.toLowerCase()).includes(a.toLowerCase()))
-                      .slice(0, 6) // safety cap
-                      .map((extra) => (
-                        <span key={extra} className="text-[11px] px-2 py-0.5 rounded-full border bg-white text-slate-700 border-slate-200">
-                          {extra}
-                        </span>
-                      ))}
-                  </div>
-                </div>
-
-                <div className="flex gap-2">
-                  <PrimaryBtn onClick={() => handleViewShowtimes(t)} className="px-3 py-1 text-sm">
-                    View showtimes
-                  </PrimaryBtn>
-                  <GhostBtn onClick={() => handleViewFirstScreen(t)} className="px-3 py-1 text-sm">
-                    Open screen
-                  </GhostBtn>
-                </div>
-              </div>
-            ))}
-          </div>
-        </Card>
-      </section>
+              ))}
+            </div>
+          </Card>
+        </section>
+      )}
     </main>
   );
 }
