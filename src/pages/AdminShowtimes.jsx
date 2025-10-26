@@ -1,6 +1,4 @@
-// src/pages/AdminShowtimes.jsx — Walmart Style (clean, rounded, blue accents)
-// Updated: guaranteed centered container (mx-auto), Create & Update stacked vertically,
-// safer endpoint probing, preserves your original logic and UX.
+// src/pages/AdminShowtimes.jsx — vertical stack enforced
 import { useEffect, useState } from "react";
 import api from "../api/api";
 import { useAuth } from "../context/AuthContext";
@@ -17,7 +15,10 @@ import {
 
 /* --------------------------- Walmart primitives --------------------------- */
 const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
-  <Tag className={`bg-white border border-slate-200 rounded-2xl shadow-sm ${className}`} {...rest}>
+  <Tag
+    className={`block w-full bg-white border border-slate-200 rounded-2xl shadow-sm ${className}`}
+    {...rest}
+  >
     {children}
   </Tag>
 );
@@ -76,7 +77,6 @@ export default function AdminShowtimes() {
   const [msg, setMsg] = useState("");
   const [msgType, setMsgType] = useState("info");
 
-  /* Try multiple candidate endpoints and return the first array of items found */
   async function tryFetchCandidates(candidates = []) {
     for (const ep of candidates) {
       try {
@@ -84,7 +84,6 @@ export default function AdminShowtimes() {
         const payload = res?.data;
         if (Array.isArray(payload)) return payload;
         if (payload && typeof payload === "object") {
-          // common shapes: { data: [...]} or { movies: [...] } or { items: [...] }
           if (Array.isArray(payload.data)) return payload.data;
           for (const key of Object.keys(payload)) {
             if (Array.isArray(payload[key])) return payload[key];
@@ -106,7 +105,6 @@ export default function AdminShowtimes() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, role]);
 
-  /* -------------------------- reference loaders -------------------------- */
   async function loadMovies() {
     try {
       const candidates = ["/movies", "/admin/movies", "/api/movies", "/movies/admin/list"];
@@ -203,7 +201,6 @@ export default function AdminShowtimes() {
     }
   }
 
-  /* ------------------------- create / update handlers ------------------------ */
   async function createShowtime(e) {
     e.preventDefault();
     if (!movieId || !screenId || !city || !startTime) {
@@ -290,9 +287,9 @@ export default function AdminShowtimes() {
 
   /* -------------------------------- Render -------------------------------- */
   return (
-    // Centered inner container (mx-auto) so page stays centered regardless of outer shells
+    // centered container; vertical flex column ensures stacked cards
     <main className="min-h-screen bg-slate-50 text-slate-900 py-8 px-4 md:px-6">
-      <div className="w-full max-w-5xl mx-auto space-y-5">
+      <div className="w-full max-w-5xl mx-auto flex flex-col gap-6">
         {/* Header */}
         <Card className="p-5 flex items-center justify-between">
           <div>
@@ -306,7 +303,7 @@ export default function AdminShowtimes() {
           </SecondaryBtn>
         </Card>
 
-        {/* Message banner */}
+        {/* Message */}
         {msg && (
           <Card
             className={`p-3 font-semibold ${
@@ -321,7 +318,7 @@ export default function AdminShowtimes() {
           </Card>
         )}
 
-        {/* CREATE SHOWTIME (vertical card) */}
+        {/* CREATE SHOWTIME - full width */}
         <Card className="p-5">
           <h2 className="text-lg font-extrabold border-b border-slate-200 pb-2 mb-4 flex items-center gap-2">
             <PlusCircle className="h-5 w-5" /> Create Showtime
@@ -367,7 +364,7 @@ export default function AdminShowtimes() {
                   const c = s.cols ?? s.columns ?? s.seatCols ?? s.numCols ?? "";
                   return (
                     <option key={s._id || s.id} value={s._id || s.id}>
-                      {s.name} {r && c ? `(${r}x${c})` : ""}
+                      {s.name} {r && c ? `(${r}x{c})` : ""}
                     </option>
                   );
                 })}
@@ -392,7 +389,6 @@ export default function AdminShowtimes() {
               step="1"
             />
 
-            {/* Hidden derived fields */}
             <input type="hidden" name="rows" value={rows ?? ""} />
             <input type="hidden" name="cols" value={cols ?? ""} />
 
@@ -402,7 +398,7 @@ export default function AdminShowtimes() {
           </form>
         </Card>
 
-        {/* UPDATE SHOWTIME (vertical card stacked below Create) */}
+        {/* UPDATE SHOWTIME - stacked directly below */}
         <Card className="p-5">
           <h2 className="text-lg font-extrabold border-b border-slate-200 pb-2 mb-4 flex items-center gap-2">
             <PencilLine className="h-5 w-5" /> Update Showtime
