@@ -6,6 +6,7 @@ import api from "../api/api";
 const BLUE = "#0071DC";
 const BLUE_DARK = "#0654BA";
 
+/* Tailwind-friendly color usage (avoid dynamic bracket syntax which won't compile) */
 const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
   <Tag className={`bg-white border border-slate-200 rounded-2xl shadow-sm ${className}`} {...rest}>
     {children}
@@ -24,7 +25,7 @@ function Field({ as = "input", className = "", ...props }) {
 function PrimaryBtn({ children, className = "", ...props }) {
   return (
     <button
-      className={`inline-flex items-center gap-2 rounded-full px-5 py-2 font-semibold text-white bg-[${BLUE}] hover:bg-[${BLUE_DARK}] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[${BLUE}] disabled:opacity-60 ${className}`}
+      className={`inline-flex items-center gap-2 rounded-full px-5 py-2 font-semibold text-white bg-[#0071DC] hover:bg-[#0654BA] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071DC] disabled:opacity-60 ${className}`}
       {...props}
     >
       {children}
@@ -35,7 +36,7 @@ function PrimaryBtn({ children, className = "", ...props }) {
 function SecondaryBtn({ children, className = "", ...props }) {
   return (
     <button
-      className={`inline-flex items-center gap-2 rounded-full px-4 py-2 font-semibold border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[${BLUE}] ${className}`}
+      className={`inline-flex items-center gap-2 rounded-full px-4 py-2 font-semibold border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071DC] ${className}`}
       {...props}
     >
       {children}
@@ -57,6 +58,11 @@ const DEFAULT_POSTER =
 /* -------------------------- Backend base URL -------------------------- */
 const API_BASE = import.meta.env.VITE_API_BASE || "https://movie-ticket-booking-backend-o1m2.onrender.com/api";
 const FILES_BASE = API_BASE.replace(/\/api\/?$/, "");
+
+/* ----------------------- Upload / Credentials Flags --------------------- */
+// parity with AdminTheaters page — toggle if backend uses cookies or you want retries
+const MAX_UPLOAD_RETRIES = 2;
+const UPLOAD_WITH_CREDENTIALS = false;
 
 /* ----------------------------- Helpers -------------------------------- */
 function resolvePosterUrl(url) {
@@ -140,7 +146,7 @@ function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
   /* ----------------------- Handle File Selection ----------------------- */
   const handleFile = (e) => {
     const file = e.target.files?.[0];
-    console.log("handleFile selected:", file);
+    // console.log("handleFile selected:", file);
     if (!file) return;
     if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
       alert("Only JPG, PNG, or WEBP allowed.");
@@ -157,34 +163,33 @@ function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
   /* -------------------------- Submit Form -------------------------- */
   const submit = async (e) => {
     e.preventDefault();
-    console.log("submit called, posterFile:", posterFile);
 
     const data = new FormData();
     data.append("title", form.title);
     data.append("description", form.synopsis ?? "");
-    data.append("durationMins", form.runtime !== "" ? Number(form.runtime) : "");
+    // send numeric runtime only if provided
+    if (form.runtime !== "" && form.runtime !== null) data.append("durationMins", String(Number(form.runtime)));
+    else data.append("durationMins", "");
     data.append("genre", form.genresStr || "");
     data.append("releaseDate", form.releaseDate || "");
     data.append("languages", (languages || []).map((x) => String(x).trim()).filter(Boolean).join(","));
     data.append("cast", JSON.stringify((cast || []).filter((c) => (c?.actorName || "").trim())));
     data.append("crew", JSON.stringify((crew || []).filter((c) => (c?.name || "").trim())));
 
-    // NOTE: backend expects "poster" as the file field (see backend upload.single('poster'))
+    // backend expects "poster" as the file field
     if (posterFile) {
       data.append("poster", posterFile);
-      console.log("Appended poster:", posterFile.name, posterFile.type, posterFile.size);
     } else if (form.posterUrl) {
       data.append("posterUrl", form.posterUrl);
-      console.log("No new file, keeping old posterUrl:", form.posterUrl);
-    } else {
-      console.log("No image or posterUrl provided.");
     }
 
     try {
       setSaving(true);
+      // onSave should perform the actual network call (parent passes doCreate/doUpdate)
       await onSave(data);
     } catch (err) {
-      console.error("Save failed:", err);
+      console.error("Save failed (MovieForm):", err);
+      throw err;
     } finally {
       setSaving(false);
     }
@@ -192,7 +197,6 @@ function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
 
   return (
     <form onSubmit={submit} className="space-y-4">
-      {/* --- form fields same as before --- */}
       <div>
         <label className="block text-[12px] font-semibold text-slate-600 mb-1">Title</label>
         <Field required value={form.title} onChange={change("title")} />
@@ -271,7 +275,7 @@ export default function AdminMoviesPage() {
 
       // backend may return { ok:true, data: [...] } or { ok:true, movies: [...] }
       const list = resp?.data?.data || resp?.data?.movies || resp?.data || [];
-      console.log("fetchMovies response shape:", resp.data);
+      // console.log("fetchMovies response shape:", resp.data);
       setMovies((Array.isArray(list) ? list : []).map(normalizeMovie));
     } catch (err) {
       console.error("fetchMovies failed:", err);
@@ -294,9 +298,13 @@ export default function AdminMoviesPage() {
       const token = localStorage.getItem("token");
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
+      // ensure no global Content-Type interferes with multipart
+      try {
+        if (api?.defaults?.headers?.post) delete api.defaults.headers.post["Content-Type"];
+      } catch (e) {}
+
       // POST to /movies/admin (api.baseURL already includes /api)
-      const resp = await api.post("/movies/admin", formData, { headers });
-      console.log("Create response:", resp.status, resp.data);
+      const resp = await api.post("/movies/admin", formData, { headers, withCredentials: UPLOAD_WITH_CREDENTIALS });
       const created = resp?.data?.data || resp?.data?.movie || resp?.data;
       if (created) setMovies((m) => [normalizeMovie(created), ...m]);
       setCreating(false);
@@ -318,8 +326,11 @@ export default function AdminMoviesPage() {
       const token = localStorage.getItem("token");
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-      const resp = await api.put(`/movies/admin/${id}`, formData, { headers });
-      console.log("Update response:", resp.status, resp.data);
+      try {
+        if (api?.defaults?.headers?.post) delete api.defaults.headers.post["Content-Type"];
+      } catch (e) {}
+
+      const resp = await api.put(`/movies/admin/${id}`, formData, { headers, withCredentials: UPLOAD_WITH_CREDENTIALS });
       const updatedRaw = resp?.data?.data || resp?.data?.movie || resp?.data;
       const updated = normalizeMovie(updatedRaw);
       setMovies((m) => m.map((x) => ((x._id || x.id) === (updated._id || updated.id) ? updated : x)));
