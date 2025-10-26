@@ -38,7 +38,12 @@ function GhostBtn({ children, className = "", ...props }) {
 }
 
 /* --------------------------------- Page --------------------------------- */
-const APP_BASE = import.meta.env.VITE_APP_BASE_URL || "http://localhost:5173";
+// ✅ Fix: production fallback points to your deployed domain, not localhost
+const APP_BASE =
+  import.meta.env.VITE_APP_BASE_URL ||
+  "https://movie-ticket-booking-rajy.netlify.app"; // default for production
+
+console.log("[TicketDetails] APP_BASE =", APP_BASE);
 
 export default function TicketDetails() {
   const { id: idFromRoute } = useParams();
@@ -100,7 +105,7 @@ export default function TicketDetails() {
     }
   }, [bookingId, token, urlToken]);
 
-  // Download via axios instance (sends JWT if present, supports ?token=)
+  // Download ticket PDF
   const downloadTicket = async () => {
     if (!booking) return;
     setMsg(null);
@@ -148,7 +153,6 @@ export default function TicketDetails() {
   const printTicket = () => {
     if (!booking) return;
 
-    // Convert QR canvas to <img> so it prints reliably
     let qrImgHTML = "";
     try {
       const canvas = qrWrapRef.current?.querySelector("canvas");
@@ -254,7 +258,6 @@ export default function TicketDetails() {
   return (
     <main className="min-h-screen bg-slate-50 py-10 px-4">
       <div className="max-w-4xl mx-auto">
-        {/* Controls / Title */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
           <h1 className="text-2xl font-extrabold tracking-tight text-slate-900">🎟 Ticket Details</h1>
           <div className="flex flex-wrap items-center gap-2">
@@ -270,10 +273,8 @@ export default function TicketDetails() {
           </div>
         </div>
 
-        {/* Ticket Preview */}
         <div ref={printRef}>
           <Card className="overflow-hidden">
-            {/* Colored title bar */}
             <div className="bg-gradient-to-r from-[#0071DC] via-[#0654BA] to-[#003E9F] text-white px-6 py-4">
               <div className="flex items-center justify-between">
                 <div className="font-extrabold text-lg">Cinema Ticket</div>
@@ -281,10 +282,8 @@ export default function TicketDetails() {
               </div>
             </div>
 
-            {/* Body */}
             <div className="p-6">
               <div className="flex flex-col md:flex-row gap-6">
-                {/* Left - details block */}
                 <Card className="flex-1 p-5">
                   <h2 className="text-xl font-extrabold text-slate-900 mb-2">{movie}</h2>
                   <div className="text-sm text-slate-700 space-y-2">
@@ -304,7 +303,6 @@ export default function TicketDetails() {
                   </div>
                 </Card>
 
-                {/* Right - QR */}
                 <div className="w-full md:w-56 flex flex-col items-center">
                   <Card id="qr-slot" ref={qrWrapRef} className="p-4">
                     <QRCodeCanvas value={verifyUrl} size={170} includeMargin />
