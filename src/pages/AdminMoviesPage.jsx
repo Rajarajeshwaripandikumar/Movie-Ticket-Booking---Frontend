@@ -1,6 +1,7 @@
-// src/pages/AdminMovies.jsx (updated, centered layout)
+// src/pages/AdminMovies.jsx
 import React, { useEffect, useRef, useState } from "react";
 import api from "../api/api";
+import Layout from "../components/Layout";
 
 /* --------------------------- Walmart primitives --------------------------- */
 const BLUE = "#0071DC";
@@ -345,10 +346,21 @@ export default function AdminMoviesPage() {
   };
 
   return (
-    // Outer wrapper now centers the content; inner container constrains width
-    <main className="min-h-screen bg-slate-50 text-slate-900 py-8 px-4 md:px-6 flex justify-center">
-      <div className="w-full max-w-6xl">
-        <Card className="mx-auto mb-6 p-5 md:p-6">
+    <Layout
+      title=""
+      rightSlot={
+        <div className="flex items-center gap-2">
+          <button className="rounded-full p-2 hover:bg-slate-50">🔔</button>
+          <div className="inline-flex items-center gap-2">
+            <div className="text-sm text-slate-600 hidden sm:block">Admins ▾</div>
+          </div>
+        </div>
+      }
+      maxWidth="max-w-6xl"
+    >
+      {/* Header card */}
+      <div className="mb-6">
+        <Card className="p-5 md:p-6">
           <div className="flex items-center justify-between flex-wrap gap-4">
             <div>
               <h1 className="text-2xl md:text-3xl font-extrabold">Manage Movies</h1>
@@ -362,78 +374,79 @@ export default function AdminMoviesPage() {
               <PrimaryBtn onClick={() => setCreating(true)}>Add Movie</PrimaryBtn>
             </div>
           </div>
+
           {error && (
             <Card className="mt-3 p-3 bg-rose-50 border-rose-200 text-rose-700 font-semibold">{error}</Card>
           )}
         </Card>
+      </div>
 
-        {/* Movie grid */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {loading ? (
-            <Card className="col-span-full p-4">Loading...</Card>
-          ) : movies.length === 0 ? (
-            <Card className="col-span-full p-4">No movies found</Card>
-          ) : (
-            movies.map((m) => (
-              <Card key={m._id || m.id} className="p-3 flex gap-3">
-                <img
-                  src={resolvePosterUrl(m.posterUrl) || DEFAULT_POSTER}
-                  alt={m.title}
-                  className="h-48 w-32 object-cover rounded-xl border border-slate-200 shadow-sm"
-                  onError={(e) => (e.currentTarget.src = DEFAULT_POSTER)}
-                />
-                <div className="flex-1">
-                  <h3 className="font-extrabold text-slate-900">{m.title}</h3>
-                  <div className="text-sm text-slate-700">{m.genresStr || "—"}</div>
-                  <div className="text-sm text-slate-600">
-                    Runtime: {m.runtime || m.durationMins || "—"} min
-                  </div>
-                  {m.languages?.length > 0 && (
-                    <div className="text-xs text-slate-600 mt-1">Languages: {m.languages.join(", ")}</div>
-                  )}
-                  <div className="mt-3 flex gap-2">
-                    <SecondaryBtn onClick={() => setEditing(m)} className="text-sm">Edit</SecondaryBtn>
-                    <SecondaryBtn onClick={() => doDelete(m)} className="text-sm">Delete</SecondaryBtn>
-                  </div>
+      {/* Movie grid */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {loading ? (
+          <Card className="col-span-full p-4">Loading...</Card>
+        ) : movies.length === 0 ? (
+          <Card className="col-span-full p-4">No movies found</Card>
+        ) : (
+          movies.map((m) => (
+            <Card key={m._id || m.id} className="p-3 flex gap-3">
+              <img
+                src={resolvePosterUrl(m.posterUrl) || DEFAULT_POSTER}
+                alt={m.title}
+                className="h-48 w-32 object-cover rounded-xl border border-slate-200 shadow-sm"
+                onError={(e) => (e.currentTarget.src = DEFAULT_POSTER)}
+              />
+              <div className="flex-1">
+                <h3 className="font-extrabold text-slate-900">{m.title}</h3>
+                <div className="text-sm text-slate-700">{m.genresStr || "—"}</div>
+                <div className="text-sm text-slate-600">
+                  Runtime: {m.runtime || m.durationMins || "—"} min
                 </div>
-              </Card>
-            ))
-          )}
-        </div>
-
-        {/* Create Modal */}
-        {creating && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-            <Card className="w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
-              <div className="px-5 py-4 border-b border-slate-200 bg-slate-50">
-                <h2 className="text-lg font-extrabold">Create Movie</h2>
-              </div>
-              <div className="px-5 py-4 overflow-y-auto">
-                <MovieForm initial={{}} onCancel={() => setCreating(false)} onSave={doCreate} />
+                {m.languages?.length > 0 && (
+                  <div className="text-xs text-slate-600 mt-1">Languages: {m.languages.join(", ")}</div>
+                )}
+                <div className="mt-3 flex gap-2">
+                  <SecondaryBtn onClick={() => setEditing(m)} className="text-sm">Edit</SecondaryBtn>
+                  <SecondaryBtn onClick={() => doDelete(m)} className="text-sm">Delete</SecondaryBtn>
+                </div>
               </div>
             </Card>
-          </div>
-        )}
-
-        {/* Edit Modal */}
-        {editing && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-            <Card className="w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
-              <div className="px-5 py-4 border-b border-slate-200 bg-slate-50">
-                <h2 className="text-lg font-extrabold">Edit Movie</h2>
-              </div>
-              <div className="px-5 py-4 overflow-y-auto">
-                <MovieForm
-                  initial={editing}
-                  onCancel={() => setEditing(null)}
-                  onSave={doUpdate}
-                  isSaving={submittingRef.current}
-                />
-              </div>
-            </Card>
-          </div>
+          ))
         )}
       </div>
-    </main>
+
+      {/* Create Modal */}
+      {creating && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <Card className="w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-200 bg-slate-50">
+              <h2 className="text-lg font-extrabold">Create Movie</h2>
+            </div>
+            <div className="px-5 py-4 overflow-y-auto">
+              <MovieForm initial={{}} onCancel={() => setCreating(false)} onSave={doCreate} />
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* Edit Modal */}
+      {editing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <Card className="w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-200 bg-slate-50">
+              <h2 className="text-lg font-extrabold">Edit Movie</h2>
+            </div>
+            <div className="px-5 py-4 overflow-y-auto">
+              <MovieForm
+                initial={editing}
+                onCancel={() => setEditing(null)}
+                onSave={doUpdate}
+                isSaving={submittingRef.current}
+              />
+            </div>
+          </Card>
+        </div>
+      )}
+    </Layout>
   );
 }
