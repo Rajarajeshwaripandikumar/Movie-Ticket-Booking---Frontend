@@ -26,6 +26,10 @@ const API_BASE = (
 
 const FILES_BASE = API_BASE.replace(/\/api$/, "");
 
+/* Retry and credentials settings for uploads */
+const MAX_UPLOAD_RETRIES = 2; // retry times for transient server errors
+const UPLOAD_WITH_CREDENTIALS = false; // set true if backend relies on cookies
+
 /* Inline fallback image */
 const DEFAULT_IMG =
   "data:image/svg+xml;utf8," +
@@ -140,10 +144,11 @@ export default function AdminTheaters() {
   async function loadTheaters() {
     try {
       setMsg("");
-      const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
+      const headers = authHeaders();
+      const axiosOpts = { params: { limit: 100, ts: Date.now() }, headers, timeout: 20000, withCredentials: UPLOAD_WITH_CREDENTIALS };
       // If admin logged in, call admin endpoint to get full list; otherwise public list
       const path = token && role?.toLowerCase() === "admin" ? "/admin/theaters" : "/theaters";
-      const res = await api.get(path, { params: { limit: 100, ts: Date.now() }, headers, timeout: 20000 });
+      const res = await api.get(path, axiosOpts);
       const body = res?.data ?? res;
       let arr = [];
 
@@ -178,18 +183,19 @@ export default function AdminTheaters() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
-  /* ------------------- Upload Handler ------------------- */
-  // Primary upload: sends file to /api/upload (protected). Keeps flow consistent with existing backend.
+  /* ------------------- Upload Handler (improved) ------------------- */
   async function onPickFile(e) {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    // client-side validations
     if (!["image/jpeg", "image/png", "image/webp", "image/gif"].includes(file.type)) {
       setMsg("Only JPG, PNG, WEBP, or GIF allowed");
       setMsgType("error");
       return;
     }
 
-    // local preview while uploading
+    // Local preview while uploading
     const localUrl = URL.createObjectURL(file);
     setPreview(localUrl);
     setPreviewKey((k) => k + 1);
@@ -197,34 +203,119 @@ export default function AdminTheaters() {
     setMsg("Uploading image...");
     setMsgType("info");
 
+    // prepare form data
+    const fd = new FormData();
+    fd.append("image", file);
+
+    // ensure axios doesn't forcibly set Content-Type header (browser sets boundary)
     try {
-      const fd = new FormData();
-      fd.append("image", file);
+      if (api?.defaults?.headers?.post) delete api.defaults.headers.post["Content-Type"];
+    } catch (e) {}
 
-      // ensure axios doesn't override Content-Type (let browser set boundary)
+    const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
+
+    // per-request axios config
+    const axiosConfig = {
+      headers, // Authorization if present
+      timeout: 30000,
+      // do not set Content-Type — let the browser set multipart/form-data boundary
+      withCredentials: UPLOAD_WITH_CREDENTIALS,
+    };
+
+    // attempt upload with small retry logic for transient errors (502 / 503)
+    let attempt = 0;
+    let lastErr = null;
+    while (attempt <= MAX_UPLOAD_RETRIES) {
       try {
-        if (api?.defaults?.headers?.post) delete api.defaults.headers.post["Content-Type"];
-      } catch (e) {}
+        attempt++;
+        const resp = await api.post("/upload", fd, axiosConfig);
+        const data = resp?.data ?? resp;
+        // robustly find returned url
+        const returnedUrl =
+          data?.url ||
+          data?.secure_url ||
+          data?.secureUrl ||
+          data?.data?.url ||
+          data?.data?.secure_url ||
+          (typeof data === "string" ? data : null);
 
-      const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
+        // If server returned partial object, try safe fallback
+        if (!returnedUrl) {
+          // if server returned raw cloudinary payload inside `data.raw` or `raw`
+          const raw = data?.raw || data?.data?.raw || data?.result;
+          const maybe = raw?.secure_url || raw?.url || raw?.secureUrl;
+          if (maybe) {
+            const abs = resolveImageUrl(maybe, Date.now());
+            setPreview(abs || maybe);
+            setMsg("✅ Image uploaded successfully (raw payload)");
+            setMsgType("success");
+            return;
+          }
+          // no usable URL found — surface server response for debug
+          console.warn("Upload response did not contain a recognized url:", data);
+          setMsg("❌ Upload succeeded but response missing URL (check backend).");
+          setMsgType("error");
+          return;
+        }
 
-      // Expect upload endpoint at POST /api/upload that returns { url } or { secure_url }
-      const { data } = await api.post("/upload", fd, { headers, timeout: 30000 });
-      const returnedUrl = data?.url || data?.secure_url || data?.secureUrl || data?.data?.url;
-      const abs = resolveImageUrl(returnedUrl, Date.now());
-      setPreview(abs || returnedUrl || data?.secure_url || "");
-      setMsg("✅ Image uploaded successfully");
-      setMsgType("success");
-    } catch (err) {
-      console.error("Upload failed:", err);
-      const serverMsg =
-        err?.response?.data?.error || err?.response?.data?.message || err?.response?.data || err?.message;
-      setMsg("❌ Upload failed: " + serverMsg);
-      setMsgType("error");
-    } finally {
-      // cleanup local blob URL after a bit — keep preview if upload succeeded (we already set it)
-      setTimeout(() => URL.revokeObjectURL(localUrl), 2000);
+        // normalize and set preview — support relative URLs from your /uploads static host
+        const abs = resolveImageUrl(returnedUrl, Date.now());
+        setPreview(abs || returnedUrl);
+        setMsg("✅ Image uploaded successfully");
+        setMsgType("success");
+        return;
+      } catch (err) {
+        lastErr = err;
+        // parse status code safely
+        const status = err?.response?.status || err?.status || null;
+
+        // CORS vs network - if there's no response, could be CORS or network/502 from host
+        if (!err?.response) {
+          // show a clearer message for CORS
+          console.error("Upload failed (no response) — Possible CORS or network issue:", err);
+          setMsg(
+            "❌ Upload failed: No response from server. Possible CORS or network issue — ensure backend allows your origin and is reachable."
+          );
+          setMsgType("error");
+          break; // don't retry on CORS/no-response
+        }
+
+        // Retry on server-side transient errors
+        if (status === 502 || status === 503 || status === 504) {
+          console.warn(`Upload attempt ${attempt} failed with ${status} — retrying...`);
+          if (attempt > MAX_UPLOAD_RETRIES) break;
+          await new Promise((r) => setTimeout(r, 700 * attempt)); // backoff
+          continue;
+        }
+
+        // handle multer/file validation errors (400/413)
+        const serverMsg =
+          err?.response?.data?.error ||
+          err?.response?.data?.message ||
+          JSON.stringify(err?.response?.data) ||
+          err?.message;
+        console.error("Upload failed:", serverMsg, err);
+        setMsg("❌ Upload failed: " + serverMsg);
+        setMsgType("error");
+        break; // bail on client errors
+      }
+    } // end retry loop
+
+    // if we reach here, upload ultimately failed
+    if (lastErr && lastErr?.response?.status) {
+      const s = lastErr.response.status;
+      if (s >= 500 && s < 600) {
+        setMsg("❌ Upload failed due to server error. Try again later.");
+        setMsgType("error");
+      }
     }
+
+    // cleanup local blob URL after a bit
+    setTimeout(() => {
+      try {
+        URL.revokeObjectURL(localUrl);
+      } catch {}
+    }, 2000);
   }
 
   /* ------------------- CRUD ------------------- */
@@ -256,7 +347,7 @@ export default function AdminTheaters() {
           if (api?.defaults?.headers?.post) delete api.defaults.headers.post["Content-Type"];
         } catch (e) {}
 
-        const { data } = await api.post("/admin/theaters", fd, { headers: authHeaders() });
+        const { data } = await api.post("/admin/theaters", fd, { headers: authHeaders(), withCredentials: UPLOAD_WITH_CREDENTIALS });
         const created = normalizeTheater(data?.data || data);
         setTheaters((s) => [created, ...s]);
         setMsg("✅ Theater created!");
@@ -273,7 +364,7 @@ export default function AdminTheaters() {
         amenities: amenitiesList,
         imageUrl: preview,
       };
-      const res = await api.post("/admin/theaters", payload, { headers: authHeaders() });
+      const res = await api.post("/admin/theaters", payload, { headers: authHeaders(), withCredentials: UPLOAD_WITH_CREDENTIALS });
       const created = normalizeTheater(res.data?.data || res.data);
       setTheaters((s) => [created, ...s]);
       setMsg("✅ Theater created!");
@@ -307,7 +398,7 @@ export default function AdminTheaters() {
           if (api?.defaults?.headers?.post) delete api.defaults.headers.post["Content-Type"];
         } catch (e) {}
 
-        const { data } = await api.put(`/admin/theaters/${selectedId}`, fd, { headers: authHeaders() });
+        const { data } = await api.put(`/admin/theaters/${selectedId}`, fd, { headers: authHeaders(), withCredentials: UPLOAD_WITH_CREDENTIALS });
         const updated = normalizeTheater(data?.data || data);
         setTheaters((list) => list.map((t) => (t._id === updated._id ? updated : t)));
         setMsg("✅ Updated successfully");
@@ -324,7 +415,7 @@ export default function AdminTheaters() {
         amenities: amenitiesDirty ? amenitiesList : originalAmenities,
         imageUrl: preview,
       };
-      const res = await api.put(`/admin/theaters/${selectedId}`, payload, { headers: authHeaders() });
+      const res = await api.put(`/admin/theaters/${selectedId}`, payload, { headers: authHeaders(), withCredentials: UPLOAD_WITH_CREDENTIALS });
       const updated = normalizeTheater(res.data?.data || res.data);
       setTheaters((list) => list.map((t) => (t._id === updated._id ? updated : t)));
       setMsg("✅ Updated successfully");
@@ -343,7 +434,7 @@ export default function AdminTheaters() {
   async function deleteTheater(id) {
     if (!confirm("Delete this theater?")) return;
     try {
-      await api.delete(`/admin/theaters/${id}`, { headers: authHeaders() });
+      await api.delete(`/admin/theaters/${id}`, { headers: authHeaders(), withCredentials: UPLOAD_WITH_CREDENTIALS });
       setTheaters((s) => s.filter((t) => t._id !== id));
       setMsg("🗑️ Deleted");
       setMsgType("info");
