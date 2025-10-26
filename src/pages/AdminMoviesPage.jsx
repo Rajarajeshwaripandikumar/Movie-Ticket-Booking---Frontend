@@ -1,6 +1,4 @@
-
-// ------------------------------------------------------------------
-// File: src/pages/AdminMovies.jsx (updated)
+// src/pages/AdminMovies.jsx (updated)
 import React, { useEffect, useRef, useState } from "react";
 import api from "../api/api";
 
@@ -171,9 +169,10 @@ function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
     data.append("cast", JSON.stringify((cast || []).filter((c) => (c?.actorName || "").trim())));
     data.append("crew", JSON.stringify((crew || []).filter((c) => (c?.name || "").trim())));
 
+    // NOTE: backend expects "poster" as the file field (see backend upload.single('poster'))
     if (posterFile) {
-      data.append("image", posterFile);
-      console.log("Appended image:", posterFile.name, posterFile.type, posterFile.size);
+      data.append("poster", posterFile);
+      console.log("Appended poster:", posterFile.name, posterFile.type, posterFile.size);
     } else if (form.posterUrl) {
       data.append("posterUrl", form.posterUrl);
       console.log("No new file, keeping old posterUrl:", form.posterUrl);
@@ -262,13 +261,22 @@ export default function AdminMoviesPage() {
 
   async function fetchMovies() {
     setLoading(true);
+    setError("");
     try {
-      // NOTE: api.baseURL already includes /api, so call /movies (not /api/movies)
-      const resp = await api.get("/movies", { params: { limit: 50, q } });
-      const list = resp.data.movies || resp.data || [];
-      setMovies(list.map(normalizeMovie));
+      const token = localStorage.getItem("token");
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+      // Admin view: call admin list so we get full movie records
+      const resp = await api.get("/movies/admin/list", { headers, params: { limit: 50, q } });
+
+      // backend may return { ok:true, data: [...] } or { ok:true, movies: [...] }
+      const list = resp?.data?.data || resp?.data?.movies || resp?.data || [];
+      console.log("fetchMovies response shape:", resp.data);
+      setMovies((Array.isArray(list) ? list : []).map(normalizeMovie));
     } catch (err) {
-      setError("Unable to fetch movies");
+      console.error("fetchMovies failed:", err);
+      const server = err?.response?.data;
+      setError(server?.message || "Unable to fetch movies");
     } finally {
       setLoading(false);
     }
@@ -276,6 +284,7 @@ export default function AdminMoviesPage() {
 
   useEffect(() => {
     fetchMovies();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const doCreate = async (formData) => {
@@ -284,11 +293,12 @@ export default function AdminMoviesPage() {
     try {
       const token = localStorage.getItem("token");
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      // POST to /admin/movies because api.baseURL already contains /api
-      const resp = await api.post("/admin/movies", formData, { headers });
+
+      // POST to /movies/admin (api.baseURL already includes /api)
+      const resp = await api.post("/movies/admin", formData, { headers });
       console.log("Create response:", resp.status, resp.data);
       const created = resp?.data?.data || resp?.data?.movie || resp?.data;
-      setMovies((m) => [normalizeMovie(created), ...m]);
+      if (created) setMovies((m) => [normalizeMovie(created), ...m]);
       setCreating(false);
     } catch (err) {
       console.error("Create failed (full error):", err);
@@ -300,19 +310,19 @@ export default function AdminMoviesPage() {
   };
 
   const doUpdate = async (formData) => {
-    if (submittingRef.current) return;
+    if (submittingRef.current || !editing) return;
     submittingRef.current = true;
     try {
       const id = editing?._id || editing?.id;
+      if (!id) throw new Error("Missing movie id for update");
       const token = localStorage.getItem("token");
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      console.trace("doUpdate called");
-      const resp = await api.put(`/admin/movies/${id}`, formData, { headers });
+
+      const resp = await api.put(`/movies/admin/${id}`, formData, { headers });
       console.log("Update response:", resp.status, resp.data);
-      const updated = normalizeMovie(resp?.data?.data || resp?.data?.movie || resp?.data);
-      setMovies((m) =>
-        m.map((x) => ((x._id || x.id) === (updated._id || updated.id) ? updated : x))
-      );
+      const updatedRaw = resp?.data?.data || resp?.data?.movie || resp?.data;
+      const updated = normalizeMovie(updatedRaw);
+      setMovies((m) => m.map((x) => ((x._id || x.id) === (updated._id || updated.id) ? updated : x)));
       setEditing(null);
     } catch (err) {
       console.error("Update failed (full error):", err);
@@ -328,11 +338,12 @@ export default function AdminMoviesPage() {
     try {
       const token = localStorage.getItem("token");
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      await api.delete(`/admin/movies/${m._id || m.id}`, { headers });
+      await api.delete(`/movies/admin/${m._id || m.id}`, { headers });
       setMovies((x) => x.filter((t) => (t._id || t.id) !== (m._id || m.id)));
     } catch (err) {
       console.error("Delete failed:", err);
-      alert("Delete failed: " + (err?.response?.data?.message || err.message));
+      const msg = err?.response?.data?.message || err.message;
+      alert("Delete failed: " + msg);
     }
   };
 
