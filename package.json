@@ -3,19 +3,21 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
+
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
     "lint": "echo \"No lint configured\""
   },
+
   "dependencies": {
     "@fontsource/inter": "^5.2.8",
     "@stripe/react-stripe-js": "^2.9.0",
     "@stripe/stripe-js": "^1.54.2",
     "axios": "^1.6.0",
     "framer-motion": "^12.23.24",
-    "lucide-react": "^0.471.2",
+    "lucide-react": "^0.545.0",
     "qrcode": "^1.5.4",
     "qrcode.react": "^4.2.0",
     "react": "^18.2.0",
@@ -26,6 +28,7 @@
     "socket.io-client": "^4.8.1",
     "uuid": "^9.0.1"
   },
+
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.2",
     "autoprefixer": "^10.4.20",
@@ -35,9 +38,11 @@
     "vite": "^5.4.20",
     "depcheck": "^1.4.7"
   },
+
   "optionalDependencies": {
     "@rollup/rollup-linux-x64-gnu": "^4.52.4"
   },
+
   "engines": {
     "node": "20.x",
     "npm": "9.x"
