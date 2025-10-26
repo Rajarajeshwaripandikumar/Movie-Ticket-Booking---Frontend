@@ -106,6 +106,33 @@ function normalizeMovie(m = {}) {
   return { ...m, _id: id, posterUrl, genre: genreStr, runtime, languages, castPreview };
 }
 
+/* -------------------- client-side fuzzy search helpers -------------------- */
+const norm = (s) =>
+  String(s || "")
+    .trim()
+    .toLowerCase()
+    // remove diacritics for more tolerant matching
+    .normalize?.("NFKD")
+    .replace?.(/\p{Diacritic}/gu, "") ?? String(s || "").trim().toLowerCase();
+
+function movieMatchesQuery(movie, q) {
+  if (!q) return true;
+  const nq = norm(q);
+  const title = norm(movie.title || "");
+  const genre = norm(movie.genre || "");
+  const langs = (movie.languages || []).map(norm).join(" ");
+  const cast = (movie.castPreview || []).map(norm).join(" ");
+
+  // direct contains
+  if (title.includes(nq) || genre.includes(nq) || langs.includes(nq) || cast.includes(nq)) return true;
+
+  // tokenized start match (first-letter or partial word)
+  const tokens = `${title} ${genre} ${langs} ${cast}`.split(/\s+/).filter(Boolean);
+  if (tokens.some((t) => t.startsWith(nq))) return true;
+
+  return false;
+}
+
 /* ---------- API helper ---------- */
 async function tryGet(candidates, params = {}) {
   for (const ep of candidates) {
@@ -130,7 +157,7 @@ const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
   </Tag>
 );
 
-/* ✅ Smaller balanced buttons */
+/* Smaller balanced buttons used in cards */
 const PrimaryBtn = ({ as: As = "button", to, href, className = "", children, ...props }) => (
   <As
     {...(to ? { to } : {})}
@@ -201,13 +228,26 @@ export default function Movies() {
       setErr("");
       try {
         const list = await (async () => {
+          // prefer server-side search when available, but we'll do client-side fuzzy filter afterwards
           if (debouncedQ) return await tryGet(["/api/movies/search", "/movies/search"], { q: debouncedQ });
           return await tryGet(["/api/movies", "/movies"]);
         })();
 
         if (!mounted) return;
-        setMovies(list.map(normalizeMovie));
-        if (debouncedQ) setParams({ q: debouncedQ }); else setParams({});
+
+        // normalize movies
+        const normalized = (Array.isArray(list) ? list : []).map(normalizeMovie);
+
+        // apply client-side fuzzy filtering when query exists (helps with first-letter and partial matches)
+        const finalList =
+          debouncedQ && String(debouncedQ).trim()
+            ? normalized.filter((m) => movieMatchesQuery(m, debouncedQ))
+            : normalized;
+
+        setMovies(finalList);
+
+        if (debouncedQ) setParams({ q: debouncedQ });
+        else setParams({});
       } catch (e) {
         console.error("Movies fetch failed:", e);
         setErr(e?.response?.data?.message || "Failed to fetch movies");
@@ -224,7 +264,7 @@ export default function Movies() {
   return (
     <main className="min-h-screen bg-slate-50 text-slate-900">
       {/* Header + search */}
-      <div className="max-w-6xl mx-auto px-3 sm:px-4 md:px-6 lg:px-8 pt-4 pb-3">
+      <div className="max-w-7xl mx-auto px-6 pt-6 pb-3">
         <header className="mb-3 flex items-center justify-between">
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Only in Theatres</h1>
         </header>
@@ -242,17 +282,17 @@ export default function Movies() {
 
       {/* Cards area */}
       <section className="pb-10">
-        <div className="max-w-6xl mx-auto px-3 sm:px-4 md:px-6 lg:px-8">
+        <div className="max-w-7xl mx-auto px-6">
           {err && (
             <Card className="mb-6 p-4 bg-rose-50 border-rose-200 text-rose-700 font-semibold" role="alert">
               {err}
             </Card>
           )}
 
-          {/* Loading skeleton */}
+          {/* Loading skeleton - matches theaters grid */}
           {loading && (
-            <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-              {Array.from({ length: 12 }).map((_, i) => (
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+              {Array.from({ length: 10 }).map((_, i) => (
                 <Card key={i} className="p-3 animate-pulse">
                   <div className="bg-slate-200 aspect-[2/3] w-full mb-3 rounded-xl" />
                   <div className="h-4 w-3/4 bg-slate-200 mb-2 rounded" />
@@ -262,9 +302,9 @@ export default function Movies() {
             </div>
           )}
 
-          {/* Movies list */}
+          {/* Movies grid - same breakpoints as TheatersPage */}
           {!loading && movies.length > 0 && (
-            <ul className="grid gap-4 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+            <ul className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
               {movies.map((m) => (
                 <li key={m._id} className="group w-full">
                   <Card className="p-3 transition-transform duration-200 group-hover:-translate-y-0.5">
@@ -339,6 +379,7 @@ function SearchBar({ value, onChange, onClear, placeholder = "Search", className
     <div className={`w-full ${className}`}>
       <Card className="px-4 py-2.5 flex items-center gap-3">
         <span className="text-slate-500"><IconSearch className="w-5 h-5" /></span>
+
         <input
           ref={inputRef}
           type="text"
@@ -347,6 +388,7 @@ function SearchBar({ value, onChange, onClear, placeholder = "Search", className
           placeholder={placeholder}
           className="flex-1 px-2 py-1.5 outline-none bg-transparent text-sm sm:text-base placeholder:text-slate-400"
         />
+
         {value ? (
           <GhostBtn type="button" onClick={onClear}>Clear</GhostBtn>
         ) : (
