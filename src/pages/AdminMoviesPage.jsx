@@ -1,4 +1,4 @@
-// src/pages/AdminMovies.jsx (updated)
+// src/pages/AdminMovies.jsx (updated, centered layout)
 import React, { useEffect, useRef, useState } from "react";
 import api from "../api/api";
 
@@ -60,7 +60,6 @@ const API_BASE = import.meta.env.VITE_API_BASE || "https://movie-ticket-booking-
 const FILES_BASE = API_BASE.replace(/\/api\/?$/, "");
 
 /* ----------------------- Upload / Credentials Flags --------------------- */
-// parity with AdminTheaters page — toggle if backend uses cookies or you want retries
 const MAX_UPLOAD_RETRIES = 2;
 const UPLOAD_WITH_CREDENTIALS = false;
 
@@ -81,7 +80,6 @@ function toArray(v) {
   return [];
 }
 
-/** Normalize movie from API into UI-friendly shape */
 function normalizeMovie(m = {}) {
   const title = m.title || "";
   const synopsis = m.synopsis ?? m.description ?? "";
@@ -143,10 +141,8 @@ function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
 
   const change = (k) => (e) => setForm((s) => ({ ...s, [k]: e.target.value }));
 
-  /* ----------------------- Handle File Selection ----------------------- */
   const handleFile = (e) => {
     const file = e.target.files?.[0];
-    // console.log("handleFile selected:", file);
     if (!file) return;
     if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
       alert("Only JPG, PNG, or WEBP allowed.");
@@ -160,14 +156,12 @@ function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
     setPreview(URL.createObjectURL(file));
   };
 
-  /* -------------------------- Submit Form -------------------------- */
   const submit = async (e) => {
     e.preventDefault();
 
     const data = new FormData();
     data.append("title", form.title);
     data.append("description", form.synopsis ?? "");
-    // send numeric runtime only if provided
     if (form.runtime !== "" && form.runtime !== null) data.append("durationMins", String(Number(form.runtime)));
     else data.append("durationMins", "");
     data.append("genre", form.genresStr || "");
@@ -176,7 +170,6 @@ function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
     data.append("cast", JSON.stringify((cast || []).filter((c) => (c?.actorName || "").trim())));
     data.append("crew", JSON.stringify((crew || []).filter((c) => (c?.name || "").trim())));
 
-    // backend expects "poster" as the file field
     if (posterFile) {
       data.append("poster", posterFile);
     } else if (form.posterUrl) {
@@ -185,7 +178,6 @@ function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
 
     try {
       setSaving(true);
-      // onSave should perform the actual network call (parent passes doCreate/doUpdate)
       await onSave(data);
     } catch (err) {
       console.error("Save failed (MovieForm):", err);
@@ -226,7 +218,6 @@ function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
         </div>
       </div>
 
-      {/* Poster Upload */}
       <div>
         <label className="block text-[12px] font-semibold text-slate-600 mb-1">Poster Image</label>
         <input type="file" accept="image/*" onChange={handleFile} />
@@ -270,12 +261,9 @@ export default function AdminMoviesPage() {
       const token = localStorage.getItem("token");
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-      // Admin view: call admin list so we get full movie records
       const resp = await api.get("/movies/admin/list", { headers, params: { limit: 50, q } });
 
-      // backend may return { ok:true, data: [...] } or { ok:true, movies: [...] }
       const list = resp?.data?.data || resp?.data?.movies || resp?.data || [];
-      // console.log("fetchMovies response shape:", resp.data);
       setMovies((Array.isArray(list) ? list : []).map(normalizeMovie));
     } catch (err) {
       console.error("fetchMovies failed:", err);
@@ -298,12 +286,10 @@ export default function AdminMoviesPage() {
       const token = localStorage.getItem("token");
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-      // ensure no global Content-Type interferes with multipart
       try {
         if (api?.defaults?.headers?.post) delete api.defaults.headers.post["Content-Type"];
       } catch (e) {}
 
-      // POST to /movies/admin (api.baseURL already includes /api)
       const resp = await api.post("/movies/admin", formData, { headers, withCredentials: UPLOAD_WITH_CREDENTIALS });
       const created = resp?.data?.data || resp?.data?.movie || resp?.data;
       if (created) setMovies((m) => [normalizeMovie(created), ...m]);
@@ -359,92 +345,95 @@ export default function AdminMoviesPage() {
   };
 
   return (
-    <main className="min-h-screen w-screen bg-slate-50 text-slate-900 py-8 px-4 md:px-6">
-      <Card className="max-w-6xl mx-auto mb-6 p-5 md:p-6">
-        <div className="flex items-center justify-between flex-wrap gap-4">
-          <div>
-            <h1 className="text-2xl md:text-3xl font-extrabold">Manage Movies</h1>
-            <p className="text-sm text-slate-600 mt-1">Create, edit, and organize your catalog.</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-56">
-              <Field placeholder="Search title" value={q} onChange={(e) => setQ(e.target.value)} />
+    // Outer wrapper now centers the content; inner container constrains width
+    <main className="min-h-screen bg-slate-50 text-slate-900 py-8 px-4 md:px-6 flex justify-center">
+      <div className="w-full max-w-6xl">
+        <Card className="mx-auto mb-6 p-5 md:p-6">
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <div>
+              <h1 className="text-2xl md:text-3xl font-extrabold">Manage Movies</h1>
+              <p className="text-sm text-slate-600 mt-1">Create, edit, and organize your catalog.</p>
             </div>
-            <SecondaryBtn onClick={fetchMovies}>Search</SecondaryBtn>
-            <PrimaryBtn onClick={() => setCreating(true)}>Add Movie</PrimaryBtn>
+            <div className="flex items-center gap-2">
+              <div className="w-56">
+                <Field placeholder="Search title" value={q} onChange={(e) => setQ(e.target.value)} />
+              </div>
+              <SecondaryBtn onClick={fetchMovies}>Search</SecondaryBtn>
+              <PrimaryBtn onClick={() => setCreating(true)}>Add Movie</PrimaryBtn>
+            </div>
           </div>
-        </div>
-        {error && (
-          <Card className="mt-3 p-3 bg-rose-50 border-rose-200 text-rose-700 font-semibold">{error}</Card>
-        )}
-      </Card>
+          {error && (
+            <Card className="mt-3 p-3 bg-rose-50 border-rose-200 text-rose-700 font-semibold">{error}</Card>
+          )}
+        </Card>
 
-      {/* Movie grid */}
-      <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-4">
-        {loading ? (
-          <Card className="col-span-full p-4">Loading...</Card>
-        ) : movies.length === 0 ? (
-          <Card className="col-span-full p-4">No movies found</Card>
-        ) : (
-          movies.map((m) => (
-            <Card key={m._id || m.id} className="p-3 flex gap-3">
-              <img
-                src={resolvePosterUrl(m.posterUrl) || DEFAULT_POSTER}
-                alt={m.title}
-                className="h-48 w-32 object-cover rounded-xl border border-slate-200 shadow-sm"
-                onError={(e) => (e.currentTarget.src = DEFAULT_POSTER)}
-              />
-              <div className="flex-1">
-                <h3 className="font-extrabold text-slate-900">{m.title}</h3>
-                <div className="text-sm text-slate-700">{m.genresStr || "—"}</div>
-                <div className="text-sm text-slate-600">
-                  Runtime: {m.runtime || m.durationMins || "—"} min
+        {/* Movie grid */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {loading ? (
+            <Card className="col-span-full p-4">Loading...</Card>
+          ) : movies.length === 0 ? (
+            <Card className="col-span-full p-4">No movies found</Card>
+          ) : (
+            movies.map((m) => (
+              <Card key={m._id || m.id} className="p-3 flex gap-3">
+                <img
+                  src={resolvePosterUrl(m.posterUrl) || DEFAULT_POSTER}
+                  alt={m.title}
+                  className="h-48 w-32 object-cover rounded-xl border border-slate-200 shadow-sm"
+                  onError={(e) => (e.currentTarget.src = DEFAULT_POSTER)}
+                />
+                <div className="flex-1">
+                  <h3 className="font-extrabold text-slate-900">{m.title}</h3>
+                  <div className="text-sm text-slate-700">{m.genresStr || "—"}</div>
+                  <div className="text-sm text-slate-600">
+                    Runtime: {m.runtime || m.durationMins || "—"} min
+                  </div>
+                  {m.languages?.length > 0 && (
+                    <div className="text-xs text-slate-600 mt-1">Languages: {m.languages.join(", ")}</div>
+                  )}
+                  <div className="mt-3 flex gap-2">
+                    <SecondaryBtn onClick={() => setEditing(m)} className="text-sm">Edit</SecondaryBtn>
+                    <SecondaryBtn onClick={() => doDelete(m)} className="text-sm">Delete</SecondaryBtn>
+                  </div>
                 </div>
-                {m.languages?.length > 0 && (
-                  <div className="text-xs text-slate-600 mt-1">Languages: {m.languages.join(", ")}</div>
-                )}
-                <div className="mt-3 flex gap-2">
-                  <SecondaryBtn onClick={() => setEditing(m)} className="text-sm">Edit</SecondaryBtn>
-                  <SecondaryBtn onClick={() => doDelete(m)} className="text-sm">Delete</SecondaryBtn>
-                </div>
+              </Card>
+            ))
+          )}
+        </div>
+
+        {/* Create Modal */}
+        {creating && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+            <Card className="w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+              <div className="px-5 py-4 border-b border-slate-200 bg-slate-50">
+                <h2 className="text-lg font-extrabold">Create Movie</h2>
+              </div>
+              <div className="px-5 py-4 overflow-y-auto">
+                <MovieForm initial={{}} onCancel={() => setCreating(false)} onSave={doCreate} />
               </div>
             </Card>
-          ))
+          </div>
+        )}
+
+        {/* Edit Modal */}
+        {editing && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+            <Card className="w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+              <div className="px-5 py-4 border-b border-slate-200 bg-slate-50">
+                <h2 className="text-lg font-extrabold">Edit Movie</h2>
+              </div>
+              <div className="px-5 py-4 overflow-y-auto">
+                <MovieForm
+                  initial={editing}
+                  onCancel={() => setEditing(null)}
+                  onSave={doUpdate}
+                  isSaving={submittingRef.current}
+                />
+              </div>
+            </Card>
+          </div>
         )}
       </div>
-
-      {/* Create Modal */}
-      {creating && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <Card className="w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
-            <div className="px-5 py-4 border-b border-slate-200 bg-slate-50">
-              <h2 className="text-lg font-extrabold">Create Movie</h2>
-            </div>
-            <div className="px-5 py-4 overflow-y-auto">
-              <MovieForm initial={{}} onCancel={() => setCreating(false)} onSave={doCreate} />
-            </div>
-          </Card>
-        </div>
-      )}
-
-      {/* Edit Modal */}
-      {editing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <Card className="w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
-            <div className="px-5 py-4 border-b border-slate-200 bg-slate-50">
-              <h2 className="text-lg font-extrabold">Edit Movie</h2>
-            </div>
-            <div className="px-5 py-4 overflow-y-auto">
-              <MovieForm
-                initial={editing}
-                onCancel={() => setEditing(null)}
-                onSave={doUpdate}
-                isSaving={submittingRef.current}
-              />
-            </div>
-          </Card>
-        </div>
-      )}
     </main>
   );
 }
