@@ -1,45 +1,30 @@
 ###########################################
-# 🚀 Netlify Build Configuration (Vite + React)
+# Netlify config — Vite + React (improved)
 ###########################################
 
 [build]
-  # Use npm ci for reproducible builds
   command = "npm ci && npm run build"
   publish = "dist"
 
-###########################################
-# 🌐 Global Environment
-###########################################
 [build.environment]
   NODE_VERSION = "20"
   NPM_VERSION = "9"
 
-###########################################
-# 🏭 Production Environment Variables
-###########################################
 [context.production.environment]
   VITE_API_BASE = "https://movie-ticket-booking-backend-o1m2.onrender.com/api"
   NODE_ENV = "production"
 
-###########################################
-# 🧪 Preview Deploys (optional)
-# point to staging backend if available
-###########################################
 [context.deploy-preview.environment]
   VITE_API_BASE = "https://staging-movie-ticket-booking.onrender.com/api"
   NODE_ENV = "development"
 
-###########################################
-# 🔁 SPA Routing for React Router
-###########################################
+# Single-page app routing
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
 
-###########################################
-# 🧩 Optional Security + Caching Headers
-###########################################
+# Security headers (applied site-wide)
 [[headers]]
   for = "/*"
   [headers.values]
@@ -47,10 +32,26 @@
     X-Frame-Options = "DENY"
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "strict-origin-when-cross-origin"
-    Cache-Control = "public, max-age=0, must-revalidate"
 
-###########################################
-# ⚡ Future Netlify Functions Support
-###########################################
-# [functions]
-#   node_bundler = "esbuild"
+# Cache-control: index.html should be revalidated frequently
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+
+# Cache static assets for long-lived caches (adjust max-age as you prefer)
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/_assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# Optional: set a fallback for other static files (css/js)
+[[headers]]
+  for = "/static/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
