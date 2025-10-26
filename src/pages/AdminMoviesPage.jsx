@@ -57,7 +57,7 @@ const DEFAULT_POSTER =
   `);
 
 /* -------------------------- Backend base URL -------------------------- */
-const API_BASE = import.meta.env.VITE_API_BASE || "https://movie-ticket-booking-backend-o1m2.onrender.com";
+const API_BASE = import.meta.env.VITE_API_BASE || "https://movie-ticket-booking-backend-o1m2.onrender.com/api";
 const FILES_BASE = API_BASE.replace(/\/api\/?$/, "");
 
 /* ----------------------- Upload / Credentials Flags --------------------- */
