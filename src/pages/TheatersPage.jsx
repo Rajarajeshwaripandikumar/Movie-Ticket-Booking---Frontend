@@ -2,8 +2,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import api from "../api/api";
+import Logo from "../components/Logo";
 import TheaterCard from "../components/TheaterCard";
 
+/* ✅ Master amenities list (always show all 7) */
 const MASTER_AMENITIES = ["Parking", "Snacks", "AC", "Wheelchair", "3D", "IMAX", "Dolby Atmos"];
 
 const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
@@ -34,7 +36,20 @@ function GhostBtn({ children, className = "", ...props }) {
   );
 }
 
-const norm = (s) => String(s || "").trim().replace(/\s+/g, " ").toLowerCase();
+/* ---------- small helpers ---------- */
+const norm = (s) =>
+  String(s || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+
+const titleCase = (s = "") =>
+  String(s)
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : ""))
+    .join(" ");
 
 export default function TheatersPage() {
   const navigate = useNavigate();
@@ -45,7 +60,8 @@ export default function TheatersPage() {
   const [amenityFilter, setAmenityFilter] = useState("All");
 
   const [theaters, setTheaters] = useState([]);
-  const [cities, setCities] = useState(["All"]);
+  // start empty; populate after first successful reset load
+  const [cities, setCities] = useState([]);
   const [amenities, setAmenities] = useState(["All", ...MASTER_AMENITIES]);
 
   const [page, setPage] = useState(1);
@@ -72,15 +88,16 @@ export default function TheatersPage() {
   };
 
   const normalizeTheater = (t) => {
-    let rawAmenities = Array.isArray(t?.amenities)
-      ? t.amenities
-      : Array.isArray(t?.amentities)
-      ? t.amentities
-      : typeof t?.amenities === "string"
-      ? t.amenities
-      : typeof t?.amentities === "string"
-      ? t.amentities
-      : [];
+    let rawAmenities =
+      Array.isArray(t?.amenities)
+        ? t.amenities
+        : Array.isArray(t?.amentities)
+        ? t.amentities
+        : typeof t?.amenities === "string"
+        ? t.amenities
+        : typeof t?.amentities === "string"
+        ? t.amentities
+        : [];
 
     if (typeof rawAmenities === "string") {
       const s = rawAmenities.trim();
@@ -97,7 +114,8 @@ export default function TheatersPage() {
     }
 
     const normAmenities = Array.from(new Set((rawAmenities || []).map((a) => String(a || "").trim()).filter(Boolean)));
-    return { ...t, amenities: normAmenities, imageUrl: resolveImageUrl(t) };
+    const city = titleCase(t?.city || "");
+    return { ...t, amenities: normAmenities, imageUrl: resolveImageUrl(t), city };
   };
 
   const applyFilters = (items, localQuery = query, localCity = cityFilter, localAmen = amenityFilter) => {
@@ -119,7 +137,7 @@ export default function TheatersPage() {
   };
 
   const setUrlParams = (overrides = {}) => {
-    const sp = new URLSearchParams(window.location.search);
+    const sp = new URLSearchParams(search);
     const next = {
       q: query || "",
       city: cityFilter !== "All" ? cityFilter : "",
@@ -133,6 +151,29 @@ export default function TheatersPage() {
     navigate({ search: `?${sp.toString()}` }, { replace: true });
   };
 
+  // --- NEW: track first cities load to avoid racing validation resets
+  const firstCitiesLoad = useRef(true);
+
+  useEffect(() => {
+    // if cities not loaded yet, do nothing
+    if (!Array.isArray(cities) || cities.length === 0) return;
+
+    // skip the very first arrival (allow initial URL params / user selection to persist)
+    if (firstCitiesLoad.current) {
+      firstCitiesLoad.current = false;
+      return;
+    }
+
+    if (cityFilter && cityFilter !== "All") {
+      const found = cities.some((c) => String(c).trim().toLowerCase() === String(cityFilter).trim().toLowerCase());
+      if (!found) {
+        setCityFilter("All");
+        setUrlParams();
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cities]);
+
   useEffect(() => {
     const sp = new URLSearchParams(search);
     const q = sp.get("q");
@@ -144,8 +185,10 @@ export default function TheatersPage() {
     if (amen !== null && amen.trim()) setAmenityFilter(amen);
 
     setPage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
 
+  // allow override object so onChange can call immediately
   async function loadTheaters({ reset = false, override = {} } = {}) {
     setLoading(true);
     setError("");
@@ -159,10 +202,17 @@ export default function TheatersPage() {
         ts: Date.now(),
       };
 
+      // debug
+      console.debug("[loadTheaters] params:", params);
+
       const resp = await api.get("/theaters", { params });
+
+      console.debug("[loadTheaters] response:", resp?.data);
+
       const fetched = resp?.data?.theaters ?? resp?.data ?? [];
       const normalized = Array.isArray(fetched) ? fetched.map(normalizeTheater) : [];
 
+      // use applyFilters client-side so UI stays consistent if backend ignores params
       const filtered = applyFilters(
         normalized,
         override.q ?? query,
@@ -174,7 +224,8 @@ export default function TheatersPage() {
         const cityArr = normalized
           .map((t) => (t.city || "").trim())
           .filter(Boolean)
-          .map((c) => String(c));
+          .map((c) => String(c))
+          .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
         const uniqueCities = Array.from(new Set(cityArr));
         setCities(["All", ...uniqueCities]);
 
@@ -207,22 +258,74 @@ export default function TheatersPage() {
     }
   }
 
+  // initial load and when filters change (fallback)
   useEffect(() => {
     loadTheaters({ reset: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, cityFilter, amenityFilter]);
 
+  // immediate handlers that clear UI and call load with overrides so there's no race
   const handleCityChange = (value) => {
-    const v = String(value || "All").trim() || "All";
+    const v = value || "All";
     setCityFilter(v);
-    setTheaters([]);
+    setTheaters([]); // clear old items immediately
     loadTheaters({ reset: true, override: { city: v === "All" ? undefined : v } });
   };
 
   const handleAmenityChange = (value) => {
-    const v = String(value || "All").trim() || "All";
+    const v = value || "All";
     setAmenityFilter(v);
     setTheaters([]);
     loadTheaters({ reset: true, override: { amenity: v === "All" ? undefined : v } });
+  };
+
+  /* ------------------------------ Auto-refresh hooks ------------------------------ */
+  useEffect(() => {
+    const onFocus = () => loadTheaters({ reset: true });
+    const onVisible = () => {
+      if (document.visibilityState === "visible") loadTheaters({ reset: true });
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const id = setInterval(() => loadTheaters({ reset: true }), 30_000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleViewShowtimes = (t) => {
+    const ymd = new Date().toISOString().slice(0, 10);
+    const city = t.city || (cityFilter !== "All" ? cityFilter : "");
+    navigate(
+      `/showtimes?theaterId=${t._id ?? t.id}&date=${ymd}${city ? `&city=${encodeURIComponent(city)}` : ""}`,
+      { state: { theaterId: t._id ?? t.id, date: ymd, city } }
+    );
+  };
+
+  const handleViewFirstScreen = async (t) => {
+    try {
+      const { data } = await api.get(`/theaters/${t._id}/screens`);
+      const screens = Array.isArray(data?.data) ? data.data : [];
+      if (!screens.length) {
+        alert("No screens found for this theater yet.");
+        return;
+      }
+      const first = screens[0];
+      const city = t.city || (cityFilter !== "All" ? cityFilter : "");
+      navigate(`/theaters/${t._id}/screens/${first._id}/showtimes`, {
+        state: { theaterId: t._id, screenId: first._id, city },
+      });
+    } catch (e) {
+      console.error("Failed to load screens", e);
+      alert("Failed to load screens for this theater.");
+    }
   };
 
   return (
@@ -249,7 +352,8 @@ export default function TheatersPage() {
                     className="bg-transparent outline-none text-sm w-full min-w-[120px]"
                     aria-label="Filter by city"
                   >
-                    {cities.map((c) => (
+                    {/* fallback to ["All"] while cities loading */}
+                    {(cities.length ? cities : ["All"]).map((c) => (
                       <option key={c} value={c}>
                         {c === "All" ? "All Cities" : c}
                       </option>
@@ -297,20 +401,54 @@ export default function TheatersPage() {
             {theaters.length === 0 ? (
               <div className="col-span-full flex justify-center py-12">
                 <Card className="px-10 py-12 text-center">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" strokeWidth="1.5" stroke="currentColor" className="w-14 h-14 text-slate-400 mb-4 mx-auto">
+                    <rect x="3" y="4" width="18" height="16" rx="2" ry="2" />
+                    <path d="M7 4v16M17 4v16M3 8h18M3 16h18" />
+                  </svg>
                   <h2 className="text-lg sm:text-xl font-extrabold text-slate-900">No theaters found</h2>
                   <p className="mt-2 text-sm text-slate-600">Try a different city or amenity.</p>
+                  <PrimaryBtn
+                    onClick={() => {
+                      setQuery("");
+                      setCityFilter("All");
+                      setAmenityFilter("All");
+                      loadTheaters({ reset: true });
+                    }}
+                    className="mt-5"
+                  >
+                    Clear Filters
+                  </PrimaryBtn>
                 </Card>
               </div>
             ) : (
-              theaters.map((t) => <TheaterCard key={t._id || t.id} theater={t} />)
+              theaters.map((t) => (
+                <TheaterCard
+                  key={t._id || t.id}
+                  theater={{
+                    ...t,
+                    imageUrl: t.imageUrl,
+                  }}
+                />
+              ))
             )}
           </div>
         )}
+
+        {!error && theaters.length > 0 && hasMore && (
+          <div className="mt-8 flex justify-center">
+            <GhostBtn onClick={() => loadTheaters({ reset: false })} className="px-5">
+              {loading ? "Loading…" : "Load More"}
+            </GhostBtn>
+          </div>
+        )}
       </section>
+
+      {/* removed admin amenities overview by design — no bottom list */}
     </main>
   );
 }
 
+/* ------------------------------ Search Bar (Walmart style) ------------------------------ */
 function SearchBarTheaters({ value, onChange, onClear, onSubmit, placeholder = "Search" }) {
   const inputRef = useRef(null);
 
@@ -334,7 +472,23 @@ function SearchBarTheaters({ value, onChange, onClear, onSubmit, placeholder = "
 
   return (
     <div className="w-full">
+      <label htmlFor="theater-search" className="sr-only">
+        Search theaters
+      </label>
       <div className="relative">
+        <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4">
+          <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5 text-slate-400">
+            <path
+              d="M21 21l-4.3-4.3m1.3-5A7 7 0 1 1 7 4a7 7 0 0 1 11 7.7z"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </div>
+
         <input
           id="theater-search"
           ref={inputRef}
@@ -344,6 +498,27 @@ function SearchBarTheaters({ value, onChange, onClear, onSubmit, placeholder = "
           placeholder={placeholder}
           className="w-full rounded-full border border-slate-200 bg-white pl-12 pr-28 py-3 text-sm sm:text-base outline-none placeholder:text-slate-400 focus:ring-2 focus:ring-[#0071DC]"
         />
+
+        <div className="absolute inset-y-0 right-0 flex items-center pr-2 gap-1.5">
+          {value ? (
+            <button
+              type="button"
+              onClick={onClear}
+              className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs hover:bg-slate-50"
+              title="Clear"
+            >
+              <span>Clear</span>
+              <svg aria-hidden="true" viewBox="0 0 20 20" className="h-3.5 w-3.5">
+                <path d="M6 6l8 8M14 6l-8 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+              </svg>
+            </button>
+          ) : (
+            <kbd className="hidden sm:inline-flex select-none rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] text-slate-500">/</kbd>
+          )}
+        </div>
+      </div>
+      <div className="mt-2 text-xs text-slate-500">
+        Type to search. Press <span className="font-medium">/</span> to focus. Press <span className="font-medium">Enter</span> to search.
       </div>
     </div>
   );
