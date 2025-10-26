@@ -1,4 +1,6 @@
 // src/pages/AdminShowtimes.jsx — Walmart Style (clean, rounded, blue accents)
+// Updated: guaranteed centered container (mx-auto), Create & Update stacked vertically,
+// safer endpoint probing, preserves your original logic and UX.
 import { useEffect, useState } from "react";
 import api from "../api/api";
 import { useAuth } from "../context/AuthContext";
@@ -74,6 +76,7 @@ export default function AdminShowtimes() {
   const [msg, setMsg] = useState("");
   const [msgType, setMsgType] = useState("info");
 
+  /* Try multiple candidate endpoints and return the first array of items found */
   async function tryFetchCandidates(candidates = []) {
     for (const ep of candidates) {
       try {
@@ -81,8 +84,11 @@ export default function AdminShowtimes() {
         const payload = res?.data;
         if (Array.isArray(payload)) return payload;
         if (payload && typeof payload === "object") {
-          const arr = Object.values(payload).find((v) => Array.isArray(v));
-          if (arr) return arr;
+          // common shapes: { data: [...]} or { movies: [...] } or { items: [...] }
+          if (Array.isArray(payload.data)) return payload.data;
+          for (const key of Object.keys(payload)) {
+            if (Array.isArray(payload[key])) return payload[key];
+          }
         }
       } catch (_) {}
     }
@@ -100,9 +106,10 @@ export default function AdminShowtimes() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, role]);
 
+  /* -------------------------- reference loaders -------------------------- */
   async function loadMovies() {
     try {
-      const candidates = ["/movies", "/admin/movies", "/api/movies"];
+      const candidates = ["/movies", "/admin/movies", "/api/movies", "/movies/admin/list"];
       const list = await tryFetchCandidates(candidates);
       setMovies(list);
       if (list?.length) setMovieId((p) => p || list[0]._id || list[0].id || "");
@@ -114,7 +121,7 @@ export default function AdminShowtimes() {
 
   async function loadTheaters() {
     try {
-      const candidates = ["/admin/theaters", "/theaters", "/api/theaters"];
+      const candidates = ["/admin/theaters", "/theaters", "/api/theaters", "/theaters/admin/list"];
       const list = await tryFetchCandidates(candidates);
       setTheaters(list);
       if (list?.length) {
@@ -138,6 +145,7 @@ export default function AdminShowtimes() {
         `/admin/theaters/${id}/screens`,
         `/theaters/${id}/screens`,
         `/api/theaters/${id}/screens`,
+        `/screens?theaterId=${id}`,
       ];
       const list = await tryFetchCandidates(candidates);
       setScreens(list);
@@ -161,12 +169,12 @@ export default function AdminShowtimes() {
 
   async function loadShowtimes() {
     try {
-      const candidates = ["/admin/showtimes", "/showtimes", "/api/showtimes"];
+      const candidates = ["/admin/showtimes", "/showtimes", "/api/showtimes", "/showtimes/admin/list"];
       const list = await tryFetchCandidates(candidates);
       setShowtimes(list);
       if (list?.length) {
         setShowtimeId((p) => p || list[0]._id || list[0].id || "");
-        const st = list[0].startTime || list[0].date || null;
+        const st = list[0].startTime || list[0].date || list[0].datetime || null;
         if (st) setStartTime(toLocalDatetimeInputValue(st));
       }
     } catch (err) {
@@ -186,14 +194,16 @@ export default function AdminShowtimes() {
     setShowtimeId(id);
     const st = showtimes.find((s) => s._id === id || s.id === id);
     if (st) {
-      setStartTime(toLocalDatetimeInputValue(st.startTime || st.date));
-      setBasePrice(st.basePrice ?? 200);
+      setStartTime(toLocalDatetimeInputValue(st.startTime ?? st.date ?? st.datetime));
+      setBasePrice(st.basePrice ?? st.amount ?? 200);
       setCity(st.theater?.city ?? st.city ?? "");
       if (st.screen) setScreenId(st.screen._id ?? st.screen);
       if (st.theater) setTheaterId(st.theater._id ?? st.theater);
+      if (st.movie) setMovieId(st.movie._id ?? st.movie);
     }
   }
 
+  /* ------------------------- create / update handlers ------------------------ */
   async function createShowtime(e) {
     e.preventDefault();
     if (!movieId || !screenId || !city || !startTime) {
@@ -213,7 +223,7 @@ export default function AdminShowtimes() {
         cols: cols ?? undefined,
       };
 
-      const createCandidates = ["/admin/showtimes", "/showtimes", "/api/showtimes"];
+      const createCandidates = ["/admin/showtimes", "/showtimes", "/api/showtimes", "/showtimes/admin"];
       let created = false;
       for (const ep of createCandidates) {
         try {
@@ -280,17 +290,16 @@ export default function AdminShowtimes() {
 
   /* -------------------------------- Render -------------------------------- */
   return (
-    <main className="min-h-screen w-screen [margin-inline:calc(50%-50vw)] bg-slate-50 text-slate-900 py-8 px-4 md:px-6">
-      <div className="max-w-5xl mx-auto space-y-5">
+    // Centered inner container (mx-auto) so page stays centered regardless of outer shells
+    <main className="min-h-screen bg-slate-50 text-slate-900 py-8 px-4 md:px-6">
+      <div className="w-full max-w-5xl mx-auto space-y-5">
         {/* Header */}
         <Card className="p-5 flex items-center justify-between">
           <div>
             <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight flex items-center gap-2">
               <CalendarClock className="h-6 w-6" /> Manage Showtimes
             </h1>
-            <p className="text-sm text-slate-600 mt-1">
-              Create, update, and organize theater schedules.
-            </p>
+            <p className="text-sm text-slate-600 mt-1">Create, update, and organize theater schedules.</p>
           </div>
           <SecondaryBtn onClick={loadShowtimes}>
             <RefreshCcw className="h-4 w-4" /> Refresh
@@ -312,7 +321,7 @@ export default function AdminShowtimes() {
           </Card>
         )}
 
-        {/* CREATE SHOWTIME */}
+        {/* CREATE SHOWTIME (vertical card) */}
         <Card className="p-5">
           <h2 className="text-lg font-extrabold border-b border-slate-200 pb-2 mb-4 flex items-center gap-2">
             <PlusCircle className="h-5 w-5" /> Create Showtime
@@ -339,7 +348,7 @@ export default function AdminShowtimes() {
               {Array.isArray(theaters) &&
                 theaters.map((t) => (
                   <option key={t._id || t.id} value={t._id || t.id}>
-                    {t.name} — {t.city || t.location}
+                    {t.name} — {t.city || t.location || ""}
                   </option>
                 ))}
             </Field>
@@ -388,14 +397,12 @@ export default function AdminShowtimes() {
             <input type="hidden" name="cols" value={cols ?? ""} />
 
             <div className="flex items-center justify-end">
-              <PrimaryBtn disabled={loading}>
-                {loading ? "Creating…" : <>Create Showtime</>}
-              </PrimaryBtn>
+              <PrimaryBtn disabled={loading}>{loading ? "Creating…" : "Create Showtime"}</PrimaryBtn>
             </div>
           </form>
         </Card>
 
-        {/* UPDATE SHOWTIME */}
+        {/* UPDATE SHOWTIME (vertical card stacked below Create) */}
         <Card className="p-5">
           <h2 className="text-lg font-extrabold border-b border-slate-200 pb-2 mb-4 flex items-center gap-2">
             <PencilLine className="h-5 w-5" /> Update Showtime
@@ -412,8 +419,8 @@ export default function AdminShowtimes() {
               {Array.isArray(showtimes) &&
                 showtimes.map((s) => (
                   <option key={s._id || s.id} value={s._id || s.id}>
-                    {(s.movie?.title || s.movie?.name) ?? "Movie"} — {s.city} —{" "}
-                    {new Date(s.startTime).toLocaleString()} — ₹{s.basePrice}
+                    {(s.movie?.title || s.movie?.name || (s.movie && String(s.movie)) || "Movie")} — {s.city || ""} —{" "}
+                    {s.startTime ? new Date(s.startTime).toLocaleString() : s.date ? new Date(s.date).toLocaleString() : "—"} — ₹{s.basePrice ?? s.amount ?? ""}
                   </option>
                 ))}
             </Field>
@@ -426,11 +433,74 @@ export default function AdminShowtimes() {
             />
 
             <div className="flex items-center justify-end">
-              <PrimaryBtn disabled={loading}>
-                {loading ? "Updating…" : "Update Showtime"}
-              </PrimaryBtn>
+              <PrimaryBtn disabled={loading}>{loading ? "Updating…" : "Update Showtime"}</PrimaryBtn>
             </div>
           </form>
+        </Card>
+
+        {/* EXISTING SHOWTIMES LIST */}
+        <Card className="p-6">
+          <h3 className="text-lg font-bold mb-3">Existing Showtimes</h3>
+          {loading ? (
+            <div>Loading...</div>
+          ) : showtimes.length === 0 ? (
+            <div className="text-slate-600">No showtimes found</div>
+          ) : (
+            <div className="space-y-3">
+              {showtimes.map((s) => {
+                const movieTitle =
+                  (s.movie && (s.movie.title || s.movie.name)) ||
+                  (typeof s.movie === "string" ? s.movie : "Unknown movie");
+                const theaterName = (s.theater && (s.theater.name || s.theater.title)) || s.city || "";
+                const start = s.startTime || s.date || s.datetime || "";
+                return (
+                  <div key={s._id || s.id} className="flex items-center justify-between border border-slate-100 rounded-lg p-3">
+                    <div>
+                      <div className="font-semibold">{movieTitle}</div>
+                      <div className="text-sm text-slate-600">
+                        {theaterName} • {s.screen?.name || s.screen || "screen"} • {start ? new Date(start).toLocaleString() : "—"}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <SecondaryBtn
+                        onClick={() => {
+                          handleSelectShowtime(s._id || s.id);
+                          window.scrollTo({ top: 0, behavior: "smooth" });
+                        }}
+                      >
+                        Edit
+                      </SecondaryBtn>
+                      <SecondaryBtn
+                        onClick={async () => {
+                          if (!window.confirm("Delete this showtime?")) return;
+                          try {
+                            const id = s._id || s.id;
+                            const candidates = [`/admin/showtimes/${id}`, `/showtimes/${id}`, `/api/showtimes/${id}`];
+                            let deleted = false;
+                            for (const ep of candidates) {
+                              try {
+                                await api.delete(ep);
+                                deleted = true;
+                                break;
+                              } catch (_) {}
+                            }
+                            if (!deleted) throw new Error("Delete endpoint not found");
+                            setMsg("Showtime deleted"); setMsgType("success");
+                            await loadShowtimes();
+                          } catch (err) {
+                            console.error("delete showtime error", err);
+                            setMsg("Delete failed"); setMsgType("error");
+                          }
+                        }}
+                      >
+                        Delete
+                      </SecondaryBtn>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </Card>
       </div>
     </main>
