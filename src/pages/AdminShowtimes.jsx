@@ -1,4 +1,4 @@
-// src/pages/AdminShowtimes.jsx — vertical stack enforced
+// src/pages/AdminShowtimes.jsx — vertical stack enforced with local CSS override
 import { useEffect, useState } from "react";
 import api from "../api/api";
 import { useAuth } from "../context/AuthContext";
@@ -15,10 +15,7 @@ import {
 
 /* --------------------------- Walmart primitives --------------------------- */
 const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
-  <Tag
-    className={`block w-full bg-white border border-slate-200 rounded-2xl shadow-sm ${className}`}
-    {...rest}
-  >
+  <Tag className={`admin-card bg-white border border-slate-200 rounded-2xl shadow-sm ${className}`} {...rest}>
     {children}
   </Tag>
 );
@@ -77,6 +74,7 @@ export default function AdminShowtimes() {
   const [msg, setMsg] = useState("");
   const [msgType, setMsgType] = useState("info");
 
+  /* Try multiple candidate endpoints and return the first array of items found */
   async function tryFetchCandidates(candidates = []) {
     for (const ep of candidates) {
       try {
@@ -287,9 +285,15 @@ export default function AdminShowtimes() {
 
   /* -------------------------------- Render -------------------------------- */
   return (
-    // centered container; vertical flex column ensures stacked cards
-    <main className="min-h-screen bg-slate-50 text-slate-900 py-8 px-4 md:px-6">
-      <div className="w-full max-w-5xl mx-auto flex flex-col gap-6">
+    <main className="admin-showtimes-root min-h-screen bg-slate-50 text-slate-900 py-8 px-4 md:px-6">
+      {/* Local CSS override to force vertical stacking & full width of cards.
+          We keep this small and scoped to .admin-showtimes-root so it won't leak. */}
+      <style>{`
+        .admin-showtimes-root .stack { display: flex !important; flex-direction: column !important; gap: 1.5rem !important; }
+        .admin-showtimes-root .admin-card { display: block !important; width: 100% !important; }
+      `}</style>
+
+      <div className="w-full max-w-5xl mx-auto stack">
         {/* Header */}
         <Card className="p-5 flex items-center justify-between">
           <div>
@@ -318,7 +322,7 @@ export default function AdminShowtimes() {
           </Card>
         )}
 
-        {/* CREATE SHOWTIME - full width */}
+        {/* CREATE SHOWTIME */}
         <Card className="p-5">
           <h2 className="text-lg font-extrabold border-b border-slate-200 pb-2 mb-4 flex items-center gap-2">
             <PlusCircle className="h-5 w-5" /> Create Showtime
@@ -364,7 +368,7 @@ export default function AdminShowtimes() {
                   const c = s.cols ?? s.columns ?? s.seatCols ?? s.numCols ?? "";
                   return (
                     <option key={s._id || s.id} value={s._id || s.id}>
-                      {s.name} {r && c ? `(${r}x{c})` : ""}
+                      {s.name} {r && c ? `(${r}x${c})` : ""}
                     </option>
                   );
                 })}
@@ -398,7 +402,7 @@ export default function AdminShowtimes() {
           </form>
         </Card>
 
-        {/* UPDATE SHOWTIME - stacked directly below */}
+        {/* UPDATE SHOWTIME */}
         <Card className="p-5">
           <h2 className="text-lg font-extrabold border-b border-slate-200 pb-2 mb-4 flex items-center gap-2">
             <PencilLine className="h-5 w-5" /> Update Showtime
@@ -434,7 +438,7 @@ export default function AdminShowtimes() {
           </form>
         </Card>
 
-        {/* EXISTING SHOWTIMES LIST */}
+        {/* EXISTING SHOWTIMES */}
         <Card className="p-6">
           <h3 className="text-lg font-bold mb-3">Existing Showtimes</h3>
           {loading ? (
