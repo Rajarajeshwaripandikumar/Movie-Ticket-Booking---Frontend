@@ -237,6 +237,110 @@ const EmptyMini = ({ label }) => (
   </div>
 );
 
+/* ----------------------------- Alerts Modal ----------------------------- */
+/* Small, accessible modal that matches your design */
+function AlertsModal({ open, onClose, alerts = [] }) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden="true" />
+      <Card className="relative z-10 max-w-2xl w-full p-6">
+        <div className="flex items-start gap-4">
+          <span className="inline-grid place-items-center h-12 w-12 rounded-lg border border-slate-200 bg-sky-50">
+            <Bell className="h-6 w-6 text-slate-900" />
+          </span>
+          <div className="flex-1">
+            <h2 className="text-lg font-extrabold text-slate-900">Alerts</h2>
+            <p className="mt-2 text-sm text-slate-600">Important system notifications will appear here.</p>
+
+            <div className="mt-4 grid gap-3">
+              {alerts && alerts.length ? (
+                alerts.map((a, i) => (
+                  <div key={i} className="rounded-lg border border-slate-100 p-3">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <p className="font-semibold text-slate-900">{a.title || "Alert"}</p>
+                        <p className="text-sm text-slate-600 mt-1">{a.message || a.detail || ""}</p>
+                      </div>
+                      <div className="text-xs text-slate-500">{a.time || ""}</div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="rounded-lg border border-dashed border-slate-200 p-4 text-sm text-slate-600">
+                  No active alerts — everything looks healthy ✅
+                </div>
+              )}
+            </div>
+
+            <div className="mt-5 flex justify-end gap-3">
+              <Pill onClick={onClose}>Close</Pill>
+              <Primary onClick={onClose} className="opacity-90">Dismiss All</Primary>
+            </div>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+/* ----------------------------- Filters Modal ----------------------------- */
+/* Small filter UI used for demos; you can wire the filter state to your API params */
+function FiltersModal({ open, onClose, onApply, current = {} }) {
+  const [movie, setMovie] = useState(current.movie || "");
+  const [theater, setTheater] = useState(current.theater || "");
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  useEffect(() => {
+    if (open) {
+      setMovie(current.movie || "");
+      setTheater(current.theater || "");
+    }
+  }, [open, current]);
+
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden="true" />
+      <Card className="relative z-10 max-w-xl w-full p-6">
+        <div>
+          <h2 className="text-lg font-extrabold text-slate-900">Filters</h2>
+          <p className="mt-1 text-sm text-slate-600">Narrow results for analytics (demo filters).</p>
+
+          <div className="mt-4 grid gap-3">
+            <label className="text-sm text-slate-700">Movie title</label>
+            <input value={movie} onChange={(e) => setMovie(e.target.value)} className="w-full p-2 border border-slate-200 rounded-md" placeholder="e.g. Spider-Man" />
+
+            <label className="text-sm text-slate-700 mt-2">Theater</label>
+            <input value={theater} onChange={(e) => setTheater(e.target.value)} className="w-full p-2 border border-slate-200 rounded-md" placeholder="e.g. Regal Downtown" />
+          </div>
+
+          <div className="mt-5 flex justify-end gap-3">
+            <Pill onClick={onClose}>Cancel</Pill>
+            <Primary onClick={() => { onApply?.({ movie: movie.trim(), theater: theater.trim() }); onClose(); }}>Apply</Primary>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 /* API helpers */
 const authHeaders = () => {
   const token = localStorage.getItem("token") || localStorage.getItem("jwt") || "";
@@ -293,7 +397,6 @@ const toDauDaily = (arr = []) =>
 /* ---------- Robust movie name resolution to avoid "Unknown" ---------- */
 const toMovies = (arr = []) =>
   (arr || []).map((m = {}) => {
-    // helper: return first non-empty string
     const tryStr = (...vals) => {
       for (const v of vals) {
         if (typeof v === "string" && v.trim()) return v.trim();
@@ -301,7 +404,6 @@ const toMovies = (arr = []) =>
       return null;
     };
 
-    // candidates: many possible shapes your backend might return
     const candidates = [
       m.movieName,
       m.movieTitle,
@@ -314,10 +416,8 @@ const toMovies = (arr = []) =>
       m.m?.name,
       m.m?.movie?.title,
       m.movie?.title,
-      // sometimes lookup result uses `m` or `movie` or `movie[0]` etc.
       Array.isArray(m.movie) && m.movie[0] && (m.movie[0].title || m.movie[0].name),
       Array.isArray(m.m) && m.m[0] && (m.m[0].title || m.m[0].name),
-      // if movieId is objectId-like, leave as id string fallback
       typeof m.movieId === "string" ? m.movieId : null,
       typeof m._id === "string" ? m._id : null,
     ];
@@ -336,7 +436,6 @@ const toTheaterOcc = (arr = []) =>
   (arr || []).map((t = {}) => {
     const name = t.theaterName ?? t.name ?? (t._id && String(t._id)) ?? "Unknown";
     const occupancyValue = Number(t.occupancyRate ?? t.avgOccupancy ?? 0);
-    // if occupancy already in percent (0-100) detect and normalize
     const occupancy = occupancyValue > 1 ? Math.round(occupancyValue) : Math.round(occupancyValue * 100);
     return { name, occupancy };
   });
@@ -446,6 +545,11 @@ export default function AdminAnalyticsDashboard() {
 
   const [liveStatus, setLiveStatus] = useState("connecting");
 
+  // UI modal states & demo filter state
+  const [alertsOpen, setAlertsOpen] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [appliedFilters, setAppliedFilters] = useState({});
+
   const loadData = useCallback(
     async (selectedRange) => {
       controllerRef.current?.abort();
@@ -459,27 +563,24 @@ export default function AdminAnalyticsDashboard() {
         // Try the composite endpoint first — it's handy to get debug + snapshot in one call
         let composite = null;
         try {
-          composite = await getJSON("/", { days }, controller.signal);
+          composite = await getJSON("/", { days, ...appliedFilters }, controller.signal);
         } catch (e) {
           // not fatal — fall back to granular endpoints
           composite = null;
         }
 
         if (composite && composite.ok !== false && (composite.revenue || composite.users || composite.popularMovies)) {
-          // Use composite
           const rev = composite.revenue || [];
           const users = composite.users || [];
           const movies = composite.popularMovies || [];
           const occ = composite.occupancy || [];
           const bookSummary = composite.bookingsSummary || [];
-          // capture debug if present
           if (composite.debug) setDebugInfo(composite.debug);
 
           setRevenueDaily(toRevenueDaily(rev));
           setDauDaily(toDauDaily(users));
           setTopMovies(toMovies(movies));
           setTheaterOcc(toTheaterOcc(occ));
-          // build summary from bookings summary if present, else attempt other fallbacks
           const revenue7 = (composite.revenue7d ?? 0) || 0;
           const kpis = buildSummary(bookSummary || [], users, revenue7);
           setSummary(kpis);
@@ -488,17 +589,15 @@ export default function AdminAnalyticsDashboard() {
           return;
         }
 
-        // fallback: granular endpoints
         const [revTrends, dau, movies, occ, bookSum, bookSum7] = await Promise.all([
-          getJSON("/revenue/trends", { days }, controller.signal),
-          getJSON("/users/active", { days }, controller.signal),
-          getJSON("/movies/popular", { days, limit: movieLimit }, controller.signal),
-          getJSON("/occupancy", { days }, controller.signal),
-          getJSON("/bookings/summary", { days }, controller.signal),
-          getJSON("/bookings/summary", { days: 7 }, controller.signal),
+          getJSON("/revenue/trends", { days, ...appliedFilters }, controller.signal),
+          getJSON("/users/active", { days, ...appliedFilters }, controller.signal),
+          getJSON("/movies/popular", { days, limit: movieLimit, ...appliedFilters }, controller.signal),
+          getJSON("/occupancy", { days, ...appliedFilters }, controller.signal),
+          getJSON("/bookings/summary", { days, ...appliedFilters }, controller.signal),
+          getJSON("/bookings/summary", { days: 7, ...appliedFilters }, controller.signal),
         ]);
 
-        // If any endpoint returned debug object (rare), capture
         if (revTrends && revTrends.debug) setDebugInfo(revTrends.debug);
 
         const revenueDailyT = toRevenueDaily(revTrends);
@@ -521,7 +620,7 @@ export default function AdminAnalyticsDashboard() {
         setLoading(false);
       }
     },
-    [movieLimit]
+    [movieLimit, appliedFilters]
   );
 
   useEffect(() => {
@@ -706,8 +805,8 @@ export default function AdminAnalyticsDashboard() {
           setRange={setRange}
           onExport={exportCSV}
           onRefresh={() => loadData(range)}
-          onToggleAlerts={() => alert("Alerts panel coming soon")}
-          onToggleFilters={() => alert("Filters panel coming soon")}
+          onToggleAlerts={() => setAlertsOpen(true)}
+          onToggleFilters={() => setFiltersOpen(true)}
           liveStatus={liveStatus}
           debugInfo={debugInfo}
         />
@@ -797,6 +896,21 @@ export default function AdminAnalyticsDashboard() {
           />
         </div>
       </div>
+
+      {/* Alerts modal */}
+      <AlertsModal open={alertsOpen} onClose={() => setAlertsOpen(false)} alerts={[]} />
+
+      {/* Filters modal */}
+      <FiltersModal
+        open={filtersOpen}
+        onClose={() => setFiltersOpen(false)}
+        current={appliedFilters}
+        onApply={(f) => {
+          setAppliedFilters((prev) => ({ ...prev, ...f }));
+          // re-load with new filters immediately
+          loadData(range);
+        }}
+      />
     </div>
   );
 }
