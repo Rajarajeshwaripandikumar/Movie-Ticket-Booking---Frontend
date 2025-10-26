@@ -147,7 +147,7 @@ export default function AdminTheaters() {
       const headers = authHeaders();
       const axiosOpts = { params: { limit: 100, ts: Date.now() }, headers, timeout: 20000, withCredentials: UPLOAD_WITH_CREDENTIALS };
       // If admin logged in, call admin endpoint to get full list; otherwise public list
-      const path = token && role?.toLowerCase() === "admin" ? "/admin/theaters" : "/theaters";
+      const path = token && role?.toLowerCase() === "admin" ? "/theaters/admin/list" : "/theaters";
       const res = await api.get(path, axiosOpts);
       const body = res?.data ?? res;
       let arr = [];
@@ -347,7 +347,7 @@ export default function AdminTheaters() {
           if (api?.defaults?.headers?.post) delete api.defaults.headers.post["Content-Type"];
         } catch (e) {}
 
-        const { data } = await api.post("/admin/theaters", fd, { headers: authHeaders(), withCredentials: UPLOAD_WITH_CREDENTIALS });
+        const { data } = await api.post("/theaters/admin", fd, { headers: authHeaders(), withCredentials: UPLOAD_WITH_CREDENTIALS });
         const created = normalizeTheater(data?.data || data);
         setTheaters((s) => [created, ...s]);
         setMsg("✅ Theater created!");
@@ -364,7 +364,7 @@ export default function AdminTheaters() {
         amenities: amenitiesList,
         imageUrl: preview,
       };
-      const res = await api.post("/admin/theaters", payload, { headers: authHeaders(), withCredentials: UPLOAD_WITH_CREDENTIALS });
+      const res = await api.post("/theaters/admin", payload, { headers: authHeaders(), withCredentials: UPLOAD_WITH_CREDENTIALS });
       const created = normalizeTheater(res.data?.data || res.data);
       setTheaters((s) => [created, ...s]);
       setMsg("✅ Theater created!");
@@ -398,7 +398,7 @@ export default function AdminTheaters() {
           if (api?.defaults?.headers?.post) delete api.defaults.headers.post["Content-Type"];
         } catch (e) {}
 
-        const { data } = await api.put(`/admin/theaters/${selectedId}`, fd, { headers: authHeaders(), withCredentials: UPLOAD_WITH_CREDENTIALS });
+        const { data } = await api.put(`/theaters/admin/${selectedId}`, fd, { headers: authHeaders(), withCredentials: UPLOAD_WITH_CREDENTIALS });
         const updated = normalizeTheater(data?.data || data);
         setTheaters((list) => list.map((t) => (t._id === updated._id ? updated : t)));
         setMsg("✅ Updated successfully");
@@ -415,7 +415,7 @@ export default function AdminTheaters() {
         amenities: amenitiesDirty ? amenitiesList : originalAmenities,
         imageUrl: preview,
       };
-      const res = await api.put(`/admin/theaters/${selectedId}`, payload, { headers: authHeaders(), withCredentials: UPLOAD_WITH_CREDENTIALS });
+      const res = await api.put(`/theaters/admin/${selectedId}`, payload, { headers: authHeaders(), withCredentials: UPLOAD_WITH_CREDENTIALS });
       const updated = normalizeTheater(res.data?.data || res.data);
       setTheaters((list) => list.map((t) => (t._id === updated._id ? updated : t)));
       setMsg("✅ Updated successfully");
@@ -434,7 +434,7 @@ export default function AdminTheaters() {
   async function deleteTheater(id) {
     if (!confirm("Delete this theater?")) return;
     try {
-      await api.delete(`/admin/theaters/${id}`, { headers: authHeaders(), withCredentials: UPLOAD_WITH_CREDENTIALS });
+      await api.delete(`/theaters/admin/${id}`, { headers: authHeaders(), withCredentials: UPLOAD_WITH_CREDENTIALS });
       setTheaters((s) => s.filter((t) => t._id !== id));
       setMsg("🗑️ Deleted");
       setMsgType("info");
