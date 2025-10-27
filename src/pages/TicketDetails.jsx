@@ -105,101 +105,126 @@ export default function TicketDetails() {
 
   // ------------------ Seat formatting helper ------------------
   /**
-   * formatSeats accepts booking.seats in various formats:
+   * Robust seat formatter.
+   * Accepts many input shapes (array or single value).
+   *
+   * - seatsPerRow: number of seats per row in the auditorium (default 10)
+   * - rows: string of row letters for mapping (default A..Z)
+   *
+   * Examples of booking.seats this will handle:
    * - [{row: "A", col: 6}, ...]
    * - ["A-6", "A-7"]
    * - [5,6,7]  (numeric seat ids; converted to row/col using seatsPerRow)
-   * - ["5-10"] (range string, will expand)
-   *
-   * Default seatsPerRow is 10; change if your theater layout differs.
+   * - "5-8" (single-range string)
+   * - "5,6,7" (single comma-list string)
+   * - 6 (single numeric)
    */
   const formatSeats = (
-    seatInput,
+    rawInput,
     { seatsPerRow = 10, rows = "ABCDEFGHIJKLMNOPQRSTUVWXYZ" } = {}
   ) => {
-    if (!seatInput || !Array.isArray(seatInput) || seatInput.length === 0) return "—";
+    // Normalize to array
+    let input = rawInput;
+    if (input == null) return "—";
+    if (!Array.isArray(input)) input = [input];
 
-    const normalizeOne = (s) => {
-      // object like { row: "A", col: 6 }
-      if (s && typeof s === "object" && ("row" in s || "col" in s)) {
-        const r = s.row ?? "";
-        const c = s.col ?? "";
-        return r && c ? `${String(r).toUpperCase()}-${c}` : `${r}${c}`.trim() || null;
+    // helper: expand a single token (string/number/object) to list of atomic items
+    const expandToken = (token) => {
+      if (token == null) return [];
+
+      // object shape { row, col }
+      if (typeof token === "object" && !Array.isArray(token)) {
+        if ("row" in token && "col" in token) {
+          return [`${String(token.row).toUpperCase()}-${token.col}`];
+        }
+        return [];
       }
 
-      // already formatted string like "A-6"
-      if (typeof s === "string") {
-        const trimmed = s.trim();
-        // if string matches pattern Letter-Number (e.g., A-6) -> return as-is (normalized)
-        if (/^[A-Za-z]+[-\s]?\d+$/.test(trimmed)) {
-          const parts = trimmed.split(/[-\s]/).filter(Boolean);
-          return parts.length >= 2 ? `${parts[0].toUpperCase()}-${parts[1]}` : trimmed;
-        }
-
-        // numeric range like "5-10" or "5,6,7"
-        if (/^\d+\s*[-,]\s*\d+/.test(trimmed) || /^[\d\s,]+$/.test(trimmed)) {
-          return trimmed; // handled later for expansion
-        }
-
-        // plain numeric string
-        if (/^\d+$/.test(trimmed)) {
-          return Number(trimmed);
-        }
-
-        // fallback - return original string
-        return trimmed;
+      // number
+      if (typeof token === "number" && Number.isFinite(token)) {
+        return [token];
       }
 
-      // numeric seat id -> return as number (we'll convert below)
-      if (typeof s === "number" && Number.isFinite(s)) return s;
+      // string
+      if (typeof token === "string") {
+        const s = token.trim();
 
-      return null;
+        // already letter-number like "A-6" or "A 6" or "a_6"
+        if (/^[A-Za-z]+\s*[-_\s]\s*\d+$/.test(s) || /^[A-Za-z]+\d+$/.test(s)) {
+          // normalize to "A-6"
+          const parts = s.split(/[-_\s]+/).filter(Boolean);
+          if (parts.length >= 2) return [`${parts[0].toUpperCase()}-${parts[1]}`];
+          // fallback
+          return [s.toUpperCase()];
+        }
+
+        // numeric range "5-10"
+        if (/^\d+\s*-\s*\d+$/.test(s)) {
+          const [a, b] = s.split("-").map((x) => parseInt(x.trim(), 10)).sort((x, y) => x - y);
+          if (Number.isFinite(a) && Number.isFinite(b)) {
+            const out = [];
+            for (let v = a; v <= b; v++) out.push(v);
+            return out;
+          }
+        }
+
+        // comma-separated list "5,6,7" or "A-6,B-3"
+        if (s.includes(",")) {
+          return s.split(",").map((p) => p.trim()).flatMap(expandToken);
+        }
+
+        // single numeric string "6"
+        if (/^\d+$/.test(s)) return [Number(s)];
+
+        // fallback: return as-is
+        return [s];
+      }
+
+      return [];
     };
 
-    // expand ranges and mixed inputs to flat numbers/strings/objects
-    const expanded = [];
-    for (const raw of seatInput) {
-      const n = normalizeOne(raw);
-      if (n == null) continue;
+    // expand all tokens into a flat list
+    const flat = input.flatMap(expandToken).filter((x) => x != null);
 
-      if (typeof n === "string" && /^\d+\s*-\s*\d+$/.test(n)) {
-        // range "5-10"
-        const [a, b] = n.split("-").map((x) => parseInt(x.trim(), 10)).sort((x, y) => x - y);
-        for (let v = a; v <= b; v++) expanded.push(v);
-        continue;
-      }
-
-      if (typeof n === "string" && n.includes(",")) {
-        // comma-separated numbers "5,6,7"
-        n.split(",").forEach((p) => {
-          const val = p.trim();
-          if (/^\d+$/.test(val)) expanded.push(Number(val));
-          else expanded.push(val);
-        });
-        continue;
-      }
-
-      expanded.push(n);
-    }
-
-    // convert numeric ids to row-col format
-    const mapped = expanded.map((item) => {
-      if (typeof item === "string" && /^[A-Za-z]+-\d+$/.test(item)) return item; // already A-6
-      if (typeof item === "string" && /^[A-Za-z]+$/.test(item)) return item; // just a letter (rare)
+    // convert numeric seat ids to row-col format (1-indexed seat IDs across rows)
+    const mapped = flat.map((item) => {
       if (typeof item === "number") {
-        // seat numbering assumed 1-indexed across rows
-        const idx = item - 1; // zero-index
+        const idx = item - 1;
         const rowIndex = Math.floor(idx / seatsPerRow);
         const rowLetter = rows[rowIndex] ?? `R${rowIndex + 1}`;
         const colNumber = (idx % seatsPerRow) + 1;
         return `${rowLetter}-${colNumber}`;
       }
-      // fallback return as string
+
+      // already "A-6"
+      if (typeof item === "string" && /^[A-Za-z]+-\d+$/.test(item)) {
+        // normalize case: A-6
+        const parts = item.split("-");
+        return `${parts[0].toUpperCase()}-${parts[1]}`;
+      }
+
+      // other string (leave as-is)
       return String(item);
     });
 
-    // unique and readable join
-    const unique = [...new Set(mapped)];
+    // Deduplicate and sort reasonably: group by row then col numeric
+    const unique = Array.from(new Set(mapped));
+
+    // sort helper: A-2 < A-10 < B-1
+    unique.sort((a, b) => {
+      const pa = a.split("-");
+      const pb = b.split("-");
+      const ra = pa[0] ?? "";
+      const rb = pb[0] ?? "";
+      if (ra === rb) {
+        const ca = parseInt(pa[1] || "0", 10) || 0;
+        const cb = parseInt(pb[1] || "0", 10) || 0;
+        return ca - cb;
+      }
+      return ra.localeCompare(rb);
+    });
+
+    if (unique.length === 0) return "—";
     return unique.join(", ");
   };
   // ---------------- end seat formatting ------------------
@@ -339,8 +364,7 @@ export default function TicketDetails() {
   const movie = show?.movie?.title ?? "Unknown Movie";
   const screen = show?.screen?.name ?? "—";
 
-  // Use formatSeats helper to support many seat formats.
-  // Adjust seatsPerRow here if your auditorium layout differs.
+  // IMPORTANT: set seatsPerRow to your theater layout. Default is 10.
   const seats = formatSeats(booking.seats, { seatsPerRow: 10 });
 
   const showtimeValue = show.time || show.startTime || booking.createdAt;
