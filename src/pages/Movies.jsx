@@ -266,7 +266,7 @@ export default function Movies() {
       {/* Header + search */}
       <div className="max-w-7xl mx-auto px-6 pt-6 pb-3">
         <header className="mb-3 flex items-center justify-between">
-          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Only in Theatres</h1>
+          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Only in Theaters</h1>
         </header>
 
         <div className="mt-2 max-w-[640px]">
