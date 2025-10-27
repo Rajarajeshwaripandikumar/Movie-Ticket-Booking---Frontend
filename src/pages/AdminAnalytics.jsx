@@ -276,33 +276,72 @@ const fmtDay = (d) => {
     .replace(/ /g, "-");
 };
 
+// tolerant revenue translator: accept multiple shapes returned by backend
 const toRevenueDaily = (arr = []) =>
-  arr.map((d, i) => ({
-    day: fmtDay(d.date?.slice?.(0, 10) || `D${i + 1}`),
-    revenue: Number(d.totalRevenue ?? d.total ?? d.revenue ?? 0),
-    bookings: Number(d.bookings ?? d.totalBookings ?? d.bookings ?? 0),
-  }));
+  (arr || []).map((d, i) => {
+    // possible date keys: date, dayISO, day
+    const iso = d?.date?.slice?.(0, 10) || d?.dayISO || d?.day || null;
+    const revenue = Number(d.totalRevenue ?? d.total ?? d.revenue ?? 0);
+    return { day: fmtDay(iso || `D${i + 1}`), dayISO: iso, revenue, bookings: Number(d.bookings ?? d.totalBookings ?? d.bookings ?? 0) };
+  });
 
 const toDauDaily = (arr = []) =>
-  arr.map((d, i) => ({
-    day: fmtDay(d.date?.slice?.(0, 10) || `D${i + 1}`),
-    users: Number(d.dau ?? d.count ?? d.users ?? 0),
-  }));
+  (arr || []).map((d, i) => {
+    const iso = d?.date?.slice?.(0, 10) || d?.dayISO || d?.day || null;
+    return { day: fmtDay(iso || `D${i + 1}`), dayISO: iso, users: Number(d.dau ?? d.count ?? d.users ?? 0) };
+  });
 
+/* ---------- Robust movie name resolution to avoid "Unknown" ---------- */
 const toMovies = (arr = []) =>
-  arr.map((m = {}) => ({
-    title:
-      m.movieName || m.movieTitle || m.movie?.title || m.movie?.name || m.title || m.name || "Unknown",
-    revenue: Number(m.totalRevenue ?? m.totalRevenue ?? m.revenue ?? 0),
-    bookings: Number(m.totalBookings ?? m.totalBookings ?? m.bookings ?? 0),
-    seatsBooked: Number(m.seatsBooked ?? 0),
-  }));
+  (arr || []).map((m = {}) => {
+    const tryStr = (...vals) => {
+      for (const v of vals) {
+        if (typeof v === "string" && v.trim()) return v.trim();
+      }
+      return null;
+    };
 
+    // Accept many possible keys the backend may return
+    const title =
+      tryStr(
+        m.movieName,
+        m.movie,
+        m.movieTitle,
+        m.movie?.title,
+        m.movie?.name,
+        m.m?.title,
+        m.m?.name,
+        m.title,
+        m.name,
+        m.movieDoc?.title,
+        m.movieDoc?.name,
+        m.movieName
+      ) || tryStr(m.movieId, m._id) || "Unknown";
+
+    return {
+      title,
+      revenue: Number(m.totalRevenue ?? m.totalRevenue ?? m.revenue ?? m.total ?? 0),
+      bookings: Number(m.totalBookings ?? m.bookings ?? 0),
+      seatsBooked: Number(m.seatsBooked ?? 0),
+    };
+  });
+
+/* Normalize occupancy rows */
 const toTheaterOcc = (arr = []) =>
-  arr.map((t = {}) => ({ name: t.theaterName ?? t.name ?? "Unknown", occupancy: Math.round(Number(t.occupancyRate ?? t.avgOccupancy ?? 0) * 100) }));
+  (arr || []).map((t = {}) => {
+    // occupancy may be 0-1 occupancyRate / avgOccupancy OR already 0-100 occupancy
+    const raw = t.occupancy ?? t.occupancyRate ?? t.avgOccupancy ?? t.occupancyPercent ?? 0;
+    // if value appears like fraction (<=1) treat as ratio
+    let occPct = Number(raw ?? 0);
+    if (occPct <= 1) occPct = occPct * 100;
+    // clamp + round
+    occPct = Math.round(Math.max(0, Math.min(100, occPct)));
+    const name = t.theaterName ?? t.name ?? t.theater ?? t.theater_name ?? "Unknown";
+    return { name, occupancy: occPct };
+  });
 
 function buildSummary(summaryData = [], dauData = [], revenue7 = 0) {
-  const totals = summaryData.reduce(
+  const totals = (summaryData || []).reduce(
     (acc, d) => {
       acc.revenue += Number(d.revenue ?? 0);
       acc.orders += Number(d.confirmed ?? 0);
@@ -311,7 +350,7 @@ function buildSummary(summaryData = [], dauData = [], revenue7 = 0) {
     { revenue: 0, orders: 0 }
   );
   const aov = totals.orders ? Math.round(totals.revenue / totals.orders) : 0;
-  const avgDau = dauData.length ? Math.round(dauData.reduce((s, d) => s + Number(d.dau ?? 0), 0) / dauData.length) : 0;
+  const avgDau = dauData && dauData.length ? Math.round((dauData.reduce((s, d) => s + Number(d.dau ?? d.count ?? 0), 0)) / dauData.length) : 0;
   return { revenue30d: totals.revenue, orders: totals.orders, aov, revenue7d: revenue7, dau: avgDau };
 }
 
@@ -391,6 +430,7 @@ export default function AdminAnalyticsDashboard() {
     sections.push(makeCSV("Revenue (Daily)", ["day", "revenue", "bookings"], revenueDaily));
     sections.push(makeCSV("Active Users (Daily)", ["day", "users"], dauDaily));
     sections.push(makeCSV("Theater Occupancy", ["name", "occupancy"], theaterOcc));
+    // CSV rows for movies use normalized keys (title/bookings/revenue)
     sections.push(makeCSV("Top Movies", ["title", "bookings", "revenue", "seatsBooked"], topMovies));
 
     const blob = new Blob(sections, { type: "text/csv;charset=utf-8;" });
@@ -476,9 +516,32 @@ export default function AdminAnalyticsDashboard() {
 
         {/* Tables */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <SimpleTable title="Theater Occupancy (Avg)" rows={theaterOcc} columns={[{ key: "name", label: "Theater", render: (v) => (<div className="flex items-center gap-2"><Building2 className="h-4 w-4" aria-hidden="true" /><span>{v}</span></div>) },{ key: "occupancy", label: "Occupancy", render: (v) => `${formatInt(v)}%` }]} />
+          <SimpleTable
+            title="Theater Occupancy (Avg)"
+            rows={theaterOcc}
+            columns={[
+              {
+                key: "name",
+                label: "Theater",
+                render: (v) => (<div className="flex items-center gap-2"><Building2 className="h-4 w-4" aria-hidden="true" /><span>{v}</span></div>),
+              },
+              { key: "occupancy", label: "Occupancy", render: (v) => `${formatInt(v)}%` },
+            ]}
+          />
 
-          <SimpleTable title="Popular Movies" rows={topMovies} columns={[{ key: "title", label: "Movie", render: (v) => (<div className="flex items-center gap-2"><Film className="h-4 w-4" aria-hidden="true" /><span>{v}</span></div>) },{ key: "bookings", label: "Bookings", render: (v) => formatInt(v) },{ key: "revenue", label: "Revenue", render: (v) => formatCurrency(v) }]} />
+          <SimpleTable
+            title="Popular Movies"
+            rows={topMovies}
+            columns={[
+              {
+                key: "title",
+                label: "Movie",
+                render: (v) => (<div className="flex items-center gap-2"><Film className="h-4 w-4" aria-hidden="true" /><span>{v}</span></div>),
+              },
+              { key: "bookings", label: "Bookings", render: (v) => formatInt(v) },
+              { key: "revenue", label: "Revenue", render: (v) => formatCurrency(v) },
+            ]}
+          />
         </div>
       </div>
     </div>
