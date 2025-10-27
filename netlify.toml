@@ -4,5 +4,10 @@
 
 [build.environment]
   NODE_VERSION = "20"
-  # ensure devDependencies (including vite) are installed
+  # Ensure devDependencies (like Vite) are installed
   NPM_FLAGS = "--include=dev"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
