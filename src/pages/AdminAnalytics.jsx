@@ -1,4 +1,5 @@
 // frontend/src/pages/AdminAnalytics.jsx — Walmart Style (Blue, Rounded, Clean)
+// Patched: robust URL building, debug logging for requests, and clarified auth handling
 import React, { useState, useEffect, useRef } from "react";
 import {
   CalendarRange,
@@ -49,10 +50,10 @@ function resolveApiBase() {
 const API_BASE = resolveApiBase();
 
 /* ----------------------------- Walmart tokens ----------------------------- */
-const BLUE = "#0071DC";      // Walmart Blue
+const BLUE = "#0071DC"; // Walmart Blue
 const BLUE_DARK = "#0654BA"; // Hover/active
-const INK = "#0F172A";       // Slate-900
-const SOFT = "#94A3B8";      // Slate-400 for ticks/grid
+const INK = "#0F172A"; // Slate-900
+const SOFT = "#94A3B8"; // Slate-400 for ticks/grid
 
 /* --------------------------- Walmart primitives --------------------------- */
 const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
@@ -127,14 +128,9 @@ const formatInt = (n) =>
   Number.isFinite(+n) ? Math.round(+n).toLocaleString("en-IN") : "0";
 
 function Stat({ icon: Icon, label, value, delta }) {
-  const DeltaIcon =
-    delta == null ? null : delta >= 0 ? TrendingUp : TrendingDown;
+  const DeltaIcon = delta == null ? null : delta >= 0 ? TrendingUp : TrendingDown;
   const deltaColor =
-    delta == null
-      ? ""
-      : delta >= 0
-      ? "text-emerald-600 bg-emerald-50"
-      : "text-rose-600 bg-rose-50";
+    delta == null ? "" : delta >= 0 ? "text-emerald-600 bg-emerald-50" : "text-rose-600 bg-rose-50";
   return (
     <Card className="p-4">
       <div className="flex items-center justify-between">
@@ -148,9 +144,7 @@ function Stat({ icon: Icon, label, value, delta }) {
           </div>
         </div>
         {DeltaIcon && (
-          <span
-            className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full ${deltaColor}`}
-          >
+          <span className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full ${deltaColor}`}>
             <DeltaIcon className="h-3.5 w-3.5" />
             <span className="font-semibold">{Math.abs(delta)}%</span>
           </span>
@@ -169,27 +163,15 @@ const HeaderBar = ({
   onToggleFilters,
 }) => (
   <div className="space-y-3">
-    <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">
-      Admin Analytics
-    </h1>
+    <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">Admin Analytics</h1>
     <Card className="p-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="text-sm text-slate-600">
-          Revenue, usage, and theater performance at a glance.
-        </div>
+        <div className="text-sm text-slate-600">Revenue, usage, and theater performance at a glance.</div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
-          <Pill onClick={onToggleAlerts}>
-            <Bell className="h-4 w-4" /> Alerts
-          </Pill>
-          <Pill onClick={onToggleFilters}>
-            <Filter className="h-4 w-4" /> Filter
-          </Pill>
-          <Primary onClick={onExport}>
-            <Download className="h-4 w-4" /> Export CSV
-          </Primary>
-          <Pill onClick={onRefresh}>
-            <RefreshCcw className="h-4 w-4" /> Refresh
-          </Pill>
+          <Pill onClick={onToggleAlerts}><Bell className="h-4 w-4" /> Alerts</Pill>
+          <Pill onClick={onToggleFilters}><Filter className="h-4 w-4" /> Filter</Pill>
+          <Primary onClick={onExport}><Download className="h-4 w-4" /> Export CSV</Primary>
+          <Pill onClick={onRefresh}><RefreshCcw className="h-4 w-4" /> Refresh</Pill>
           <Segments value={range} onChange={setRange} />
         </div>
       </div>
@@ -221,9 +203,7 @@ function SimpleTable({ title, rows, columns }) {
           <thead>
             <tr className="text-left text-slate-600">
               {columns.map((c) => (
-                <th key={c.key} className="py-2 font-semibold">
-                  {c.label}
-                </th>
+                <th key={c.key} className="py-2 font-semibold">{c.label}</th>
               ))}
             </tr>
           </thead>
@@ -231,9 +211,7 @@ function SimpleTable({ title, rows, columns }) {
             {rows.map((r, i) => (
               <tr key={i} className="border-t border-slate-200">
                 {columns.map((c) => (
-                  <td key={c.key} className="py-2">
-                    {c.render ? c.render(r[c.key], r) : r[c.key]}
-                  </td>
+                  <td key={c.key} className="py-2">{c.render ? c.render(r[c.key], r) : r[c.key]}</td>
                 ))}
               </tr>
             ))}
@@ -255,26 +233,36 @@ const EmptyMini = ({ label }) => (
 
 /* ----------------------------- API helpers ---------------------------- */
 const authHeaders = () => {
-  const token =
-    localStorage.getItem("token") || localStorage.getItem("jwt") || "";
+  const token = localStorage.getItem("token") || localStorage.getItem("jwt") || "";
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
 async function getJSON(path, params, signal) {
-  const url = new URL(API_BASE + path);
-  if (params) Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
-  const res = await fetch(url, {
-    headers: { "Content-Type": "application/json", ...authHeaders() },
+  // ensure path starts with a slash
+  const rel = path.startsWith("/") ? path : `/${path}`;
+  const base = API_BASE.replace(/\/+$/, "") + "/";
+  const url = new URL(rel, base);
+
+  if (params) {
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
+    });
+  }
+
+  const headers = { "Content-Type": "application/json", ...authHeaders() };
+  console.debug("[analytics] fetch ->", url.toString(), { headers });
+
+  const res = await fetch(url.toString(), {
+    headers,
     signal,
     credentials: "include",
   });
+
   if (!res.ok) {
     let detail = "";
-    try {
-      detail = (await res.json())?.message || "";
-    } catch {}
-    const base = `HTTP ${res.status} ${res.statusText}`;
-    throw new Error(detail ? `${base} — ${detail}` : base);
+    try { detail = (await res.json())?.message || ""; } catch (e) {}
+    const baseMsg = `HTTP ${res.status} ${res.statusText}`;
+    throw new Error(detail ? `${baseMsg} — ${detail}` : baseMsg);
   }
   return res.json();
 }
@@ -284,40 +272,34 @@ const fmtDay = (d) => {
   const dt = new Date(d);
   if (isNaN(dt)) return String(d || "");
   return dt
-    .toLocaleDateString("en-GB", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-    })
+    .toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })
     .replace(/ /g, "-");
 };
 
 const toRevenueDaily = (arr = []) =>
   arr.map((d, i) => ({
     day: fmtDay(d.date?.slice?.(0, 10) || `D${i + 1}`),
-    revenue: Number(d.totalRevenue ?? 0),
-    bookings: Number(d.bookings ?? 0),
+    revenue: Number(d.totalRevenue ?? d.total ?? d.revenue ?? 0),
+    bookings: Number(d.bookings ?? d.totalBookings ?? d.bookings ?? 0),
   }));
 
 const toDauDaily = (arr = []) =>
   arr.map((d, i) => ({
     day: fmtDay(d.date?.slice?.(0, 10) || `D${i + 1}`),
-    users: Number(d.dau ?? 0),
+    users: Number(d.dau ?? d.count ?? d.users ?? 0),
   }));
 
 const toMovies = (arr = []) =>
-  arr.map((m) => ({
-    title: m.movieName ?? "Unknown",
-    revenue: Number(m.totalRevenue ?? 0),
-    bookings: Number(m.totalBookings ?? 0),
+  arr.map((m = {}) => ({
+    title:
+      m.movieName || m.movieTitle || m.movie?.title || m.movie?.name || m.title || m.name || "Unknown",
+    revenue: Number(m.totalRevenue ?? m.totalRevenue ?? m.revenue ?? 0),
+    bookings: Number(m.totalBookings ?? m.totalBookings ?? m.bookings ?? 0),
     seatsBooked: Number(m.seatsBooked ?? 0),
   }));
 
 const toTheaterOcc = (arr = []) =>
-  arr.map((t) => ({
-    name: t.theaterName ?? "Unknown",
-    occupancy: Math.round(Number(t.occupancyRate ?? 0) * 100),
-  }));
+  arr.map((t = {}) => ({ name: t.theaterName ?? t.name ?? "Unknown", occupancy: Math.round(Number(t.occupancyRate ?? t.avgOccupancy ?? 0) * 100) }));
 
 function buildSummary(summaryData = [], dauData = [], revenue7 = 0) {
   const totals = summaryData.reduce(
@@ -328,23 +310,9 @@ function buildSummary(summaryData = [], dauData = [], revenue7 = 0) {
     },
     { revenue: 0, orders: 0 }
   );
-  const aov = totals.orders
-    ? Math.round(totals.revenue / totals.orders)
-    : 0;
-  const avgDau = dauData.length
-    ? Math.round(
-        dauData.reduce((s, d) => s + (Number(d.dau ?? 0)), 0) /
-          dauData.length
-      )
-    : 0;
-
-  return {
-    revenue30d: totals.revenue,
-    orders: totals.orders,
-    aov,
-    revenue7d: revenue7,
-    dau: avgDau,
-  };
+  const aov = totals.orders ? Math.round(totals.revenue / totals.orders) : 0;
+  const avgDau = dauData.length ? Math.round(dauData.reduce((s, d) => s + Number(d.dau ?? 0), 0) / dauData.length) : 0;
+  return { revenue30d: totals.revenue, orders: totals.orders, aov, revenue7d: revenue7, dau: avgDau };
 }
 
 /* -------------------------------- View -------------------------------- */
@@ -353,13 +321,7 @@ export default function AdminAnalyticsDashboard() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const [summary, setSummary] = useState({
-    revenue30d: 0,
-    orders: 0,
-    aov: 0,
-    revenue7d: 0,
-    dau: 0,
-  });
+  const [summary, setSummary] = useState({ revenue30d: 0, orders: 0, aov: 0, revenue7d: 0, dau: 0 });
   const [revenueDaily, setRevenueDaily] = useState([]);
   const [dauDaily, setDauDaily] = useState([]);
   const [topMovies, setTopMovies] = useState([]);
@@ -387,15 +349,12 @@ export default function AdminAnalyticsDashboard() {
         getJSON("/bookings/summary", { days: 7 }, controller.signal),
       ]);
 
-      const revenueDailyT = toRevenueDaily(revTrends);
-      const dauDailyT = toDauDaily(dau);
-      const moviesT = toMovies(movies);
-      const occT = toTheaterOcc(occ);
-      const revenue7 = (bookSum7 || []).reduce(
-        (s, d) => s + Number(d.revenue ?? 0),
-        0
-      );
-      const kpis = buildSummary(bookSum, dau, revenue7);
+      const revenueDailyT = toRevenueDaily(revTrends || []);
+      const dauDailyT = toDauDaily(dau || []);
+      const moviesT = toMovies(movies || []);
+      const occT = toTheaterOcc(occ || []);
+      const revenue7 = (bookSum7 || []).reduce((s, d) => s + Number(d.revenue ?? 0), 0);
+      const kpis = buildSummary(bookSum || [], dau || [], revenue7);
 
       setRevenueDaily(revenueDailyT);
       setDauDaily(dauDailyT);
@@ -424,9 +383,7 @@ export default function AdminAnalyticsDashboard() {
     };
     const makeCSV = (title, headers, rows) => {
       let csv = `${title}\n${headers.join(",")}\n`;
-      csv += rows
-        .map((r) => headers.map((h) => csvEscape(r[h] ?? "")).join(","))
-        .join("\n");
+      csv += rows.map((r) => headers.map((h) => csvEscape(r[h] ?? "")).join(",")).join("\n");
       csv += "\n\n";
       return csv;
     };
@@ -439,10 +396,7 @@ export default function AdminAnalyticsDashboard() {
     const blob = new Blob(sections, { type: "text/csv;charset=utf-8;" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.setAttribute(
-      "download",
-      `analytics_${range}_${new Date().toISOString().slice(0, 10)}.csv`
-    );
+    link.setAttribute("download", `analytics_${range}_${new Date().toISOString().slice(0, 10)}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -461,59 +415,27 @@ export default function AdminAnalyticsDashboard() {
         />
 
         {error && (
-          <Card className="p-3 bg-rose-50 border-rose-200 text-rose-700 font-semibold">
-            {error}
-          </Card>
+          <Card className="p-3 bg-rose-50 border-rose-200 text-rose-700 font-semibold">{error}</Card>
         )}
 
         {/* KPIs */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-          <Stat
-            icon={CircleDollarSign}
-            label={`Revenue (${range})`}
-            value={formatCurrency(summary.revenue30d)}
-            delta={0}
-          />
-          <Stat
-            icon={ShoppingBag}
-            label="Orders"
-            value={formatInt(summary.orders)}
-            delta={0}
-          />
-          <Stat
-            icon={Gauge}
-            label="Avg. Order Value"
-            value={formatCurrency(summary.aov)}
-            delta={0}
-          />
-          <Stat
-            icon={BarChart3}
-            label="Revenue (7d)"
-            value={formatCurrency(summary.revenue7d)}
-          />
+          <Stat icon={CircleDollarSign} label={`Revenue (${range})`} value={formatCurrency(summary.revenue30d)} delta={0} />
+          <Stat icon={ShoppingBag} label="Orders" value={formatInt(summary.orders)} delta={0} />
+          <Stat icon={Gauge} label="Avg. Order Value" value={formatCurrency(summary.aov)} delta={0} />
+          <Stat icon={BarChart3} label="Revenue (7d)" value={formatCurrency(summary.revenue7d)} />
           <Stat icon={Users} label="Avg DAU" value={formatInt(summary.dau)} />
         </div>
 
         {/* Charts */}
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
           <div className="lg:col-span-3">
-            <ChartCard
-              title="Daily Revenue"
-              subtitle="Aggregate revenue per day"
-              right={
-                <Pill onClick={() => loadData(range)}>
-                  <RefreshCcw className="h-3.5 w-3.5" /> Refresh
-                </Pill>
-              }
-            >
+            <ChartCard title="Daily Revenue" subtitle="Aggregate revenue per day" right={<Pill onClick={() => loadData(range)}><RefreshCcw className="h-3.5 w-3.5" /> Refresh</Pill>}>
               {loading ? (
                 <EmptyMini label="Loading revenue..." />
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart
-                    data={revenueDaily}
-                    margin={{ top: 10, right: 20, left: 0, bottom: 0 }}
-                  >
+                  <AreaChart data={revenueDaily} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
                     <defs>
                       <linearGradient id="revFill" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="0%" stopColor={BLUE} stopOpacity={0.18} />
@@ -522,24 +444,9 @@ export default function AdminAnalyticsDashboard() {
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke={SOFT} opacity={0.45} />
                     <XAxis dataKey="day" tick={{ fontSize: 12, fill: SOFT }} stroke={SOFT} />
-                    <YAxis
-                      tick={{ fontSize: 12, fill: SOFT }}
-                      domain={["dataMin", "auto"]}
-                      stroke={SOFT}
-                    />
-                    <Tooltip
-                      formatter={(v, k) =>
-                        k === "revenue" ? formatCurrency(v) : formatInt(v)
-                      }
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="revenue"
-                      stroke={BLUE}
-                      fill="url(#revFill)"
-                      strokeWidth={2}
-                      activeDot={{ r: 4 }}
-                    />
+                    <YAxis tick={{ fontSize: 12, fill: SOFT }} domain={["dataMin", "auto"]} stroke={SOFT} />
+                    <Tooltip formatter={(v, k) => (k === "revenue" ? formatCurrency(v) : formatInt(v))} />
+                    <Area type="monotone" dataKey="revenue" stroke={BLUE} fill="url(#revFill)" strokeWidth={2} activeDot={{ r: 4 }} />
                   </AreaChart>
                 </ResponsiveContainer>
               )}
@@ -552,27 +459,12 @@ export default function AdminAnalyticsDashboard() {
                 <EmptyMini label="Loading users..." />
               ) : dauDaily && dauDaily.length ? (
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart
-                    data={dauDaily}
-                    margin={{ top: 10, right: 20, left: 0, bottom: 0 }}
-                  >
+                  <LineChart data={dauDaily} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke={SOFT} opacity={0.45} />
                     <XAxis dataKey="day" tick={{ fontSize: 12, fill: SOFT }} stroke={SOFT} />
-                    <YAxis
-                      allowDecimals={false}
-                      tick={{ fontSize: 12, fill: SOFT }}
-                      domain={[0, "auto"]}
-                      stroke={SOFT}
-                    />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: SOFT }} domain={[0, "auto"]} stroke={SOFT} />
                     <Tooltip formatter={(v) => formatInt(v)} />
-                    <Line
-                      type="monotone"
-                      dataKey="users"
-                      stroke={BLUE}
-                      strokeWidth={2}
-                      dot={false}
-                      activeDot={{ r: 4 }}
-                    />
+                    <Line type="monotone" dataKey="users" stroke={BLUE} strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
                   </LineChart>
                 </ResponsiveContainer>
               ) : (
@@ -584,46 +476,9 @@ export default function AdminAnalyticsDashboard() {
 
         {/* Tables */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <SimpleTable
-            title="Theater Occupancy (Avg)"
-            rows={theaterOcc}
-            columns={[
-              {
-                key: "name",
-                label: "Theater",
-                render: (v) => (
-                  <div className="flex items-center gap-2">
-                    <Building2 className="h-4 w-4" aria-hidden="true" />
-                    <span>{v}</span>
-                  </div>
-                ),
-              },
-              {
-                key: "occupancy",
-                label: "Occupancy",
-                render: (v) => `${formatInt(v)}%`,
-              },
-            ]}
-          />
+          <SimpleTable title="Theater Occupancy (Avg)" rows={theaterOcc} columns={[{ key: "name", label: "Theater", render: (v) => (<div className="flex items-center gap-2"><Building2 className="h-4 w-4" aria-hidden="true" /><span>{v}</span></div>) },{ key: "occupancy", label: "Occupancy", render: (v) => `${formatInt(v)}%` }]} />
 
-          <SimpleTable
-            title="Popular Movies"
-            rows={topMovies}
-            columns={[
-              {
-                key: "title",
-                label: "Movie",
-                render: (v) => (
-                  <div className="flex items-center gap-2">
-                    <Film className="h-4 w-4" aria-hidden="true" />
-                    <span>{v}</span>
-                  </div>
-                ),
-              },
-              { key: "bookings", label: "Bookings", render: (v) => formatInt(v) },
-              { key: "revenue", label: "Revenue", render: (v) => formatCurrency(v) },
-            ]}
-          />
+          <SimpleTable title="Popular Movies" rows={topMovies} columns={[{ key: "title", label: "Movie", render: (v) => (<div className="flex items-center gap-2"><Film className="h-4 w-4" aria-hidden="true" /><span>{v}</span></div>) },{ key: "bookings", label: "Bookings", render: (v) => formatInt(v) },{ key: "revenue", label: "Revenue", render: (v) => formatCurrency(v) }]} />
         </div>
       </div>
     </div>
