@@ -132,10 +132,23 @@ export default function TicketDetails() {
     const expandToken = (token) => {
       if (token == null) return [];
 
-      // object shape { row, col }
+      // object shape { row, col, label }
       if (typeof token === "object" && !Array.isArray(token)) {
+        // If backend provided a human-friendly label, use it first
+        if (token.label) return [String(token.label).toUpperCase()];
+
+        // If both row & col present, convert numeric row -> letter, else use raw row value uppercased
         if ("row" in token && "col" in token) {
-          return [`${String(token.row).toUpperCase()}-${token.col}`];
+          const rawRow = token.row;
+          // if row is numeric (1-indexed) convert to letter using rows string
+          const rn = Number(rawRow);
+          let rowLetter;
+          if (Number.isFinite(rn) && rn >= 1) {
+            rowLetter = rows[rn - 1] ?? `R${rn}`; // rows is "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+          } else {
+            rowLetter = String(rawRow ?? "").toUpperCase();
+          }
+          return [`${rowLetter}-${token.col}`];
         }
         return [];
       }
@@ -400,6 +413,50 @@ export default function TicketDetails() {
   const isCancelled = booking.status === "CANCELLED";
   const verifyUrl = `${APP_BASE}/tickets/verify/${booking._id}`;
 
+  // prefer backend-provided labels when rendering seats, fallback to formatted string
+  const renderSeatsInline = () => {
+    if (Array.isArray(booking.seats) && booking.seats.length > 0) {
+      // map each seat to label (preferred) or fallback to row-col conversion
+      const mapped = booking.seats.map((s) => {
+        if (!s) return null;
+        if (s.label) return String(s.label);
+        // if row is numeric convert -> letter
+        const rn = Number(s.row);
+        if (Number.isFinite(rn) && rn >= 1) {
+          const rows = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+          const letter = rows[rn - 1] ?? `R${rn}`;
+          return `${letter}-${s.col ?? ""}`.replace(/-$/, "");
+        }
+        // if row is letter-like or other string
+        if (s.row != null || s.col != null) {
+          return `${String(s.row ?? "").toUpperCase()}${s.col ? `-${s.col}` : ""}`.replace(/^-|-$|^$/, "");
+        }
+        return null;
+      }).filter(Boolean);
+
+      if (mapped.length > 0) {
+        // dedupe & sort using same logic as formatSeats
+        const unique = Array.from(new Set(mapped));
+        unique.sort((a, b) => {
+          const pa = a.split("-");
+          const pb = b.split("-");
+          const ra = pa[0] ?? "";
+          const rb = pb[0] ?? "";
+          if (ra === rb) {
+            const ca = parseInt(pa[1] || "0", 10) || 0;
+            const cb = parseInt(pb[1] || "0", 10) || 0;
+            return ca - cb;
+          }
+          return ra.localeCompare(rb);
+        });
+        return unique.join(", ");
+      }
+    }
+
+    // final fallback to formatted seats (handles strings/numbers/ranges)
+    return seats;
+  };
+
   return (
     <main className="min-h-screen bg-slate-50 py-10 px-4">
       <div className="max-w-4xl mx-auto">
@@ -433,7 +490,7 @@ export default function TicketDetails() {
                   <h2 className="text-xl font-extrabold text-slate-900 mb-2">{movie}</h2>
                   <div className="text-sm text-slate-700 space-y-2">
                     <div><span className="font-semibold">Screen: </span>{screen}</div>
-                    <div><span className="font-semibold">Seats: </span>{seats}</div>
+                    <div><span className="font-semibold">Seats: </span>{renderSeatsInline()}</div>
                     <div><span className="font-semibold">Showtime: </span>{formattedTime}</div>
                     <div><span className="font-semibold">Amount Paid: </span>₹{booking.amount ?? "—"}</div>
                     <div className="mt-2">
