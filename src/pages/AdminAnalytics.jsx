@@ -1,11 +1,7 @@
 // frontend/src/pages/AdminAnalytics.jsx — Walmart Style (Blue, Rounded, Clean)
-// FULL FILE — patched to include Alerts drawer and Filters panel (client-side filters).
-// - Alerts drawer fetches /api/notifications from backend root (AUTH header used if present).
-// - Filters drawer allows simple theater/text filtering applied client-side to tables.
-// - Uses robust API_BASE resolution and tolerant transforms from prior patch.
-import React, { useState, useEffect, useRef, useMemo } from "react";
+// Full analytics page with Alerts slide-over and Filters panel
+import React, { useState, useEffect, useRef } from "react";
 import {
-  CalendarRange,
   TrendingUp,
   TrendingDown,
   CircleDollarSign,
@@ -34,102 +30,51 @@ import {
   Line,
 } from "recharts";
 
-/* =============================================================================
-   Admin Analytics wired to YOUR Express routes (Walmart UI)
-   Routes mounted at /api/analytics:
-     - GET /revenue/trends?days=N
-     - GET /users/active?days=N
-     - GET /movies/popular?days=N&limit=10
-     - GET /occupancy?days=N
-     - GET /bookings/summary?days=N
-   ========================================================================== */
-
-/* ---------------------- API base + fetch helpers (robust) --------------------- */
-// VITE_API_BASE should point to backend root (e.g. https://movie-ticket-booking-backend-o1m2.onrender.com)
+/* ======================== Config / API helpers ======================== */
 function resolveApiBase() {
+  // Analytics-specific base (keeps backward compatibility)
   const base =
     import.meta.env.VITE_API_BASE ||
     import.meta.env.VITE_API_BASE_URL ||
     "http://localhost:8080";
-  return base.replace(/\/+$/, "");
+  // analytics endpoints live at /api/analytics
+  const analyticsBase = `${base.replace(/\/+$/, "")}/api/analytics`;
+  return analyticsBase;
 }
-const API_ROOT = resolveApiBase(); // e.g. https://backend
-const ANALYTICS_PREFIX = "/api/analytics"; // analytics endpoints live here
+const API_BASE = resolveApiBase();
+// Root API (for notifications, theaters, movies etc)
+const API_ROOT = API_BASE.replace(/\/api\/analytics$/, "").replace(/\/+$/, "");
 
 const authHeaders = () => {
-  const token = localStorage.getItem("token") || localStorage.getItem("jwt") || "";
+  const token =
+    localStorage.getItem("token") || localStorage.getItem("jwt") || "";
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
-async function getJSON(path, params, signal) {
-  // accept either "revenue/trends" or "/revenue/trends" or "/api/analytics/revenue/trends"
-  const rel = path.startsWith("/") ? path : `/${path}`;
-  const fullRel = rel.startsWith("/api/") ? rel : `${ANALYTICS_PREFIX}${rel}`;
-  const base = API_ROOT.replace(/\/+$/, "") + "/";
-  const url = new URL(fullRel.replace(/^\//, ""), base);
-
-  if (params) {
-    Object.entries(params).forEach(([k, v]) => {
-      if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
-    });
-  }
-
-  const headers = { "Content-Type": "application/json", ...authHeaders() };
-  console.debug("[analytics] fetch ->", url.toString(), { headers });
-
-  const res = await fetch(url.toString(), {
-    headers,
-    signal,
-    credentials: "include",
+async function getJSON(path, params = {}, options = {}) {
+  // options: { root: boolean, signal: AbortSignal }
+  const base = options.root ? API_ROOT : API_BASE;
+  const rel = path.startsWith("/") ? path.slice(1) : path;
+  const url = new URL(rel, base + "/");
+  Object.entries(params || {}).forEach(([k, v]) => {
+    if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
   });
-
+  const headers = { "Content-Type": "application/json", ...authHeaders() };
+  const res = await fetch(url.toString(), { headers, signal: options.signal, credentials: "include" });
   if (!res.ok) {
     let detail = "";
-    try {
-      detail = (await res.json())?.message || "";
-    } catch (e) {}
+    try { detail = (await res.json())?.message || ""; } catch {}
     const baseMsg = `HTTP ${res.status} ${res.statusText}`;
     throw new Error(detail ? `${baseMsg} — ${detail}` : baseMsg);
   }
   return res.json();
 }
 
-// helper to fetch non-analytics endpoints (notifications, theaters, etc.)
-async function fetchRootJSON(path, params, signal) {
-  const rel = path.startsWith("/") ? path : `/${path}`;
-  const base = API_ROOT.replace(/\/+$/, "") + "/";
-  const url = new URL(rel.replace(/^\//, ""), base);
+/* ======================== UI primitives & helpers ======================== */
+const BLUE = "#0071DC";
+const BLUE_DARK = "#0654BA";
+const SOFT = "#94A3B8";
 
-  if (params) {
-    Object.entries(params).forEach(([k, v]) => {
-      if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
-    });
-  }
-
-  const headers = { "Content-Type": "application/json", ...authHeaders() };
-  const res = await fetch(url.toString(), {
-    headers,
-    signal,
-    credentials: "include",
-  });
-  if (!res.ok) {
-    let detail = "";
-    try {
-      detail = (await res.json())?.message || "";
-    } catch (e) {}
-    const baseMsg = `HTTP ${res.status} ${res.statusText}`;
-    throw new Error(detail ? `${baseMsg} — ${detail}` : baseMsg);
-  }
-  return res.json();
-}
-
-/* ----------------------------- Walmart tokens ----------------------------- */
-const BLUE = "#0071DC"; // Walmart Blue
-const BLUE_DARK = "#0654BA"; // Hover/active
-const INK = "#0F172A"; // Slate-900
-const SOFT = "#94A3B8"; // Slate-400 for ticks/grid
-
-/* --------------------------- UI primitives & helpers --------------------------- */
 const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
   <Tag className={`bg-white border border-slate-200 rounded-2xl shadow-sm ${className}`} {...rest}>
     {children}
@@ -137,19 +82,13 @@ const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
 );
 
 const Pill = ({ children, className = "", ...props }) => (
-  <button
-    {...props}
-    className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[${BLUE}] ${className}`}
-  >
+  <button {...props} className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[${BLUE}] ${className}`}>
     {children}
   </button>
 );
 
 const Primary = ({ children, className = "", ...props }) => (
-  <button
-    {...props}
-    className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold bg-[${BLUE}] text-white hover:bg-[${BLUE_DARK}] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[${BLUE}] ${className}`}
-  >
+  <button {...props} className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold bg-[${BLUE}] text-white hover:bg-[${BLUE_DARK}] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[${BLUE}] ${className}`}>
     {children}
   </button>
 );
@@ -168,9 +107,7 @@ function Segments({ value, onChange }) {
         <button
           key={r.id}
           onClick={() => onChange(r.id)}
-          className={`px-3 py-1.5 rounded-full text-sm transition ${
-            value === r.id ? "bg-white text-slate-900 shadow-sm border border-slate-200" : "text-slate-600 hover:text-slate-800"
-          }`}
+          className={`px-3 py-1.5 rounded-full text-sm transition ${value === r.id ? "bg-white text-slate-900 shadow-sm border border-slate-200" : "text-slate-600 hover:text-slate-800"}`}
           aria-pressed={value === r.id}
         >
           {r.label}
@@ -215,31 +152,6 @@ function Stat({ icon: Icon, label, value, delta }) {
     </Card>
   );
 }
-
-const HeaderBar = ({
-  range,
-  setRange,
-  onRefresh,
-  onExport,
-  onToggleAlerts,
-  onToggleFilters,
-}) => (
-  <div className="space-y-3">
-    <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">Admin Analytics</h1>
-    <Card className="p-4">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="text-sm text-slate-600">Revenue, usage, and theater performance at a glance.</div>
-        <div className="flex items-center gap-2 flex-wrap justify-end">
-          <Pill onClick={onToggleAlerts}><Bell className="h-4 w-4" /> Alerts</Pill>
-          <Pill onClick={onToggleFilters}><Filter className="h-4 w-4" /> Filter</Pill>
-          <Primary onClick={onExport}><Download className="h-4 w-4" /> Export CSV</Primary>
-          <Pill onClick={onRefresh}><RefreshCcw className="h-4 w-4" /> Refresh</Pill>
-          <Segments value={range} onChange={setRange} />
-        </div>
-      </div>
-    </Card>
-  </div>
-);
 
 function ChartCard({ title, subtitle, children, right }) {
   return (
@@ -293,7 +205,7 @@ const EmptyMini = ({ label }) => (
   </div>
 );
 
-/* ---------------------------- data transforms ---------------------------- */
+/* ======================== Data transforms (tolerant) ======================== */
 const fmtDay = (d) => {
   const dt = new Date(d);
   if (isNaN(dt)) return String(d || "");
@@ -304,7 +216,7 @@ const toRevenueDaily = (arr = []) =>
   (arr || []).map((d, i) => {
     const iso = d?.date?.slice?.(0, 10) || d?.dayISO || d?.day || null;
     const revenue = Number(d.totalRevenue ?? d.total ?? d.revenue ?? 0);
-    return { day: fmtDay(iso || `D${i + 1}`), dayISO: iso, revenue, bookings: Number(d.bookings ?? d.totalBookings ?? d.bookings ?? 0) };
+    return { day: fmtDay(iso || `D${i + 1}`), dayISO: iso, revenue, bookings: Number(d.bookings ?? d.totalBookings ?? 0) };
   });
 
 const toDauDaily = (arr = []) =>
@@ -314,31 +226,30 @@ const toDauDaily = (arr = []) =>
   });
 
 const toMovies = (arr = []) =>
-  (arr || []).map((m = {}) => ({
-    title: m.movieName ?? m.movie ?? m.movieName ?? m.title ?? "Unknown",
-    revenue: Number(m.totalRevenue ?? m.total ?? m.revenue ?? 0),
-    bookings: Number(m.totalBookings ?? m.bookings ?? m.bookings ?? 0),
-    seatsBooked: Number(m.seatsBooked ?? 0),
-  }));
+  (arr || []).map((m = {}) => {
+    const tryStr = (...vals) => { for (const v of vals) if (typeof v === "string" && v.trim()) return v.trim(); return null; };
+    const title = tryStr(m.movieName, m.movie, m.movieTitle, m.movie?.title, m.movie?.name, m.m?.title, m.m?.name, m.title, m.name, m.movieDoc?.title, m.movieDoc?.name) || (m.movieId ? String(m.movieId) : null) || "Unknown";
+    return { title, revenue: Number(m.totalRevenue ?? m.total ?? m.revenue ?? 0), bookings: Number(m.totalBookings ?? m.bookings ?? 0), seatsBooked: Number(m.seatsBooked ?? 0) };
+  });
 
 const toTheaterOcc = (arr = []) =>
-  (arr || []).map((t = {}) => ({
-    name: t.theaterName ?? t.name ?? t.theater ?? "Unknown",
-    occupancy: Math.round((Number(t.occupancyRate ?? t.occupancy ?? 0) || 0) * 100),
-  }));
+  (arr || []).map((t = {}) => {
+    const raw = t.occupancy ?? t.occupancyRate ?? t.avgOccupancy ?? t.occupancyPercent ?? 0;
+    let occPct = Number(raw ?? 0);
+    if (occPct <= 1) occPct = occPct * 100;
+    occPct = Math.round(Math.max(0, Math.min(100, occPct)));
+    const name = t.theaterName ?? t.name ?? t.theater ?? t.theater_name ?? "Unknown";
+    return { name, occupancy: occPct };
+  });
 
 function buildSummary(summaryData = [], dauData = [], revenue7 = 0) {
-  const totals = (summaryData || []).reduce((acc, d) => {
-    acc.revenue += Number(d.revenue ?? 0);
-    acc.orders += Number(d.confirmed ?? 0);
-    return acc;
-  }, { revenue: 0, orders: 0 });
+  const totals = (summaryData || []).reduce((acc, d) => { acc.revenue += Number(d.revenue ?? 0); acc.orders += Number(d.confirmed ?? 0); return acc; }, { revenue: 0, orders: 0 });
   const aov = totals.orders ? Math.round(totals.revenue / totals.orders) : 0;
   const avgDau = dauData && dauData.length ? Math.round((dauData.reduce((s, d) => s + Number(d.dau ?? d.count ?? 0), 0)) / dauData.length) : 0;
   return { revenue30d: totals.revenue, orders: totals.orders, aov, revenue7d: revenue7, dau: avgDau };
 }
 
-/* -------------------------------- View -------------------------------- */
+/* ======================== Main component ======================== */
 export default function AdminAnalyticsDashboard() {
   const [range, setRange] = useState("30d");
   const [loading, setLoading] = useState(false);
@@ -354,49 +265,55 @@ export default function AdminAnalyticsDashboard() {
   const controllerRef = useRef(null);
   const daysOf = (id) => ranges.find((r) => r.id === id)?.days ?? 30;
 
-  // Alerts drawer state
+  // Alerts + filter UI state
   const [alertsOpen, setAlertsOpen] = useState(false);
-  const [notifications, setNotifications] = useState([]);
-  const [alertsLoading, setAlertsLoading] = useState(false);
-  const alertsController = useRef(null);
-
-  // Filters drawer state (client-side filters)
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [filterText, setFilterText] = useState("");
-  const [filterTheater, setFilterTheater] = useState("");
-  const [availableTheaters, setAvailableTheaters] = useState([]);
-  const theatersController = useRef(null);
+  const [alerts, setAlerts] = useState([]);
+  const [theaters, setTheaters] = useState([]);
+  const [moviesList, setMoviesList] = useState([]);
+  const [filters, setFilters] = useState({ theater: "", movie: "" });
 
-  // Derived filtered data (client-side)
-  const filteredTheaterOcc = useMemo(() => {
-    let rows = theaterOcc || [];
-    if (filterTheater) rows = rows.filter((r) => String(r.name).toLowerCase().includes(String(filterTheater).toLowerCase()));
-    if (filterText) rows = rows.filter((r) => (r.name || "").toLowerCase().includes(filterText.toLowerCase()));
-    return rows;
-  }, [theaterOcc, filterTheater, filterText]);
+  async function loadAlerts(signal) {
+    try {
+      const data = await getJSON("/notifications", {}, { root: true, signal });
+      setAlerts(Array.isArray(data) ? data : data.notifications ?? []);
+    } catch (e) {
+      console.debug("failed to load alerts:", e.message || e);
+    }
+  }
 
-  const filteredTopMovies = useMemo(() => {
-    let rows = topMovies || [];
-    if (filterText) rows = rows.filter((r) => (r.title || "").toLowerCase().includes(filterText.toLowerCase()));
-    return rows;
-  }, [topMovies, filterText]);
+  async function loadCatalogs(signal) {
+    try {
+      const [t, m] = await Promise.all([
+        getJSON("/theaters", {}, { root: true, signal }).catch(() => []),
+        getJSON("/movies", { limit: 200 }, { root: true, signal }).catch(() => []),
+      ]);
+      setTheaters(Array.isArray(t) ? t : []);
+      const normMovies = (Array.isArray(m) ? m : []).map((mm) => ({ id: mm._id ?? mm.id ?? mm.movieId ?? null, title: mm.title ?? mm.name ?? mm.movieName ?? String(mm._id ?? mm.id ?? "") }));
+      setMoviesList(normMovies);
+    } catch (e) {
+      console.debug("catalog load failed:", e.message || e);
+    }
+  }
 
-  async function loadData(selectedRange) {
+  async function loadData(selectedRange, signal) {
     controllerRef.current?.abort();
-    const controller = new AbortController();
+    const controller = signal || new AbortController();
     controllerRef.current = controller;
     setLoading(true);
     setError("");
     const days = daysOf(selectedRange);
-
     try {
+      // include filters as query params targeting analytics routes (backend may ignore if not implemented)
+      const params = { days, ...(filters.theater ? { theater: filters.theater } : {}), ...(filters.movie ? { movie: filters.movie } : {}) };
+
       const [revTrends, dau, movies, occ, bookSum, bookSum7] = await Promise.all([
-        getJSON("/revenue/trends", { days }, controller.signal),
-        getJSON("/users/active", { days }, controller.signal),
-        getJSON("/movies/popular", { days, limit: movieLimit }, controller.signal),
-        getJSON("/occupancy", { days }, controller.signal),
-        getJSON("/bookings/summary", { days }, controller.signal),
-        getJSON("/bookings/summary", { days: 7 }, controller.signal),
+        getJSON("/revenue/trends", params, { signal: controller.signal }),
+        getJSON("/users/active", params, { signal: controller.signal }),
+        getJSON("/movies/popular", { ...params, limit: movieLimit }, { signal: controller.signal }),
+        getJSON("/occupancy", params, { signal: controller.signal }),
+        getJSON("/bookings/summary", params, { signal: controller.signal }),
+        getJSON("/bookings/summary", { days: 7 }, { signal: controller.signal }),
       ]);
 
       const revenueDailyT = toRevenueDaily(revTrends || []);
@@ -421,88 +338,23 @@ export default function AdminAnalyticsDashboard() {
   }
 
   useEffect(() => {
-    loadData(range);
-    return () => controllerRef.current?.abort();
+    const c = new AbortController();
+    loadData(range, c);
+    loadCatalogs(c.signal).catch(() => {});
+    loadAlerts(c.signal).catch(() => {});
+    return () => c.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [range, movieLimit]);
+  }, [range, movieLimit, filters.theater, filters.movie]);
 
-  /* -------------------- Alerts (notifications) -------------------- */
-  async function openAlerts() {
-    setAlertsOpen(true);
-    await loadNotifications();
-  }
-
-  async function loadNotifications() {
-    alertsController.current?.abort();
-    const controller = new AbortController();
-    alertsController.current = controller;
-    setAlertsLoading(true);
-    try {
-      // backend notifications route mounted at /api/notifications
-      const data = await fetchRootJSON("/api/notifications", null, controller.signal);
-      // Accept either object { items: [...] } or array
-      const items = Array.isArray(data) ? data : data?.items || data?.notifications || [];
-      setNotifications(items);
-    } catch (e) {
-      if (e.name === "AbortError") return;
-      console.error("Failed to load notifications:", e);
-      setNotifications([]);
-    } finally {
-      setAlertsLoading(false);
-    }
-  }
-
-  /* -------------------- Filters (theaters list) -------------------- */
-  async function openFilters() {
-    setFiltersOpen(true);
-    await loadTheaters();
-  }
-
-  async function loadTheaters() {
-    theatersController.current?.abort();
-    const controller = new AbortController();
-    theatersController.current = controller;
-    try {
-      // backend theaters route mounted at /api/theaters
-      const data = await fetchRootJSON("/api/theaters", null, controller.signal);
-      // Accept array or { items: [...] }
-      const items = Array.isArray(data) ? data : data?.items || data?.theaters || [];
-      setAvailableTheaters(items.map((t) => ({ id: t._id ?? t.id ?? String(t.id || t._id || t.name), name: t.name ?? t.title ?? t.displayName ?? "Unknown" })));
-    } catch (e) {
-      if (e.name === "AbortError") return;
-      console.error("Failed to load theaters:", e);
-      setAvailableTheaters([]);
-    }
-  }
-
-  function applyFilters() {
-    // Filters applied client-side via filteredTheaterOcc and filteredTopMovies
-    setFiltersOpen(false);
-  }
-
-  function clearFilters() {
-    setFilterText("");
-    setFilterTheater("");
-  }
-
+  // UI actions
   function exportCSV() {
-    const csvEscape = (v) => {
-      if (v === undefined || v === null) return "";
-      const s = String(v);
-      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-    };
-    const makeCSV = (title, headers, rows) => {
-      let csv = `${title}\n${headers.join(",")}\n`;
-      csv += rows.map((r) => headers.map((h) => csvEscape(r[h] ?? "")).join(",")).join("\n");
-      csv += "\n\n";
-      return csv;
-    };
+    const csvEscape = (v) => { if (v === undefined || v === null) return ""; const s = String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+    const makeCSV = (title, headers, rows) => { let csv = `${title}\n${headers.join(",")}\n`; csv += rows.map((r) => headers.map((h) => csvEscape(r[h] ?? "")).join(",")).join("\n"); csv += "\n\n"; return csv; };
     const sections = [];
     sections.push(makeCSV("Revenue (Daily)", ["day", "revenue", "bookings"], revenueDaily));
     sections.push(makeCSV("Active Users (Daily)", ["day", "users"], dauDaily));
-    sections.push(makeCSV("Theater Occupancy", ["name", "occupancy"], filteredTheaterOcc));
-    sections.push(makeCSV("Top Movies", ["title", "bookings", "revenue", "seatsBooked"], filteredTopMovies));
-
+    sections.push(makeCSV("Theater Occupancy", ["name", "occupancy"], theaterOcc));
+    sections.push(makeCSV("Top Movies", ["title", "bookings", "revenue", "seatsBooked"], topMovies));
     const blob = new Blob(sections, { type: "text/csv;charset=utf-8;" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
@@ -512,215 +364,187 @@ export default function AdminAnalyticsDashboard() {
     document.body.removeChild(link);
   }
 
+  // Filters form handlers
+  function applyFilters(e) {
+    e?.preventDefault?.();
+    setFiltersOpen(false);
+    // loadData will re-run because filters state is in dependency
+  }
+  function resetFilters() {
+    setFilters({ theater: "", movie: "" });
+    setFiltersOpen(false);
+  }
+
+  // Alerts UI
+  async function refreshAlerts() {
+    const c = new AbortController();
+    await loadAlerts(c.signal);
+  }
+
   return (
-    <>
-      <div className="min-h-screen w-screen [margin-inline:calc(50%-50vw)] bg-slate-50 text-slate-900 py-8">
-        <div className="mx-auto max-w-7xl px-4 md:px-6 space-y-6">
-          <HeaderBar
-            range={range}
-            setRange={setRange}
-            onExport={exportCSV}
-            onRefresh={() => loadData(range)}
-            onToggleAlerts={() => openAlerts()}
-            onToggleFilters={() => openFilters()}
+    <div className="min-h-screen w-screen [margin-inline:calc(50%-50vw)] bg-slate-50 text-slate-900 py-8">
+      <div className="mx-auto max-w-7xl px-4 md:px-6 space-y-6">
+        {/* Header */}
+        <div className="space-y-3">
+          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">Admin Analytics</h1>
+          <Card className="p-4">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="text-sm text-slate-600">Revenue, usage, and theater performance at a glance.</div>
+              <div className="flex items-center gap-2 flex-wrap justify-end">
+                <Pill onClick={() => { setAlertsOpen(true); refreshAlerts(); }}><Bell className="h-4 w-4" /> Alerts</Pill>
+                <Pill onClick={() => { setFiltersOpen(true); }}><Filter className="h-4 w-4" /> Filter</Pill>
+                <Primary onClick={exportCSV}><Download className="h-4 w-4" /> Export CSV</Primary>
+                <Pill onClick={() => loadData(range)}><RefreshCcw className="h-4 w-4" /> Refresh</Pill>
+                <Segments value={range} onChange={setRange} />
+              </div>
+            </div>
+          </Card>
+        </div>
+
+        {error && <Card className="p-3 bg-rose-50 border-rose-200 text-rose-700 font-semibold">{error}</Card>}
+
+        {/* KPIs */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+          <Stat icon={CircleDollarSign} label={`Revenue (${range})`} value={formatCurrency(summary.revenue30d)} delta={0} />
+          <Stat icon={ShoppingBag} label="Orders" value={formatInt(summary.orders)} delta={0} />
+          <Stat icon={Gauge} label="Avg. Order Value" value={formatCurrency(summary.aov)} delta={0} />
+          <Stat icon={BarChart3} label="Revenue (7d)" value={formatCurrency(summary.revenue7d)} />
+          <Stat icon={Users} label="Avg DAU" value={formatInt(summary.dau)} />
+        </div>
+
+        {/* Charts */}
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+          <div className="lg:col-span-3">
+            <ChartCard title="Daily Revenue" subtitle="Aggregate revenue per day" right={<Pill onClick={() => loadData(range)}><RefreshCcw className="h-3.5 w-3.5" /> Refresh</Pill>}>
+              {loading ? <EmptyMini label="Loading revenue..." /> : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={revenueDaily} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="revFill" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor={BLUE} stopOpacity={0.18} />
+                        <stop offset="100%" stopColor={BLUE} stopOpacity={0.03} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke={SOFT} opacity={0.45} />
+                    <XAxis dataKey="day" tick={{ fontSize: 12, fill: SOFT }} stroke={SOFT} />
+                    <YAxis tick={{ fontSize: 12, fill: SOFT }} domain={["dataMin", "auto"]} stroke={SOFT} />
+                    <Tooltip formatter={(v, k) => (k === "revenue" ? formatCurrency(v) : formatInt(v))} />
+                    <Area type="monotone" dataKey="revenue" stroke={BLUE} fill="url(#revFill)" strokeWidth={2} activeDot={{ r: 4 }} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              )}
+            </ChartCard>
+          </div>
+
+          <div className="lg:col-span-2">
+            <ChartCard title="Daily Active Users" subtitle="Unique users per day">
+              {loading ? <EmptyMini label="Loading users..." /> : dauDaily && dauDaily.length ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={dauDaily} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={SOFT} opacity={0.45} />
+                    <XAxis dataKey="day" tick={{ fontSize: 12, fill: SOFT }} stroke={SOFT} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: SOFT }} domain={[0, "auto"]} stroke={SOFT} />
+                    <Tooltip formatter={(v) => formatInt(v)} />
+                    <Line type="monotone" dataKey="users" stroke={BLUE} strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              ) : <EmptyMini label="No DAU yet — drive sign-ups and visits to see activity here." />}
+            </ChartCard>
+          </div>
+        </div>
+
+        {/* Tables */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <SimpleTable
+            title="Theater Occupancy (Avg)"
+            rows={theaterOcc}
+            columns={[
+              { key: "name", label: "Theater", render: (v) => (<div className="flex items-center gap-2"><Building2 className="h-4 w-4" /><span>{v}</span></div>) },
+              { key: "occupancy", label: "Occupancy", render: (v) => `${formatInt(v)}%` },
+            ]}
           />
 
-          {error && <Card className="p-3 bg-rose-50 border-rose-200 text-rose-700 font-semibold">{error}</Card>}
-
-          {/* KPIs */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-            <Stat icon={CircleDollarSign} label={`Revenue (${range})`} value={formatCurrency(summary.revenue30d)} delta={0} />
-            <Stat icon={ShoppingBag} label="Orders" value={formatInt(summary.orders)} delta={0} />
-            <Stat icon={Gauge} label="Avg. Order Value" value={formatCurrency(summary.aov)} delta={0} />
-            <Stat icon={BarChart3} label="Revenue (7d)" value={formatCurrency(summary.revenue7d)} />
-            <Stat icon={Users} label="Avg DAU" value={formatInt(summary.dau)} />
-          </div>
-
-          {/* Charts */}
-          <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-            <div className="lg:col-span-3">
-              <ChartCard title="Daily Revenue" subtitle="Aggregate revenue per day" right={<Pill onClick={() => loadData(range)}><RefreshCcw className="h-3.5 w-3.5" /> Refresh</Pill>}>
-                {loading ? (
-                  <EmptyMini label="Loading revenue..." />
-                ) : (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={revenueDaily} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
-                      <defs>
-                        <linearGradient id="revFill" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor={BLUE} stopOpacity={0.18} />
-                          <stop offset="100%" stopColor={BLUE} stopOpacity={0.03} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke={SOFT} opacity={0.45} />
-                      <XAxis dataKey="day" tick={{ fontSize: 12, fill: SOFT }} stroke={SOFT} />
-                      <YAxis tick={{ fontSize: 12, fill: SOFT }} domain={["dataMin", "auto"]} stroke={SOFT} />
-                      <Tooltip formatter={(v, k) => (k === "revenue" ? formatCurrency(v) : formatInt(v))} />
-                      <Area type="monotone" dataKey="revenue" stroke={BLUE} fill="url(#revFill)" strokeWidth={2} activeDot={{ r: 4 }} />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                )}
-              </ChartCard>
-            </div>
-
-            <div className="lg:col-span-2">
-              <ChartCard title="Daily Active Users" subtitle="Unique users per day">
-                {loading ? (
-                  <EmptyMini label="Loading users..." />
-                ) : dauDaily && dauDaily.length ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={dauDaily} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke={SOFT} opacity={0.45} />
-                      <XAxis dataKey="day" tick={{ fontSize: 12, fill: SOFT }} stroke={SOFT} />
-                      <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: SOFT }} domain={[0, "auto"]} stroke={SOFT} />
-                      <Tooltip formatter={(v) => formatInt(v)} />
-                      <Line type="monotone" dataKey="users" stroke={BLUE} strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <EmptyMini label="No DAU yet — drive sign-ups and visits to see activity here." />
-                )}
-              </ChartCard>
-            </div>
-          </div>
-
-          {/* Tables */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <SimpleTable
-              title="Theater Occupancy (Avg)"
-              rows={filteredTheaterOcc}
-              columns={[
-                {
-                  key: "name",
-                  label: "Theater",
-                  render: (v) => (
-                    <div className="flex items-center gap-2">
-                      <Building2 className="h-4 w-4" aria-hidden="true" />
-                      <span>{v}</span>
-                    </div>
-                  ),
-                },
-                { key: "occupancy", label: "Occupancy", render: (v) => `${formatInt(v)}%` },
-              ]}
-            />
-
-            <SimpleTable
-              title="Popular Movies"
-              rows={filteredTopMovies}
-              columns={[
-                {
-                  key: "title",
-                  label: "Movie",
-                  render: (v) => (
-                    <div className="flex items-center gap-2">
-                      <Film className="h-4 w-4" aria-hidden="true" />
-                      <span>{v}</span>
-                    </div>
-                  ),
-                },
-                { key: "bookings", label: "Bookings", render: (v) => formatInt(v) },
-                { key: "revenue", label: "Revenue", render: (v) => formatCurrency(v) },
-              ]}
-            />
-          </div>
+          <SimpleTable
+            title="Popular Movies"
+            rows={topMovies}
+            columns={[
+              { key: "title", label: "Movie", render: (v) => (<div className="flex items-center gap-2"><Film className="h-4 w-4" /><span>{v}</span></div>) },
+              { key: "bookings", label: "Bookings", render: (v) => formatInt(v) },
+              { key: "revenue", label: "Revenue", render: (v) => formatCurrency(v) },
+            ]}
+          />
         </div>
       </div>
 
-      {/* -------------------- Alerts Drawer -------------------- */}
-      <div
-        className={`fixed top-0 right-0 h-full w-full sm:w-[520px] max-w-full z-50 transform transition-transform duration-200 ${
-          alertsOpen ? "translate-x-0" : "translate-x-full"
-        }`}
-        aria-hidden={!alertsOpen}
-      >
-        <div className="h-full bg-white shadow-2xl border-l border-slate-200 p-4">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-bold">Alerts</h3>
-            <div className="flex items-center gap-2">
-              <button className="px-2 py-1 rounded-md hover:bg-slate-100" onClick={loadNotifications} title="Refresh">
-                <RefreshCcw className="h-4 w-4" />
-              </button>
-              <button className="px-2 py-1 rounded-md hover:bg-slate-100" onClick={() => setAlertsOpen(false)} title="Close">
-                <X className="h-5 w-5" />
-              </button>
+      {/* Alerts slide-over */}
+      {alertsOpen && (
+        <div className="fixed inset-0 z-50 flex">
+          <div className="fixed inset-0 bg-black/30" onClick={() => setAlertsOpen(false)} />
+          <div className="ml-auto w-full sm:w-[520px] h-full bg-white p-4 overflow-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">Alerts</h3>
+              <div className="flex items-center gap-2">
+                <button onClick={() => refreshAlerts()} className="inline-flex items-center gap-1 px-3 py-1 rounded-full border">Refresh</button>
+                <button onClick={() => setAlertsOpen(false)} className="rounded-full p-2"><X /></button>
+              </div>
             </div>
-          </div>
 
-          {alertsLoading ? (
-            <div className="text-sm text-slate-600">Loading alerts…</div>
-          ) : !notifications || notifications.length === 0 ? (
-            <div className="text-sm text-slate-600">No alerts found.</div>
-          ) : (
-            <div className="space-y-3 overflow-y-auto max-h-[calc(100%-96px)] pr-2">
-              {notifications.map((n, i) => (
-                <div key={n._id ?? n.id ?? i} className="p-3 border rounded-lg bg-slate-50">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="text-sm font-semibold text-slate-900">{n.title ?? n.subject ?? n.message?.slice?.(0, 40) ?? "Alert"}</div>
-                      <div className="text-xs text-slate-600 mt-1">{n.message ?? n.body ?? ""}</div>
+            {alerts && alerts.length ? (
+              <div className="space-y-3">
+                {alerts.map((a, i) => (
+                  <div key={a._id ?? i} className="p-3 border border-slate-100 rounded-lg">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <div className="text-sm font-semibold">{a.title ?? a.message ?? "Alert"}</div>
+                        <div className="text-xs text-slate-500 mt-1">{a.body ?? a.message ?? ""}</div>
+                        <div className="text-xs text-slate-400 mt-2">{new Date(a.createdAt ?? a.created_at ?? Date.now()).toLocaleString()}</div>
+                      </div>
                     </div>
-                    <div className="text-xs text-slate-500">{n.createdAt ? new Date(n.createdAt).toLocaleString() : ""}</div>
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* -------------------- Filters Drawer -------------------- */}
-      <div
-        className={`fixed top-0 right-0 h-full w-full sm:w-[420px] max-w-full z-40 transform transition-transform duration-200 ${
-          filtersOpen ? "translate-x-0" : "translate-x-full"
-        }`}
-        aria-hidden={!filtersOpen}
-      >
-        <div className="h-full bg-white shadow-2xl border-l border-slate-200 p-4">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-bold">Filters</h3>
-            <div className="flex items-center gap-2">
-              <button className="px-2 py-1 rounded-md hover:bg-slate-100" onClick={clearFilters} title="Clear">
-                Clear
-              </button>
-              <button className="px-2 py-1 rounded-md hover:bg-slate-100" onClick={() => setFiltersOpen(false)} title="Close">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-          </div>
-
-          <div className="space-y-4 max-h-[calc(100%-96px)] overflow-y-auto pr-2">
-            <div>
-              <label className="block text-xs text-slate-600 mb-1">Search text</label>
-              <input value={filterText} onChange={(e) => setFilterText(e.target.value)} placeholder="Filter theaters or movies" className="w-full px-3 py-2 border rounded-md" />
-            </div>
-
-            <div>
-              <label className="block text-xs text-slate-600 mb-1">Theater</label>
-              <select value={filterTheater} onChange={(e) => setFilterTheater(e.target.value)} className="w-full px-3 py-2 border rounded-md">
-                <option value="">— All theaters —</option>
-                {availableTheaters.map((t) => (
-                  <option key={t.id} value={t.name}>
-                    {t.name}
-                  </option>
                 ))}
-              </select>
-              <div className="text-xs text-slate-500 mt-1">Theater list is fetched from backend; if empty try Refresh.</div>
-            </div>
-
-            <div className="flex gap-2">
-              <Primary onClick={applyFilters} className="flex-1">Apply</Primary>
-              <button onClick={() => { setFiltersOpen(false); }} className="px-4 py-2 rounded-full border border-slate-200">Close</button>
-            </div>
+              </div>
+            ) : (
+              <div className="py-12 text-center text-sm text-slate-600">No alerts</div>
+            )}
           </div>
         </div>
-      </div>
-
-      {/* small backdrop to close drawers */}
-      {(alertsOpen || filtersOpen) && (
-        <div
-          onClick={() => { setAlertsOpen(false); setFiltersOpen(false); }}
-          className="fixed inset-0 bg-black/30 z-30"
-        />
       )}
-    </>
+
+      {/* Filters modal */}
+      {filtersOpen && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center">
+          <div className="fixed inset-0 bg-black/30" onClick={() => setFiltersOpen(false)} />
+          <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-2xl z-50">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">Filters</h3>
+              <button onClick={() => setFiltersOpen(false)} className="p-2 rounded-full"><X /></button>
+            </div>
+
+            <form onSubmit={applyFilters} className="space-y-4">
+              <div>
+                <label className="block text-sm text-slate-600 mb-1">Theater</label>
+                <select value={filters.theater} onChange={(e) => setFilters((s) => ({ ...s, theater: e.target.value }))} className="w-full border p-2 rounded">
+                  <option value="">All theaters</option>
+                  {theaters.map((t) => <option key={t._id ?? t.id} value={t._id ?? t.id}>{t.name ?? t.title ?? t.displayName ?? String(t._id ?? t.id)}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm text-slate-600 mb-1">Movie</label>
+                <select value={filters.movie} onChange={(e) => setFilters((s) => ({ ...s, movie: e.target.value }))} className="w-full border p-2 rounded">
+                  <option value="">All movies</option>
+                  {moviesList.map((m) => <option key={m.id} value={m.id}>{m.title}</option>)}
+                </select>
+              </div>
+
+              <div className="flex items-center gap-2 justify-end">
+                <button type="button" onClick={resetFilters} className="px-3 py-2 rounded-full border text-sm">Reset</button>
+                <Primary type="submit">Apply</Primary>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
