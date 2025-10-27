@@ -365,7 +365,26 @@ export default function TicketDetails() {
   const screen = show?.screen?.name ?? "—";
 
   // IMPORTANT: set seatsPerRow to your theater layout. Default is 10.
-  const seats = formatSeats(booking.seats, { seatsPerRow: 10 });
+  // Defensive handling for when backend sends a single string like "1-7"
+  let seatsRaw = booking.seats;
+  if (typeof seatsRaw === "string") {
+    // "1-7" -> expand to [1,2,3,4,5,6,7]
+    if (/^\d+\s*-\s*\d+$/.test(seatsRaw)) {
+      const [a, b] = seatsRaw.split("-").map((x) => parseInt(x.trim(), 10));
+      if (!Number.isNaN(a) && !Number.isNaN(b) && b >= a) {
+        seatsRaw = Array.from({ length: b - a + 1 }, (_, i) => a + i);
+      } else {
+        seatsRaw = [seatsRaw];
+      }
+    } else if (seatsRaw.includes(",")) {
+      seatsRaw = seatsRaw.split(",").map((s) => s.trim()).map((s) => (/^\d+$/.test(s) ? parseInt(s, 10) : s));
+    } else if (/^\d+$/.test(seatsRaw)) {
+      seatsRaw = [parseInt(seatsRaw, 10)];
+    } else {
+      seatsRaw = [seatsRaw];
+    }
+  }
+  const seats = formatSeats(seatsRaw, { seatsPerRow: 10 });
 
   const showtimeValue = show.time || show.startTime || booking.createdAt;
   const formattedTime = showtimeValue
@@ -385,7 +404,7 @@ export default function TicketDetails() {
     <main className="min-h-screen bg-slate-50 py-10 px-4">
       <div className="max-w-4xl mx-auto">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
-          <h1 className="text-2xl font-extrabold tracking-tight text-slate-900"> Ticket Details</h1>
+          <h1 className="text-2xl font-extrabold tracking-tight text-slate-900">🎟 Ticket Details</h1>
           <div className="flex flex-wrap items-center gap-2">
             <GhostBtn onClick={() => navigate("/bookings")}>← Back</GhostBtn>
             <GhostBtn onClick={copyLink} title="Copy shareable link">Copy Link</GhostBtn>
