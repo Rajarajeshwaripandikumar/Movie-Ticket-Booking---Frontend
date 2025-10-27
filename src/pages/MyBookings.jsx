@@ -1,5 +1,5 @@
 // src/pages/MyBookings.jsx — Walmart Style (clean, rounded, blue accents)
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import api from "../api/api";
 import Loader from "../components/Loader";
@@ -61,7 +61,115 @@ function Money({ value }) {
   return <span>₹{n.toLocaleString("en-IN")}</span>;
 }
 
-/* -------------------------------- Page -------------------------------- */
+/* ----------------------- Seat formatting helper ----------------------- */
+/**
+ * Robust formatter for booking.seats used in list view.
+ * Accepts:
+ * - [{row:"A",col:6}, ...]
+ * - ["A-6","A-7"]
+ * - [5,6,7] (numeric seat ids; converted to row/col using seatsPerRow)
+ * - "5-8" or "5,6,7" (single string)
+ * - 6 (single number)
+ *
+ * Returns human-friendly: "A-5, A-6, A-7" or "—" when none.
+ */
+const formatSeats = (rawInput, { seatsPerRow = 10, rows = "ABCDEFGHIJKLMNOPQRSTUVWXYZ" } = {}) => {
+  if (rawInput == null) return "—";
+
+  // Normalize to an array
+  const input = Array.isArray(rawInput) ? rawInput : [rawInput];
+
+  const expandToken = (token) => {
+    if (token == null) return [];
+
+    // object {row, col}
+    if (typeof token === "object" && !Array.isArray(token)) {
+      if ("row" in token && "col" in token) {
+        return [`${String(token.row).toUpperCase()}-${token.col}`];
+      }
+      return [];
+    }
+
+    // number
+    if (typeof token === "number" && Number.isFinite(token)) {
+      return [token];
+    }
+
+    // string
+    if (typeof token === "string") {
+      const s = token.trim();
+
+      // letter-number like "A-6", "A 6", "a_6", "A6"
+      if (/^[A-Za-z]+\s*[-_\s]?\s*\d+$/.test(s) || /^[A-Za-z]+\d+$/.test(s)) {
+        const parts = s.split(/[-_\s]+/).filter(Boolean);
+        if (parts.length >= 2) return [`${parts[0].toUpperCase()}-${parts[1]}`];
+        return [s.toUpperCase()];
+      }
+
+      // numeric range "5-10"
+      if (/^\d+\s*-\s*\d+$/.test(s)) {
+        const [a, b] = s.split("-").map((x) => parseInt(x.trim(), 10)).sort((x, y) => x - y);
+        if (Number.isFinite(a) && Number.isFinite(b)) {
+          const out = [];
+          for (let v = a; v <= b; v++) out.push(v);
+          return out;
+        }
+      }
+
+      // comma list "5,6,7" or "A-6,B-3"
+      if (s.includes(",")) {
+        return s.split(",").map((p) => p.trim()).flatMap(expandToken);
+      }
+
+      // single numeric string
+      if (/^\d+$/.test(s)) return [Number(s)];
+
+      // fallback
+      return [s];
+    }
+
+    return [];
+  };
+
+  const flat = input.flatMap(expandToken).filter((x) => x != null);
+
+  // Convert numeric ids to row-col
+  const mapped = flat.map((item) => {
+    if (typeof item === "number") {
+      const idx = item - 1;
+      const rowIndex = Math.floor(idx / seatsPerRow);
+      const rowLetter = rows[rowIndex] ?? `R${rowIndex + 1}`;
+      const colNumber = (idx % seatsPerRow) + 1;
+      return `${rowLetter}-${colNumber}`;
+    }
+
+    if (typeof item === "string" && /^[A-Za-z]+-\d+$/.test(item)) {
+      const parts = item.split("-");
+      return `${parts[0].toUpperCase()}-${parts[1]}`;
+    }
+
+    return String(item);
+  });
+
+  const unique = Array.from(new Set(mapped));
+
+  // Sort: group by row then numeric col
+  unique.sort((a, b) => {
+    const [ra, ca] = a.split("-");
+    const [rb, cb] = b.split("-");
+    if (ra === rb) {
+      const na = parseInt(ca || "0", 10) || 0;
+      const nb = parseInt(cb || "0", 10) || 0;
+      return na - nb;
+    }
+    return (ra || "").localeCompare(rb || "");
+  });
+
+  if (unique.length === 0) return "—";
+  return unique.join(", ");
+};
+/* --------------------- end seat formatting helper -------------------- */
+
 export default function MyBookings() {
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -162,9 +270,11 @@ export default function MyBookings() {
             const show = b.showtime || {};
             const movie = show.movie?.title || "Unknown Movie";
             const theater = show.screen?.name || "—";
-            const seats = Array.isArray(b.seats)
-              ? b.seats.map((s) => `${s.row}-${s.col}`).join(", ")
-              : "N/A";
+
+            // Format seats robustly:
+            // IMPORTANT: If your auditorium has a different layout, change seatsPerRow.
+            const seats = formatSeats(b.seats, { seatsPerRow: 10 });
+
             const date = show.time || show.startTime || show.date || null;
             const dateStr = date
               ? new Date(date).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })
@@ -189,6 +299,8 @@ export default function MyBookings() {
                       <span className="font-semibold">Seats:</span> {seats}
                     </p>
                     <p className="text-xs text-slate-600 mt-1">Showtime: {dateStr}</p>
+                    {/* DEBUG: Uncomment to inspect raw seats data in UI */}
+                    {/* <div className="text-xs text-slate-400 mt-1">RAW: <code>{JSON.stringify(b.seats)}</code></div> */}
                   </button>
 
                   {/* Right: Status + actions */}
