@@ -103,7 +103,20 @@ export default function TicketDetails() {
     }
   }, [bookingId, token, urlToken]);
 
-  // ------------------ Seat formatting helper ------------------
+  // ------------------ Seat helpers & formatting ------------------
+  const normalizeSeatLabel = (label) => {
+    if (!label && label !== 0) return label;
+    const s = String(label).trim();
+    // Match letter(s) followed immediately by digits e.g. H9 or aa12 -> convert to AA-12
+    const m = s.match(/^([A-Za-z]+)(\d+)$/);
+    if (m) return `${m[1].toUpperCase()}-${m[2]}`;
+    // If already contains hyphen e.g. H-9 or h-9 normalize case
+    const n = s.match(/^([A-Za-z]+)\s*-\s*(\d+)$/);
+    if (n) return `${n[1].toUpperCase()}-${n[2]}`;
+    // otherwise return uppercase for letters-only or raw string
+    return s.toUpperCase();
+  };
+
   /**
    * Robust seat formatter.
    * Accepts many input shapes (array or single value).
@@ -112,7 +125,7 @@ export default function TicketDetails() {
    * - rows: string of row letters for mapping (default A..Z)
    *
    * Examples of booking.seats this will handle:
-   * - [{row: "A", col: 6}, ...]
+   * - [{row: "A", col: 6, label:"A-6"}, ...]
    * - ["A-6", "A-7"]
    * - [5,6,7]  (numeric seat ids; converted to row/col using seatsPerRow)
    * - "5-8" (single-range string)
@@ -134,13 +147,12 @@ export default function TicketDetails() {
 
       // object shape { row, col, label }
       if (typeof token === "object" && !Array.isArray(token)) {
-        // If backend provided a human-friendly label, use it first
-        if (token.label) return [String(token.label).toUpperCase()];
+        // If backend provided a human-friendly label, use it first (normalized)
+        if (token.label) return [normalizeSeatLabel(token.label)];
 
         // If both row & col present, convert numeric row -> letter, else use raw row value uppercased
         if ("row" in token && "col" in token) {
           const rawRow = token.row;
-          // if row is numeric (1-indexed) convert to letter using rows string
           const rn = Number(rawRow);
           let rowLetter;
           if (Number.isFinite(rn) && rn >= 1) {
@@ -164,11 +176,11 @@ export default function TicketDetails() {
 
         // already letter-number like "A-6" or "A 6" or "a_6"
         if (/^[A-Za-z]+\s*[-_\s]\s*\d+$/.test(s) || /^[A-Za-z]+\d+$/.test(s)) {
-          // normalize to "A-6"
+          // normalize to "A-6" and ensure hyphen between letter(s) and digits
           const parts = s.split(/[-_\s]+/).filter(Boolean);
-          if (parts.length >= 2) return [`${parts[0].toUpperCase()}-${parts[1]}`];
+          if (parts.length >= 2) return [normalizeSeatLabel(`${parts[0]}-${parts[1]}`)];
           // fallback
-          return [s.toUpperCase()];
+          return [normalizeSeatLabel(s)];
         }
 
         // numeric range "5-10"
@@ -189,8 +201,8 @@ export default function TicketDetails() {
         // single numeric string "6"
         if (/^\d+$/.test(s)) return [Number(s)];
 
-        // fallback: return as-is
-        return [s];
+        // fallback: return as-is (uppercased)
+        return [s.toUpperCase()];
       }
 
       return [];
@@ -209,14 +221,17 @@ export default function TicketDetails() {
         return `${rowLetter}-${colNumber}`;
       }
 
-      // already "A-6"
-      if (typeof item === "string" && /^[A-Za-z]+-\d+$/.test(item)) {
-        // normalize case: A-6
-        const parts = item.split("-");
-        return `${parts[0].toUpperCase()}-${parts[1]}`;
+      // already "A-6" or "H9" etc — normalize label (ensures hyphen)
+      if (typeof item === "string") {
+        const s = String(item).trim();
+        // If matches letter+digits without hyphen, normalize
+        if (/^[A-Za-z]+\d+$/.test(s) || /^[A-Za-z]+\s*-\s*\d+$/.test(s)) {
+          return normalizeSeatLabel(s);
+        }
+        return s;
       }
 
-      // other string (leave as-is)
+      // other types: stringify
       return String(item);
     });
 
@@ -416,10 +431,10 @@ export default function TicketDetails() {
   // prefer backend-provided labels when rendering seats, fallback to formatted string
   const renderSeatsInline = () => {
     if (Array.isArray(booking.seats) && booking.seats.length > 0) {
-      // map each seat to label (preferred) or fallback to row-col conversion
+      // map each seat to normalized label (preferred) or fallback to row-col conversion
       const mapped = booking.seats.map((s) => {
         if (!s) return null;
-        if (s.label) return String(s.label);
+        if (s.label) return normalizeSeatLabel(s.label);
         // if row is numeric convert -> letter
         const rn = Number(s.row);
         if (Number.isFinite(rn) && rn >= 1) {
