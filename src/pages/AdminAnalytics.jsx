@@ -44,8 +44,8 @@ function resolveApiBase() {
   const base =
     import.meta.env.VITE_API_BASE ||
     import.meta.env.VITE_API_BASE_URL ||
-    "http://localhost:8080";
-  return `${base.replace(/\/+$/, "")}/api/analytics`;
+        "http://localhost:8080/api/analytics";
+  return base.replace(/\/+$/, "");
 }
 const API_BASE = resolveApiBase();
 
