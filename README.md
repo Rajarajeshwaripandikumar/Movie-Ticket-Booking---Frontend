@@ -39,17 +39,6 @@ Icons	Lucide
 Realtime	(Optional) Socket.IO Client for seat updates
 
 
-# ⚙️ Environment Setup
-
-Create a .env file in the frontend root:
-
-VITE_API_BASE=https://your-backend.onrender.com/api
-
-VITE_PUBLIC_URL=https://your-frontend.netlify.app
-
-VITE_RAZORPAY_KEY_ID=rzp_test_xxx
-
-
 # 🚀 Local Development
 
 
@@ -91,4 +80,3 @@ Rajarajeshwari Pandikumar
 
 🎯 Frontend: Movie-Ticket-Booking---Frontend
 
-🔗 Backend: (Add link once available)
