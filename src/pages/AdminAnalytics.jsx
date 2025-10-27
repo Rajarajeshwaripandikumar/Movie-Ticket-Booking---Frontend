@@ -1,5 +1,6 @@
 // frontend/src/pages/AdminAnalytics.jsx — Walmart Style (Blue, Rounded, Clean)
-// Patched: robust URL building, debug logging for requests, and clarified auth handling
+// FULL FILE — patched to reliably build analytics URLs from VITE_API_BASE (backend root)
+// and to always call /api/analytics/* endpoints. Keeps previous tolerant transforms and UI.
 import React, { useState, useEffect, useRef } from "react";
 import {
   CalendarRange,
@@ -40,14 +41,60 @@ import {
      - GET /bookings/summary?days=N
    ========================================================================== */
 
+/* ---------------------- API base + fetch helpers (robust) --------------------- */
+// VITE_API_BASE should point to backend root (e.g. https://movie-ticket-booking-backend-o1m2.onrender.com)
+// This component will always prefix analytics requests with /api/analytics, so other pages that
+// use VITE_API_BASE won't break if they expect the root.
 function resolveApiBase() {
   const base =
     import.meta.env.VITE_API_BASE ||
     import.meta.env.VITE_API_BASE_URL ||
-        "http://localhost:8080/api/analytics";
+    "http://localhost:8080";
   return base.replace(/\/+$/, "");
 }
-const API_BASE = resolveApiBase();
+const API_ROOT = resolveApiBase(); // backend root
+const ANALYTICS_PREFIX = "/api/analytics"; // analytics endpoints live here
+
+const authHeaders = () => {
+  const token = localStorage.getItem("token") || localStorage.getItem("jwt") || "";
+  return token ? { Authorization: `Bearer ${token}` } : {};
+};
+
+async function getJSON(path, params, signal) {
+  // accept either "revenue/trends" or "/revenue/trends" or "/api/analytics/revenue/trends"
+  const rel = path.startsWith("/") ? path : `/${path}`;
+
+  // If caller passed a full /api path already, use it; otherwise prefix with ANALYTICS_PREFIX
+  const fullRel = rel.startsWith("/api/") ? rel : `${ANALYTICS_PREFIX}${rel}`;
+
+  const base = API_ROOT.replace(/\/+$/, "") + "/"; // e.g. "https://backend/"
+  const url = new URL(fullRel.replace(/^\//, ""), base);
+
+  if (params) {
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
+    });
+  }
+
+  const headers = { "Content-Type": "application/json", ...authHeaders() };
+  console.debug("[analytics] fetch ->", url.toString(), { headers });
+
+  const res = await fetch(url.toString(), {
+    headers,
+    signal,
+    credentials: "include",
+  });
+
+  if (!res.ok) {
+    let detail = "";
+    try {
+      detail = (await res.json())?.message || "";
+    } catch (e) {}
+    const baseMsg = `HTTP ${res.status} ${res.statusText}`;
+    throw new Error(detail ? `${baseMsg} — ${detail}` : baseMsg);
+  }
+  return res.json();
+}
 
 /* ----------------------------- Walmart tokens ----------------------------- */
 const BLUE = "#0071DC"; // Walmart Blue
@@ -55,7 +102,7 @@ const BLUE_DARK = "#0654BA"; // Hover/active
 const INK = "#0F172A"; // Slate-900
 const SOFT = "#94A3B8"; // Slate-400 for ticks/grid
 
-/* --------------------------- Walmart primitives --------------------------- */
+/* --------------------------- UI primitives & helpers --------------------------- */
 const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
   <Tag
     className={`bg-white border border-slate-200 rounded-2xl shadow-sm ${className}`}
@@ -83,7 +130,6 @@ const Primary = ({ children, className = "", ...props }) => (
   </button>
 );
 
-/* ------------------------------ UI helpers ------------------------------ */
 const ranges = [
   { id: "7d", label: "Last 7d", days: 7 },
   { id: "14d", label: "Last 14d", days: 14 },
@@ -154,14 +200,7 @@ function Stat({ icon: Icon, label, value, delta }) {
   );
 }
 
-const HeaderBar = ({
-  range,
-  setRange,
-  onRefresh,
-  onExport,
-  onToggleAlerts,
-  onToggleFilters,
-}) => (
+const HeaderBar = ({ range, setRange, onRefresh, onExport, onToggleAlerts, onToggleFilters }) => (
   <div className="space-y-3">
     <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">Admin Analytics</h1>
     <Card className="p-4">
@@ -230,42 +269,6 @@ const EmptyMini = ({ label }) => (
     </div>
   </div>
 );
-
-/* ----------------------------- API helpers ---------------------------- */
-const authHeaders = () => {
-  const token = localStorage.getItem("token") || localStorage.getItem("jwt") || "";
-  return token ? { Authorization: `Bearer ${token}` } : {};
-};
-
-async function getJSON(path, params, signal) {
-  // ensure path starts with a slash
-  const rel = path.startsWith("/") ? path : `/${path}`;
-  const base = API_BASE.replace(/\/+$/, "") + "/";
-  const url = new URL(rel, base);
-
-  if (params) {
-    Object.entries(params).forEach(([k, v]) => {
-      if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
-    });
-  }
-
-  const headers = { "Content-Type": "application/json", ...authHeaders() };
-  console.debug("[analytics] fetch ->", url.toString(), { headers });
-
-  const res = await fetch(url.toString(), {
-    headers,
-    signal,
-    credentials: "include",
-  });
-
-  if (!res.ok) {
-    let detail = "";
-    try { detail = (await res.json())?.message || ""; } catch (e) {}
-    const baseMsg = `HTTP ${res.status} ${res.statusText}`;
-    throw new Error(detail ? `${baseMsg} — ${detail}` : baseMsg);
-  }
-  return res.json();
-}
 
 /* ---------------------------- data transforms ---------------------------- */
 const fmtDay = (d) => {
@@ -412,6 +415,7 @@ export default function AdminAnalyticsDashboard() {
   useEffect(() => {
     loadData(range);
     return () => controllerRef.current?.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [range, movieLimit]);
 
   function exportCSV() {
@@ -454,9 +458,7 @@ export default function AdminAnalyticsDashboard() {
           onToggleFilters={() => alert("Filters panel coming soon")}
         />
 
-        {error && (
-          <Card className="p-3 bg-rose-50 border-rose-200 text-rose-700 font-semibold">{error}</Card>
-        )}
+        {error && <Card className="p-3 bg-rose-50 border-rose-200 text-rose-700 font-semibold">{error}</Card>}
 
         {/* KPIs */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
