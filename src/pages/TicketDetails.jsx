@@ -385,7 +385,7 @@ export default function TicketDetails() {
     <main className="min-h-screen bg-slate-50 py-10 px-4">
       <div className="max-w-4xl mx-auto">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
-          <h1 className="text-2xl font-extrabold tracking-tight text-slate-900">🎟 Ticket Details</h1>
+          <h1 className="text-2xl font-extrabold tracking-tight text-slate-900"> Ticket Details</h1>
           <div className="flex flex-wrap items-center gap-2">
             <GhostBtn onClick={() => navigate("/bookings")}>← Back</GhostBtn>
             <GhostBtn onClick={copyLink} title="Copy shareable link">Copy Link</GhostBtn>
