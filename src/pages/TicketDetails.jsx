@@ -43,8 +43,6 @@ const APP_BASE =
   import.meta.env.VITE_APP_BASE_URL ||
   "https://movie-ticket-booking-rajy.netlify.app"; // default for production
 
-console.log("[TicketDetails] APP_BASE =", APP_BASE);
-
 export default function TicketDetails() {
   const { id: idFromRoute } = useParams();
   const location = useLocation();
@@ -104,6 +102,107 @@ export default function TicketDetails() {
       setError("Booking not found.");
     }
   }, [bookingId, token, urlToken]);
+
+  // ------------------ Seat formatting helper ------------------
+  /**
+   * formatSeats accepts booking.seats in various formats:
+   * - [{row: "A", col: 6}, ...]
+   * - ["A-6", "A-7"]
+   * - [5,6,7]  (numeric seat ids; converted to row/col using seatsPerRow)
+   * - ["5-10"] (range string, will expand)
+   *
+   * Default seatsPerRow is 10; change if your theater layout differs.
+   */
+  const formatSeats = (
+    seatInput,
+    { seatsPerRow = 10, rows = "ABCDEFGHIJKLMNOPQRSTUVWXYZ" } = {}
+  ) => {
+    if (!seatInput || !Array.isArray(seatInput) || seatInput.length === 0) return "—";
+
+    const normalizeOne = (s) => {
+      // object like { row: "A", col: 6 }
+      if (s && typeof s === "object" && ("row" in s || "col" in s)) {
+        const r = s.row ?? "";
+        const c = s.col ?? "";
+        return r && c ? `${String(r).toUpperCase()}-${c}` : `${r}${c}`.trim() || null;
+      }
+
+      // already formatted string like "A-6"
+      if (typeof s === "string") {
+        const trimmed = s.trim();
+        // if string matches pattern Letter-Number (e.g., A-6) -> return as-is (normalized)
+        if (/^[A-Za-z]+[-\s]?\d+$/.test(trimmed)) {
+          const parts = trimmed.split(/[-\s]/).filter(Boolean);
+          return parts.length >= 2 ? `${parts[0].toUpperCase()}-${parts[1]}` : trimmed;
+        }
+
+        // numeric range like "5-10" or "5,6,7"
+        if (/^\d+\s*[-,]\s*\d+/.test(trimmed) || /^[\d\s,]+$/.test(trimmed)) {
+          return trimmed; // handled later for expansion
+        }
+
+        // plain numeric string
+        if (/^\d+$/.test(trimmed)) {
+          return Number(trimmed);
+        }
+
+        // fallback - return original string
+        return trimmed;
+      }
+
+      // numeric seat id -> return as number (we'll convert below)
+      if (typeof s === "number" && Number.isFinite(s)) return s;
+
+      return null;
+    };
+
+    // expand ranges and mixed inputs to flat numbers/strings/objects
+    const expanded = [];
+    for (const raw of seatInput) {
+      const n = normalizeOne(raw);
+      if (n == null) continue;
+
+      if (typeof n === "string" && /^\d+\s*-\s*\d+$/.test(n)) {
+        // range "5-10"
+        const [a, b] = n.split("-").map((x) => parseInt(x.trim(), 10)).sort((x, y) => x - y);
+        for (let v = a; v <= b; v++) expanded.push(v);
+        continue;
+      }
+
+      if (typeof n === "string" && n.includes(",")) {
+        // comma-separated numbers "5,6,7"
+        n.split(",").forEach((p) => {
+          const val = p.trim();
+          if (/^\d+$/.test(val)) expanded.push(Number(val));
+          else expanded.push(val);
+        });
+        continue;
+      }
+
+      expanded.push(n);
+    }
+
+    // convert numeric ids to row-col format
+    const mapped = expanded.map((item) => {
+      if (typeof item === "string" && /^[A-Za-z]+-\d+$/.test(item)) return item; // already A-6
+      if (typeof item === "string" && /^[A-Za-z]+$/.test(item)) return item; // just a letter (rare)
+      if (typeof item === "number") {
+        // seat numbering assumed 1-indexed across rows
+        const idx = item - 1; // zero-index
+        const rowIndex = Math.floor(idx / seatsPerRow);
+        const rowLetter = rows[rowIndex] ?? `R${rowIndex + 1}`;
+        const colNumber = (idx % seatsPerRow) + 1;
+        return `${rowLetter}-${colNumber}`;
+      }
+      // fallback return as string
+      return String(item);
+    });
+
+    // unique and readable join
+    const unique = [...new Set(mapped)];
+    return unique.join(", ");
+  };
+  // ---------------- end seat formatting ------------------
 
   // Download ticket PDF
   const downloadTicket = async () => {
@@ -239,8 +338,11 @@ export default function TicketDetails() {
   const show = booking.showtime || {};
   const movie = show?.movie?.title ?? "Unknown Movie";
   const screen = show?.screen?.name ?? "—";
-  const seats =
-    booking.seats?.map((s) => `${s.row}-${s.col}`).join(", ") || "—";
+
+  // Use formatSeats helper to support many seat formats.
+  // Adjust seatsPerRow here if your auditorium layout differs.
+  const seats = formatSeats(booking.seats, { seatsPerRow: 10 });
+
   const showtimeValue = show.time || show.startTime || booking.createdAt;
   const formattedTime = showtimeValue
     ? new Intl.DateTimeFormat("en-IN", {
