@@ -1,5 +1,5 @@
-// src/pages/Home.jsx — Walmart style hero with working buttons + image in right card
-import React from "react";
+// src/pages/Home.jsx — Walmart style hero with working buttons + vertical auto-sliding poster carousel
+import React, { useEffect, useState, useRef } from "react";
 import { Link } from "react-router-dom";
 
 /* ------------------------------- Inline Icons ------------------------------ */
@@ -47,7 +47,6 @@ const Pill = ({ children, className = "" }) => (
   </span>
 );
 
-// polymorphic button helpers
 function cx(...a) { return a.filter(Boolean).join(" "); }
 const PrimaryBtn = ({ as: As = "button", to, href, className = "", children, ...props }) => (
   <As
@@ -104,6 +103,93 @@ const QuickCard = ({ title, desc, to, cta, Icon }) => (
   </Card>
 );
 
+/* ------------------------------- Vertical Carousel -------------------------- */
+/*
+  Place posters in public/posters/ as poster1.jpg, poster2.jpg, etc.
+  The carousel is vertical, auto-advances every 3s, and pauses on hover.
+*/
+function VerticalPosterCarousel({
+  images = [
+    "/posters/poster1.jpg",
+    "/posters/poster2.jpg",
+    "/posters/poster3.jpg",
+    "/posters/poster4.jpg",
+  ],
+  interval = 3000,
+  className = ""
+}) {
+  const [index, setIndex] = useState(0);
+  const timerRef = useRef(null);
+  const hoverRef = useRef(false);
+
+  useEffect(() => {
+    startTimer();
+    return () => stopTimer();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const startTimer = () => {
+    stopTimer();
+    timerRef.current = setInterval(() => {
+      if (!hoverRef.current) setIndex((i) => (i + 1) % images.length);
+    }, interval);
+  };
+
+  const stopTimer = () => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  };
+
+  const handleMouseEnter = () => { hoverRef.current = true; };
+  const handleMouseLeave = () => { hoverRef.current = false; };
+
+  // styles: the outer card has fixed height; inner stack is N * 100% height and translateY by index*100%
+  return (
+    <div
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+      className={cx("relative w-[320px] h-[480px] lg:w-[380px] lg:h-[560px] overflow-hidden rounded-2xl shadow-sm", className)}
+    >
+      <div
+        className="absolute inset-0"
+        style={{
+          // inner stack total height
+          height: `${images.length * 100}%`,
+          transform: `translateY(-${index * (100 / images.length)}%)`,
+          transition: "transform 700ms cubic-bezier(.2,.9,.2,1)"
+        }}
+      >
+        {images.map((src, i) => (
+          <div key={i} className="w-full" style={{ height: `${100 / images.length}%` }}>
+            <img
+              src={src}
+              alt={`Poster ${i + 1}`}
+              className="w-full h-full object-cover"
+            />
+          </div>
+        ))}
+      </div>
+
+      {/* overlays (same as original) */}
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(120%_70%_at_30%_0%,rgba(255,255,255,0.25),transparent_60%)]" />
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/35 to-transparent rounded-2xl" />
+      <div className="pointer-events-none absolute inset-0 border border-white/50 m-4 rounded-xl" />
+
+      {/* small vertical indicators at left (optional UX) */}
+      <div className="absolute left-4 top-1/2 transform -translate-y-1/2 flex flex-col gap-2 pointer-events-none">
+        {images.map((_, i) => (
+          <span
+            key={i}
+            className={`w-1.5 h-7 rounded-full transition-all duration-300 ${i === index ? "bg-white/90 scale-100" : "bg-white/40 scale-75"}`}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /* --------------------------------- Page ----------------------------------- */
 export default function Home() {
   const HEADER_H = 64; // adjust if your navbar height differs
@@ -131,8 +217,6 @@ export default function Home() {
           <div className="h-full max-w-7xl mx-auto px-6 md:px-12 flex items-center">
             {/* Left: text + buttons */}
             <div className="max-w-3xl text-white">
-              
-
               <h1 className="mt-3 text-[2.3rem] md:text-6xl lg:text-7xl font-extrabold leading-[1.05] drop-shadow-[0_2px_0_rgba(0,0,0,0.2)]">
                 Book Movies, <span className="underline decoration-4 decoration-[#FFC220] underline-offset-8">Your-Style</span>
               </h1>
@@ -154,22 +238,22 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Right side poster with image */}
+            {/* Right side poster with vertical carousel */}
             <div className="hidden md:block ml-auto relative">
-              <Card className="relative w-[320px] h-[480px] lg:w-[380px] lg:h-[560px] overflow-hidden bg-white/10 border-white/30 backdrop-blur-sm shadow-sm">
-                {/* Image (from public/) */}
-                <img
-                  src="/Poster.jpg"            // ⬅️ put your file in public/ and update name if needed
-                  alt="Featured movie"
-                  className="absolute inset-0 w-full h-full object-cover rounded-2xl"
-                />
-
-                {/* soft highlight & glass border overlays (no click capture) */}
-                <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(120%_70%_at_30%_0%,rgba(255,255,255,0.25),transparent_60%)]" />
-                <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/35 to-transparent rounded-2xl" />
-                <div className="pointer-events-none absolute inset-0 border border-white/50 m-4 rounded-xl" />
-
-               
+              <Card className="relative overflow-hidden bg-white/10 border-white/30 backdrop-blur-sm shadow-sm" as="div">
+                {/* Vertical carousel component */}
+                <div className="p-4">
+                  <VerticalPosterCarousel
+                    images={[
+                      "/posters/poster1.jpg",
+                      "/posters/poster2.jpg",
+                      "/posters/poster3.jpg",
+                      "/posters/poster4.jpg",
+                      // add more if you like
+                    ]}
+                    interval={3000}
+                  />
+                </div>
               </Card>
             </div>
           </div>
