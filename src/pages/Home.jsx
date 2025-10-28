@@ -268,8 +268,8 @@ export default function Home() {
   { jpg: "/Poster1_land.jpg" },
   { jpg: "/Poster2_land.jpg" },
   { jpg: "/Poster3_land.jpg" },
-  { jpg: "/Poster4_land.jpg" }
-   { jpg: "/Poster5_land.jpg" },
+  { jpg: "/Poster4_land.jpg" },
+  { jpg: "/Poster5_land.jpg" },
   { jpg: "/Poster6_land.jpg" },
   { jpg: "/Poster7_land.jpg" },
   { jpg: "/Poster8_land.jpg" },
