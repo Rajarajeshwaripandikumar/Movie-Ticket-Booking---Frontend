@@ -228,7 +228,7 @@ export default function AdminAnalyticsDashboard() {
 
   function ensureController(input) {
     if (!input) return new AbortController();
-    if ("signal" in input and typeof input.abort === "function") return input;
+    if ("signal" in input && typeof input.abort === "function") return input;
     return new AbortController();
   }
 
