@@ -97,22 +97,22 @@ const QuickCard = ({ title, desc, to, cta, Icon }) => (
 /* ------------------------------- Carousel (landscape) ----------------------- */
 /**
  * LandscapeCarousel improvements:
- * - fitMode: "cover" | "contain" (choose contain to show entire 4k poster)
- * - objectPosition: control focal point (e.g. "center right" to push artwork right)
+ * - fitMode: "cover" | "contain"
+ * - objectPosition: control focal point (e.g. "center right")
  * - responsive aspect ratio for consistent layout across breakpoints
  */
 function LandscapeCarousel({
   images = [
-    {  jpg: "/Poster1_land.jpg", title: "Poster 1" },
-    {  jpg: "/Poster2_land.jpg", title: "Poster 2" },
-    {  jpg: "/Poster3_land.jpg", title: "Poster 3" },
-    {  jpg: "/Poster4_land.jpg", title: "Poster 4" },
-    {  jpg: "/Poster5_land.jpg", title: "Poster 5" },
-    {  jpg: "/Poster6_land.jpg", title: "Poster 6" }
+    { jpg: "/Poster1_land.jpg", title: "Poster 1" },
+    { jpg: "/Poster2_land.jpg", title: "Poster 2" },
+    { jpg: "/Poster3_land.jpg", title: "Poster 3" },
+    { jpg: "/Poster4_land.jpg", title: "Poster 4" },
+    { jpg: "/Poster5_land.jpg", title: "Poster 5" },
+    { jpg: "/Poster6_land.jpg", title: "Poster 6" }
   ],
   interval = 3200,
-  fitMode = "contain",           // default to contain so 4K posters fit inside the frame
-  objectPosition = "center right", // nudge the artwork right so headline (left) is visible
+  fitMode = "cover",           // default to cover for full-bleed look
+  objectPosition = "center right",
 }) {
   const [index, setIndex] = useState(0);
   const rootRef = useRef(null);
@@ -216,16 +216,6 @@ function LandscapeCarousel({
         {images.map((img, i) => (
           <div key={i} className="flex-shrink-0 w-full h-full relative">
             <picture>
-              {/*
-                Optional: provide responsive srcSet/sizes to avoid downloading full 4K on small screens.
-                Example (prepare multiple sizes and uncomment):
-                <source
-                  srcSet={`${img.webp_800} 800w, ${img.webp_1280} 1280w, ${img.webp_1920} 1920w`}
-                  type="image/webp"
-                  sizes="(max-width: 640px) 100vw, (max-width: 1024px) 60vw, 40vw"
-                />
-              */}
-              {img.webp && <source srcSet={img.webp} type="image/webp" />}
               <source srcSet={img.jpg} type="image/jpeg" />
               <img
                 src={img.jpg}
@@ -234,7 +224,7 @@ function LandscapeCarousel({
                 draggable={false}
                 className="w-full h-full"
                 style={{
-                  objectFit: fitMode,           // "cover" or "contain"
+                  objectFit: fitMode,           // "cover" ensures full-bleed
                   objectPosition: objectPosition,
                   maxWidth: "100%",
                   maxHeight: "100%",
@@ -249,11 +239,10 @@ function LandscapeCarousel({
         ))}
       </div>
 
-      {/* visual frame */}
+      {/* visual overlays (kept subtle) */}
       <div className="pointer-events-none absolute inset-0 rounded-2xl">
-        <div className="absolute inset-0 bg-[radial-gradient(120%_70%_at_10%_0%,rgba(255,255,255,0.12),transparent_55%)] rounded-2xl" />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/25 to-transparent rounded-2xl" />
-        <div className="absolute inset-0 border border-white/30 m-4 rounded-xl" />
+        <div className="absolute inset-0 bg-[radial-gradient(120%_70%_at_10%_0%,rgba(255,255,255,0.05),transparent_55%)] rounded-2xl" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/12 to-transparent rounded-2xl" />
       </div>
 
       {/* indicators */}
@@ -293,12 +282,12 @@ export default function Home() {
   // configure images used by the carousel (edit names to match your public/ files)
   // NOTE: ensure these files exist in public/ or your hosting setup.
   const carouselImages = [
-    {  jpg: "/Poster1_land.jpg", title: "Poster 1" },
-    {  jpg: "/Poster2_land.jpg", title: "Poster 2" },
-    {  jpg: "/Poster3_land.jpg", title: "Poster 3" },
-    {  jpg: "/Poster4_land.jpg", title: "Poster 4" },
-    {  jpg: "/Poster5_land.jpg", title: "Poster 5" },
-    {  jpg: "/Poster6_land.jpg", title: "Poster 6" }
+    { jpg: "/Poster1_land.jpg", title: "Poster 1" },
+    { jpg: "/Poster2_land.jpg", title: "Poster 2" },
+    { jpg: "/Poster3_land.jpg", title: "Poster 3" },
+    { jpg: "/Poster4_land.jpg", title: "Poster 4" },
+    { jpg: "/Poster5_land.jpg", title: "Poster 5" },
+    { jpg: "/Poster6_land.jpg", title: "Poster 6" },
   ];
 
   return (
@@ -356,22 +345,20 @@ export default function Home() {
           <div
             className="absolute top-1/2 right-0 -translate-y-1/2 z-20 pointer-events-auto"
             style={{
-              width: "min(60vw,1100px)",
-              maxWidth: "1100px",
-              paddingRight: "1.25rem",
+              width: "min(65vw,1200px)",
+              maxWidth: "1200px",
+              paddingRight: "0",
             }}
           >
-            <Card className="relative overflow-visible bg-white/8 border-white/30 backdrop-blur-sm shadow-sm">
-              <div className="p-3 md:p-4">
-                {/* fitMode="contain" shows the entire 4K poster inside the frame.
-                    objectPosition="center right" nudges important subject right so headline area remains visible. */}
-                <LandscapeCarousel
-                  images={carouselImages}
-                  interval={3200}
-                  fitMode="contain"
-                  objectPosition="center right"
-                />
-              </div>
+            {/* Card wrapper kept minimal & transparent so carousel bleeds to edges */}
+            <Card className="relative overflow-hidden bg-transparent border-0 shadow-none rounded-2xl">
+              {/* direct carousel (no inner padding) */}
+              <LandscapeCarousel
+                images={carouselImages}
+                interval={3200}
+                fitMode="cover"
+                objectPosition="center right"
+              />
             </Card>
           </div>
         </div>
