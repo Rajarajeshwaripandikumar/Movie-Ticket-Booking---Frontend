@@ -94,13 +94,7 @@ const QuickCard = ({ title, desc, to, cta, Icon }) => (
   </Card>
 );
 
-/* ------------------------------- LandscapeCarousel ----------------------- */
-/**
- * Permanent fix:
- * - ensure overlay is behind slides (-z-10)
- * - use objectFit: "cover" to avoid washed-out/letterboxed look
- * - keep key={img.jpg} and fallback onError
- */
+/* ------------------------------- Tailwind-friendly LandscapeCarousel ----------------------- */
 function LandscapeCarousel({
   images = [
     { jpg: "/Poster1_land.jpg", title: "Poster 1" },
@@ -111,7 +105,7 @@ function LandscapeCarousel({
     { jpg: "/Poster6_land.jpg", title: "Poster 6" }
   ],
   interval = 3200,
-  fitMode = "cover",            // use cover for hero to better fill the frame
+  fitMode = "cover",
   objectPosition = "center right",
   fallback = "/fallback.jpg",
 }) {
@@ -152,37 +146,24 @@ function LandscapeCarousel({
   const onMouseEnter = () => { hoveringRef.current = true; };
   const onMouseLeave = () => { hoveringRef.current = false; };
 
-  // touch handlers for swipe
+  // touch swipe handlers
   useEffect(() => {
     const el = rootRef.current;
     if (!el) return;
-    let startX = 0;
-    let moved = false;
-
-    const onTouchStart = (e) => {
-      touchingRef.current = true;
-      hoveringRef.current = true; // pause autoplay
-      startX = e.touches[0].clientX;
-      moved = false;
-    };
-    const onTouchMove = (e) => {
-      const dx = e.touches[0].clientX - startX;
-      if (Math.abs(dx) > 10) moved = true;
-    };
+    let startX = 0, moved = false;
+    const onTouchStart = (e) => { touchingRef.current = true; hoveringRef.current = true; startX = e.touches[0].clientX; moved = false; };
+    const onTouchMove = (e) => { const dx = e.touches[0].clientX - startX; if (Math.abs(dx) > 8) moved = true; };
     const onTouchEnd = (e) => {
-      touchingRef.current = false;
-      hoveringRef.current = false;
+      touchingRef.current = false; hoveringRef.current = false;
       if (!moved) return;
       const endX = (e.changedTouches && e.changedTouches[0].clientX) || 0;
       const dx = endX - startX;
-      if (dx < -40) setIndex(i => Math.min(length - 1, i + 1));
-      else if (dx > 40) setIndex(i => Math.max(0, i - 1));
+      if (dx < -40) setIndex(i => (i + 1) % length);
+      else if (dx > 40) setIndex(i => (i - 1 + length) % length);
     };
-
     el.addEventListener("touchstart", onTouchStart, { passive: true });
     el.addEventListener("touchmove", onTouchMove, { passive: true });
     el.addEventListener("touchend", onTouchEnd, { passive: true });
-
     return () => {
       el.removeEventListener("touchstart", onTouchStart);
       el.removeEventListener("touchmove", onTouchMove);
@@ -190,33 +171,33 @@ function LandscapeCarousel({
     };
   }, [length]);
 
+  const slidePercent = 100 / length;
   const trackStyle = {
     width: `${length * 100}%`,
-    transform: `translateX(-${(index * 100) / length}%)`,
+    transform: `translateX(-${index * slidePercent}%)`,
     transition: "transform 700ms cubic-bezier(.2,.9,.2,1)",
-    display: "flex",
     height: "100%",
   };
-
-  const outerClass =
-    "relative overflow-hidden rounded-2xl shadow-2xl w-full " +
-    "aspect-[16/10] md:aspect-[16/9] lg:aspect-[16/9]";
 
   return (
     <div
       ref={rootRef}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
-      className={outerClass}
+      className="relative overflow-hidden rounded-2xl shadow-2xl w-full aspect-[16/10] md:aspect-[16/9] lg:aspect-[16/9]"
       aria-roledescription="carousel"
       aria-label="Featured posters"
     >
-      {/* sliding track (ensure this sits above the overlay) */}
-      <div style={trackStyle} className="relative z-10">
+      {/* track — above overlay */}
+      <div style={trackStyle} className="relative z-10 flex">
         {images.map((img, i) => {
           const src = errorStates[i] ? fallback : img.jpg;
           return (
-            <div key={i} className="flex-shrink-0 w-full h-full relative">
+            <div
+              key={i}
+              className="flex-shrink-0 h-full relative"
+              style={{ flex: `0 0 ${slidePercent}%`, width: `${slidePercent}%`, boxSizing: "border-box" }}
+            >
               <img
                 key={img.jpg}
                 src={src}
@@ -225,10 +206,8 @@ function LandscapeCarousel({
                 draggable={false}
                 className="w-full h-full block"
                 style={{
-                  objectFit: fitMode,           // now "cover"
-                  objectPosition: objectPosition,
-                  maxWidth: "100%",
-                  maxHeight: "100%",
+                  objectFit: fitMode,
+                  objectPosition,
                 }}
                 onError={(e) => {
                   e.target.src = fallback;
@@ -244,11 +223,11 @@ function LandscapeCarousel({
         })}
       </div>
 
-      {/* visual frame — place behind slides so it never covers them */}
+      {/* frame & decorations — behind slides so they never cover */}
       <div className="pointer-events-none absolute inset-0 rounded-2xl -z-10">
-        <div className="absolute inset-0 bg-[radial-gradient(120%_70%_at_10%_0%,rgba(255,255,255,0.12),transparent_55%)] rounded-2xl" />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/25 to-transparent rounded-2xl" />
-        <div className="absolute inset-0 border border-white/30 m-4 rounded-xl" />
+        <div className="absolute inset-0 rounded-2xl" style={{ background: "radial-gradient(120% 70% at 10% 0%, rgba(255,255,255,0.12), transparent 55%)" }} />
+        <div className="absolute inset-0 rounded-2xl bg-gradient-to-t from-black/25 to-transparent" />
+        <div className="absolute inset-0 m-4 rounded-xl border border-white/30" />
       </div>
 
       {/* indicators */}
@@ -264,6 +243,7 @@ function LandscapeCarousel({
         ))}
       </div>
 
+      {/* nav buttons */}
       <button
         onClick={() => setIndex((i) => (i - 1 + length) % length)}
         aria-label="Previous slide"
