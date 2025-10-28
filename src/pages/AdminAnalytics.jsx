@@ -1,5 +1,4 @@
 // frontend/src/pages/AdminAnalytics.jsx — Walmart Style (Blue, Rounded, Clean)
-// Full analytics page with Alerts slide-over and Filters panel
 import React, { useState, useEffect, useRef } from "react";
 import {
   TrendingUp,
@@ -32,17 +31,13 @@ import {
 
 /* ======================== Config / API helpers ======================== */
 function resolveApiBase() {
-  // Analytics-specific base (keeps backward compatibility)
   const base =
     import.meta.env.VITE_API_BASE ||
     import.meta.env.VITE_API_BASE_URL ||
     "http://localhost:8080";
-  // analytics endpoints live at /api/analytics
-  const analyticsBase = `${base.replace(/\/+$/, "")}/api/analytics`;
-  return analyticsBase;
+  return `${base.replace(/\/+$/, "")}/api/analytics`;
 }
 const API_BASE = resolveApiBase();
-// Root API (for notifications, theaters, movies etc)
 const API_ROOT = API_BASE.replace(/\/api\/analytics$/, "").replace(/\/+$/, "");
 
 const authHeaders = () => {
@@ -52,7 +47,6 @@ const authHeaders = () => {
 };
 
 async function getJSON(path, params = {}, options = {}) {
-  // options: { root: boolean, signal: AbortSignal }
   const base = options.root ? API_ROOT : API_BASE;
   const rel = path.startsWith("/") ? path.slice(1) : path;
   const url = new URL(rel, base + "/");
@@ -60,23 +54,33 @@ async function getJSON(path, params = {}, options = {}) {
     if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
   });
   const headers = { "Content-Type": "application/json", ...authHeaders() };
-  const res = await fetch(url.toString(), { headers, signal: options.signal, credentials: "include" });
+  const res = await fetch(url.toString(), {
+    headers,
+    signal: options.signal,
+    credentials: "include",
+  });
   if (!res.ok) {
     let detail = "";
-    try { detail = (await res.json())?.message || ""; } catch {}
-    const baseMsg = `HTTP ${res.status} ${res.statusText}`;
-    throw new Error(detail ? `${baseMsg} — ${detail}` : baseMsg);
+    try {
+      detail = (await res.json())?.message || "";
+    } catch {}
+    throw new Error(
+      `HTTP ${res.status} ${res.statusText}${detail ? " — " + detail : ""}`
+    );
   }
   return res.json();
 }
 
-/* ======================== UI primitives & helpers ======================== */
+/* ======================== UI primitives ======================== */
 const BLUE = "#0071DC";
 const BLUE_DARK = "#0654BA";
 const SOFT = "#94A3B8";
 
 const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
-  <Tag className={`bg-white border border-slate-200 rounded-2xl shadow-sm ${className}`} {...rest}>
+  <Tag
+    className={`bg-white border border-slate-200 rounded-2xl shadow-sm ${className}`}
+    {...rest}
+  >
     {children}
   </Tag>
 );
@@ -115,7 +119,11 @@ function Segments({ value, onChange }) {
         <button
           key={r.id}
           onClick={() => onChange(r.id)}
-          className={`px-3 py-1.5 rounded-full text-sm transition ${value === r.id ? "bg-white text-slate-900 shadow-sm border border-slate-200" : "text-slate-600 hover:text-slate-800"}`}
+          className={`px-3 py-1.5 rounded-full text-sm transition ${
+            value === r.id
+              ? "bg-white text-slate-900 shadow-sm border border-slate-200"
+              : "text-slate-600 hover:text-slate-800"
+          }`}
           aria-pressed={value === r.id}
         >
           {r.label}
@@ -128,7 +136,11 @@ function Segments({ value, onChange }) {
 function formatCurrency(n) {
   const v = Number.isFinite(+n) ? +n : 0;
   try {
-    return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(v);
+    return new Intl.NumberFormat("en-IN", {
+      style: "currency",
+      currency: "INR",
+      maximumFractionDigits: 0,
+    }).format(v);
   } catch {
     return `₹${v.toLocaleString("en-IN")}`;
   }
@@ -222,20 +234,19 @@ const fmtDay = (d) => {
 
 const toRevenueDaily = (arr = []) =>
   (arr || []).map((d, i) => {
-    const iso = d?.date?.slice?.(0, 10) || d?.dayISO || d?.day || null;
+    const iso = d?.date?.slice?.(0, 10) || d?.dayISO || d?.day || d?._id || null;
     const revenue = Number(d.totalRevenue ?? d.total ?? d.revenue ?? 0);
     return { day: fmtDay(iso || `D${i + 1}`), dayISO: iso, revenue, bookings: Number(d.bookings ?? d.totalBookings ?? 0) };
   });
 
 const toDauDaily = (arr = []) =>
   (arr || []).map((d, i) => {
-    const iso = d?.date?.slice?.(0, 10) || d?.dayISO || d?.day || null;
+    const iso = d?.date?.slice?.(0, 10) || d?.dayISO || d?.day || d?._id || null;
     return { day: fmtDay(iso || `D${i + 1}`), dayISO: iso, users: Number(d.dau ?? d.count ?? d.users ?? 0) };
   });
 
 const toMovies = (arr = []) =>
   (arr || []).map((m = {}) => {
-    // Prefer backend-provided movieName and movieId fields from the updated analytics API
     const title =
       m.movieName ||
       m.movieTitle ||
@@ -252,11 +263,9 @@ const toMovies = (arr = []) =>
 
 const toTheaterOcc = (arr = []) =>
   (arr || []).map((t = {}) => {
-    // backend returns occupancy as percent 0-100 in many pipelines; handle both fraction and percent
     const raw = t.occupancy ?? t.occupancyRate ?? t.avgOccupancy ?? t.occupancyPercent ?? 0;
     let occPct = Number(raw ?? 0);
     if (!Number.isFinite(occPct)) occPct = 0;
-    // if value is fraction (0-1) convert to percent
     if (occPct <= 1) occPct = occPct * 100;
     occPct = Math.round(Math.max(0, Math.min(100, occPct)));
     const name = t.theaterName ?? t.name ?? t.theater ?? t.theater_name ?? "Unknown";
@@ -317,15 +326,25 @@ export default function AdminAnalyticsDashboard() {
     }
   }
 
-  async function loadData(selectedRange, signal) {
-    controllerRef.current?.abort();
-    const controller = signal || new AbortController();
+  function ensureController(input) {
+    if (!input) return new AbortController();
+    if ("signal" in input && typeof input.abort === "function") return input;
+    if ("aborted" in input) {
+      const c = new AbortController();
+      input.addEventListener?.("abort", () => c.abort());
+      return c;
+    }
+    return new AbortController();
+  }
+
+  async function loadData(selectedRange, controllerOrSignal) {
+    controllerRef.current?.abort?.();
+    const controller = ensureController(controllerOrSignal);
     controllerRef.current = controller;
     setLoading(true);
     setError("");
     const days = daysOf(selectedRange);
     try {
-      // include filters as query params targeting analytics routes (backend may ignore if not implemented)
       const params = { days, ...(filters.theater ? { theater: filters.theater } : {}), ...(filters.movie ? { movie: filters.movie } : {}) };
 
       const [revTrends, dau, movies, occ, bookSum, bookSum7] = await Promise.all([
