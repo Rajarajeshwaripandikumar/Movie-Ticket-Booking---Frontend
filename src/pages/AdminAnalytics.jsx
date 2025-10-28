@@ -228,7 +228,7 @@ export default function AdminAnalyticsDashboard() {
 
   function ensureController(input) {
     if (!input) return new AbortController();
-    if ("signal" in input && typeof input.abort === "function") return input;
+    if ("signal" in input and typeof input.abort === "function") return input;
     return new AbortController();
   }
 
@@ -272,12 +272,17 @@ export default function AdminAnalyticsDashboard() {
     }
   }
 
-  /* ================== CSV Export (multi-section) ================== */
+  /* ================== CSV Export (Excel-safe: wrap dates as text) ================== */
   function exportCSV() {
     const csvEscape = (v) => {
       if (v === undefined || v === null) return "";
       const s = String(v);
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+
+    const wrapExcelText = (s) => {
+      if (s === undefined || s === null || s === "") return "";
+      return `="${String(s)}"`;
     };
 
     const makeCSV = (title, headers, rows) => {
@@ -291,16 +296,16 @@ export default function AdminAnalyticsDashboard() {
       return csv;
     };
 
-    // Prepare rows with explicit dayISO fields so Excel can parse dates reliably.
+    // Prepare rows with explicit dayISO fields but force them to Excel-text to avoid #####
     const revRows = (revenueDaily || []).map((r) => ({
-      dayISO: r.dayISO || "",
-      day: r.day || "",
+      dayISO: wrapExcelText(r.dayISO || ""),
+      day: wrapExcelText(r.day || ""),
       revenue: r.revenue ?? 0,
       bookings: r.bookings ?? 0,
     }));
     const dauRows = (dauDaily || []).map((r) => ({
-      dayISO: r.dayISO || "",
-      day: r.day || "",
+      dayISO: wrapExcelText(r.dayISO || ""),
+      day: wrapExcelText(r.day || ""),
       users: r.users ?? 0,
     }));
     const occRows = (theaterOcc || []).map((r) => ({
@@ -322,7 +327,7 @@ export default function AdminAnalyticsDashboard() {
     sections.push(makeCSV("Theater Occupancy", ["name", "occupancy", "totalBooked", "totalCapacity"], occRows));
     sections.push(makeCSV("Top Movies", ["title", "bookings", "revenue", "seatsBooked"], movieRows));
 
-    // Prepend UTF-8 BOM so Excel (Windows) recognizes UTF-8 and date columns better.
+    // Prepend UTF-8 BOM so Excel (Windows) recognizes UTF-8
     const csvContent = "\uFEFF" + sections.join("");
 
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
