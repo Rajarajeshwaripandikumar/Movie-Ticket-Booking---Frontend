@@ -101,6 +101,10 @@ function LandscapeCarousel({
     { webp: "/Poster2_land.webp", jpg: "/Poster2_land.jpg", title: "Poster 2" },
     { webp: "/Poster3_land.webp", jpg: "/Poster3_land.jpg", title: "Poster 3" },
     { webp: "/Poster4_land.webp", jpg: "/Poster4_land.jpg", title: "Poster 4" },
+     { webp: "/Poster5_land.webp", jpg: "/Poster5_land.jpg", title: "Poster 5" },
+    { webp: "/Poster6_land.webp", jpg: "/Poster6_land.jpg", title: "Poster 6" },
+    { webp: "/Poster7_land.webp", jpg: "/Poster7_land.jpg", title: "Poster 7" },
+    { webp: "/Poster8_land.webp", jpg: "/Poster8_land.jpg", title: "Poster 8" }
   ],
   interval = 3200,
 }) {
