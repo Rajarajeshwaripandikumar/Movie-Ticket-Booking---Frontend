@@ -94,12 +94,12 @@ const QuickCard = ({ title, desc, to, cta, Icon }) => (
   </Card>
 );
 
-/* ------------------------------- Robust LandscapeCarousel ----------------------- */
+/* ------------------------------- LandscapeCarousel ----------------------- */
 /**
- * - Preloads images and logs load/error
- * - Shows a tiny badge (loading/loaded/error) for debugging on each slide
- * - Uses fallback.jpg when an image fails
- * - Adds key={img.jpg} on img to avoid first-frame React reuse bug
+ * Permanent fix:
+ * - ensure overlay is behind slides (-z-10)
+ * - use objectFit: "cover" to avoid washed-out/letterboxed look
+ * - keep key={img.jpg} and fallback onError
  */
 function LandscapeCarousel({
   images = [
@@ -111,12 +111,11 @@ function LandscapeCarousel({
     { jpg: "/Poster6_land.jpg", title: "Poster 6" }
   ],
   interval = 3200,
-  fitMode = "contain",
+  fitMode = "cover",            // use cover for hero to better fill the frame
   objectPosition = "center right",
   fallback = "/fallback.jpg",
 }) {
   const [index, setIndex] = useState(0);
-  const [loadedStates, setLoadedStates] = useState(() => images.map(() => false));
   const [errorStates, setErrorStates] = useState(() => images.map(() => false));
   const timerRef = useRef(null);
   const hoveringRef = useRef(false);
@@ -124,24 +123,6 @@ function LandscapeCarousel({
   const rootRef = useRef(null);
   const length = images.length;
 
-  // preload + set flags
-  useEffect(() => {
-    images.forEach((img, i) => {
-      const pre = new Image();
-      pre.src = img.jpg;
-      pre.onload = () => {
-        setLoadedStates(prev => { const n = [...prev]; n[i] = true; return n; });
-        console.log("Loaded:", img.jpg);
-      };
-      pre.onerror = () => {
-        setErrorStates(prev => { const n = [...prev]; n[i] = true; return n; });
-        console.error("Error loading:", img.jpg);
-      };
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [images.map(im => im.jpg).join("|")]);
-
-  // autoplay
   useEffect(() => {
     startTimer();
     const handleKey = (e) => {
@@ -171,24 +152,37 @@ function LandscapeCarousel({
   const onMouseEnter = () => { hoveringRef.current = true; };
   const onMouseLeave = () => { hoveringRef.current = false; };
 
-  // swipe handlers
+  // touch handlers for swipe
   useEffect(() => {
     const el = rootRef.current;
     if (!el) return;
-    let startX = 0, moved = false;
-    const onTouchStart = (e) => { touchingRef.current = true; hoveringRef.current = true; startX = e.touches[0].clientX; moved = false; };
-    const onTouchMove = (e) => { const dx = e.touches[0].clientX - startX; if (Math.abs(dx) > 8) moved = true; };
+    let startX = 0;
+    let moved = false;
+
+    const onTouchStart = (e) => {
+      touchingRef.current = true;
+      hoveringRef.current = true; // pause autoplay
+      startX = e.touches[0].clientX;
+      moved = false;
+    };
+    const onTouchMove = (e) => {
+      const dx = e.touches[0].clientX - startX;
+      if (Math.abs(dx) > 10) moved = true;
+    };
     const onTouchEnd = (e) => {
-      touchingRef.current = false; hoveringRef.current = false;
+      touchingRef.current = false;
+      hoveringRef.current = false;
       if (!moved) return;
       const endX = (e.changedTouches && e.changedTouches[0].clientX) || 0;
       const dx = endX - startX;
-      if (dx < -40) setIndex(i => (i + 1) % length);
-      else if (dx > 40) setIndex(i => (i - 1 + length) % length);
+      if (dx < -40) setIndex(i => Math.min(length - 1, i + 1));
+      else if (dx > 40) setIndex(i => Math.max(0, i - 1));
     };
+
     el.addEventListener("touchstart", onTouchStart, { passive: true });
     el.addEventListener("touchmove", onTouchMove, { passive: true });
     el.addEventListener("touchend", onTouchEnd, { passive: true });
+
     return () => {
       el.removeEventListener("touchstart", onTouchStart);
       el.removeEventListener("touchmove", onTouchMove);
@@ -196,7 +190,6 @@ function LandscapeCarousel({
     };
   }, [length]);
 
-  // track style
   const trackStyle = {
     width: `${length * 100}%`,
     transform: `translateX(-${(index * 100) / length}%)`,
@@ -218,41 +211,32 @@ function LandscapeCarousel({
       aria-roledescription="carousel"
       aria-label="Featured posters"
     >
-      <div style={trackStyle}>
+      {/* sliding track (ensure this sits above the overlay) */}
+      <div style={trackStyle} className="relative z-10">
         {images.map((img, i) => {
           const src = errorStates[i] ? fallback : img.jpg;
           return (
-            <div key={i} className="flex-shrink-0 w-full h-full relative bg-gray-100">
+            <div key={i} className="flex-shrink-0 w-full h-full relative">
               <img
-                key={img.jpg} // important: force re-mount when src changes
+                key={img.jpg}
                 src={src}
                 alt={img.title || `Poster ${i + 1}`}
                 loading="lazy"
                 draggable={false}
-                className="w-full h-full"
+                className="w-full h-full block"
                 style={{
-                  objectFit: fitMode,
+                  objectFit: fitMode,           // now "cover"
                   objectPosition: objectPosition,
                   maxWidth: "100%",
                   maxHeight: "100%",
                 }}
                 onError={(e) => {
-                  console.error("img onError:", img.jpg);
                   e.target.src = fallback;
                   setErrorStates(prev => { const n = [...prev]; n[i] = true; return n; });
                 }}
-                onLoad={() => {
-                  setLoadedStates(prev => { const n = [...prev]; n[i] = true; return n; });
-                }}
               />
 
-              {/* debug badge — remove in production if you want */}
-              <div className="absolute left-3 top-3 px-2 py-1 rounded-sm text-xs bg-black/40 text-white z-10">
-                {errorStates[i] ? "error" : loadedStates[i] ? "loaded" : "loading"}
-              </div>
-
-              {/* small caption */}
-              <div className="pointer-events-none absolute left-6 bottom-6 bg-black/30 backdrop-blur-sm px-3 py-1.5 rounded-md text-sm text-white/90">
+              <div className="pointer-events-none absolute left-6 bottom-6 bg-black/30 backdrop-blur-sm px-3 py-1.5 rounded-md text-sm text-white/90 z-20">
                 {img.title}
               </div>
             </div>
@@ -260,8 +244,8 @@ function LandscapeCarousel({
         })}
       </div>
 
-      {/* visual frame */}
-      <div className="pointer-events-none absolute inset-0 rounded-2xl">
+      {/* visual frame — place behind slides so it never covers them */}
+      <div className="pointer-events-none absolute inset-0 rounded-2xl -z-10">
         <div className="absolute inset-0 bg-[radial-gradient(120%_70%_at_10%_0%,rgba(255,255,255,0.12),transparent_55%)] rounded-2xl" />
         <div className="absolute inset-0 bg-gradient-to-t from-black/25 to-transparent rounded-2xl" />
         <div className="absolute inset-0 border border-white/30 m-4 rounded-xl" />
@@ -284,14 +268,14 @@ function LandscapeCarousel({
         onClick={() => setIndex((i) => (i - 1 + length) % length)}
         aria-label="Previous slide"
         className="pointer-events-auto absolute left-3 top-1/2 -translate-y-1/2 rounded-full bg-black/30 p-2 text-white hover:bg-black/45"
-        style={{ backdropFilter: "blur(4px)" }}
+        style={{ backdropFilter: "blur(4px)", zIndex: 30 }}
       >‹</button>
 
       <button
         onClick={() => setIndex((i) => (i + 1) % length)}
         aria-label="Next slide"
         className="pointer-events-auto absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-black/30 p-2 text-white hover:bg-black/45"
-        style={{ backdropFilter: "blur(4px)" }}
+        style={{ backdropFilter: "blur(4px)", zIndex: 30 }}
       >›</button>
     </div>
   );
@@ -377,7 +361,7 @@ export default function Home() {
                 <LandscapeCarousel
                   images={carouselImages}
                   interval={3200}
-                  fitMode="contain"
+                  fitMode="cover"
                   objectPosition="center right"
                   fallback="/fallback.jpg"
                 />
