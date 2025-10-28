@@ -260,12 +260,13 @@ export default function Home() {
   const HEADER_H = 64;
 
   // configure images used by the carousel (edit names to match your public/ files)
-  const carouselImages = [
-    { webp: "/Poster1_land.webp", jpg: "/Poster1_land.jpg", title: "The Epic Adventure" },
-    { webp: "/Poster2_land.webp", jpg: "/Poster2_land.jpg", title: "Mystery of the Night" },
-    { webp: "/Poster3_land.webp", jpg: "/Poster3_land.jpg", title: "Summer Heist" },
-    { webp: "/Poster4_land.webp", jpg: "/Poster4_land.jpg", title: "Legends Rise" },
-  ];
+ const carouselImages = [
+  { jpg: "/Poster1_land.jpg", title: "The Epic Adventure" },
+  { jpg: "/Poster1_land.jpg", title: "Mystery of the Night" },
+  { jpg: "/Poster1_land.jpg", title: "Summer Heist" },
+  { jpg: "/Poster1_land.jpg", title: "Legends Rise" },
+];
+
 
   return (
     <main className="bg-slate-50 text-slate-900">
