@@ -1,5 +1,4 @@
-// frontend/src/pages/AdminAnalytics.jsx — Walmart Style (Blue, Rounded, Clean)
-// Robust version: tolerant API base resolution and correct /api root handling
+// frontend/src/pages/AdminAnalytics.jsx
 import React, { useState, useEffect, useRef } from "react";
 import {
   TrendingUp,
@@ -30,99 +29,70 @@ import {
   Line,
 } from "recharts";
 
-/* ======================== Config / API helpers ========================
-   This version makes resolveApiBase tolerant of VITE_API_BASE values that
-   may already contain `/api` or `/api/analytics`. It exposes two values:
-     - API_BASE  => analytics endpoints (ends with /api/analytics)
-     - API_ROOT  => backend API root (ends with /api)
-   Use getJSON(..., { root: true }) when you need the "root" APIs
-   (theaters, movies, notifications).
-   Use getJSON(..., { root: false }) for analytics endpoints (revenue/users/...).
-   ===================================================================== */
+/* ======================== API base helpers ======================== */
 function resolveApiBase() {
   const raw =
     import.meta.env.VITE_API_BASE ||
     import.meta.env.VITE_API_BASE_URL ||
     "http://localhost:8080";
 
-  // strip trailing slashes
   let base = String(raw).replace(/\/+$/, "");
-
-  // If base contains /api/... remove it to get origin/root
+  // remove any trailing /api/... to get root
   base = base.replace(/\/api(\/.*)?$/i, "");
-
-  const API_ROOT = `${base}/api`.replace(/\/+$/, ""); // e.g. https://host/.../api
-  const API_BASE = `${API_ROOT}/analytics`.replace(/\/+$/, ""); // e.g. https://host/.../api/analytics
-
-  // keep legacy compat: many callers expect /api/analytics/<route>
-  // We'll call analytics routes like `${API_BASE}/revenue/trends`
+  const API_ROOT = `${base}/api`.replace(/\/+$/, "");
+  const API_BASE = `${API_ROOT}/analytics`.replace(/\/+$/, "");
   return { API_BASE, API_ROOT };
 }
 const { API_BASE, API_ROOT } = resolveApiBase();
 
 const authHeaders = () => {
-  const token =
-    localStorage.getItem("token") || localStorage.getItem("jwt") || "";
+  const token = localStorage.getItem("token") || localStorage.getItem("jwt") || "";
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
 async function getJSON(path, params = {}, options = {}) {
   // options: { root: boolean, signal: AbortSignal }
-  // root: uses API_ROOT (e.g. /api/theaters). false: uses API_BASE (analytics).
   const base = options.root ? API_ROOT : API_BASE;
-  // ensure path isn't duplicated (strip leading slash)
   const rel = path.startsWith("/") ? path.slice(1) : path;
   const url = new URL(rel, base + "/");
   Object.entries(params || {}).forEach(([k, v]) => {
-    if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
+    if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, String(v));
   });
-  const headers = { "Content-Type": "application/json", ...authHeaders() };
   const res = await fetch(url.toString(), {
-    headers,
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     signal: options.signal,
     credentials: "include",
   });
   if (!res.ok) {
-    let detail = "";
+    let msg = "";
     try {
-      detail = (await res.json())?.message || "";
+      msg = (await res.json())?.message || "";
     } catch {}
-    throw new Error(
-      `HTTP ${res.status} ${res.statusText}${detail ? " — " + detail : ""}`
-    );
+    throw new Error(`HTTP ${res.status}: ${msg || res.statusText}`);
   }
   return res.json();
 }
 
-/* ======================== UI primitives ======================== */
+/* ======================== Styling primitives ======================== */
 const BLUE = "#0071DC";
-const BLUE_DARK = "#0654BA";
 const SOFT = "#94A3B8";
 
-const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
-  <Tag
-    className={`bg-white border border-slate-200 rounded-2xl shadow-sm ${className}`}
-    {...rest}
-  >
-    {children}
-  </Tag>
+const Card = ({ children, className = "" }) => (
+  <div className={`bg-white border border-slate-200 rounded-2xl shadow-sm ${className}`}>{children}</div>
 );
-
-const Pill = ({ children, className = "", style = {}, ...props }) => (
+const Pill = ({ children, className = "", ...props }) => (
   <button
     {...props}
-    style={{ background: "white", borderColor: "#E6E7EB", ...style }}
-    className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm text-slate-800 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 ${className}`}
+    className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm text-slate-800 border border-slate-200 hover:bg-slate-50 ${className}`}
   >
     {children}
   </button>
 );
-
-const Primary = ({ children, className = "", style = {}, ...props }) => (
+const Primary = ({ children, className = "", ...props }) => (
   <button
     {...props}
-    style={{ backgroundColor: BLUE, color: "white", ...style }}
-    className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold hover:opacity-95 focus-visible:outline-none focus-visible:ring-2 ${className}`}
+    className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold text-white`} 
+    style={{ backgroundColor: BLUE }}
   >
     {children}
   </button>
@@ -135,120 +105,17 @@ const ranges = [
   { id: "90d", label: "Last 90d", days: 90 },
 ];
 
-function Segments({ value, onChange }) {
-  return (
-    <div className="flex items-center gap-1.5 bg-slate-100 rounded-full p-1">
-      {ranges.map((r) => (
-        <button
-          key={r.id}
-          onClick={() => onChange(r.id)}
-          className={`px-3 py-1.5 rounded-full text-sm transition ${
-            value === r.id
-              ? "bg-white text-slate-900 shadow-sm border border-slate-200"
-              : "text-slate-600 hover:text-slate-800"
-          }`}
-          aria-pressed={value === r.id}
-        >
-          {r.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function formatCurrency(n) {
+/* ======================== Formatters & transforms ======================== */
+const formatCurrency = (n) => {
   const v = Number.isFinite(+n) ? +n : 0;
   try {
-    return new Intl.NumberFormat("en-IN", {
-      style: "currency",
-      currency: "INR",
-      maximumFractionDigits: 0,
-    }).format(v);
+    return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(v);
   } catch {
     return `₹${v.toLocaleString("en-IN")}`;
   }
-}
+};
 const formatInt = (n) => (Number.isFinite(+n) ? Math.round(+n).toLocaleString("en-IN") : "0");
 
-function Stat({ icon: Icon, label, value, delta }) {
-  const DeltaIcon = delta == null ? null : delta >= 0 ? TrendingUp : TrendingDown;
-  const deltaColor = delta == null ? "" : delta >= 0 ? "text-emerald-600 bg-emerald-50" : "text-rose-600 bg-rose-50";
-  return (
-    <Card className="p-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <span className="inline-grid place-items-center h-10 w-10 rounded-xl border border-slate-200 bg-sky-50">
-            <Icon className="h-5 w-5 text-slate-900" aria-hidden="true" />
-          </span>
-          <div>
-            <p className="text-xs text-slate-600">{label}</p>
-            <p className="text-xl font-extrabold text-slate-900">{value}</p>
-          </div>
-        </div>
-        {DeltaIcon && (
-          <span className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full ${deltaColor}`}>
-            <DeltaIcon className="h-3.5 w-3.5" />
-            <span className="font-semibold">{Math.abs(delta)}%</span>
-          </span>
-        )}
-      </div>
-    </Card>
-  );
-}
-
-function ChartCard({ title, subtitle, children, right }) {
-  return (
-    <Card className="p-4">
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-xs text-slate-600">{subtitle}</p>
-          <h3 className="text-lg font-extrabold text-slate-900">{title}</h3>
-        </div>
-        {right}
-      </div>
-      <div className="mt-4 h-64">{children}</div>
-    </Card>
-  );
-}
-
-function SimpleTable({ title, rows, columns }) {
-  return (
-    <Card className="p-4">
-      <h3 className="text-lg font-extrabold text-slate-900">{title}</h3>
-      <div className="mt-3 overflow-x-auto">
-        <table className="min-w-full text-sm">
-          <thead>
-            <tr className="text-left text-slate-600">
-              {columns.map((c) => (
-                <th key={c.key} className="py-2 font-semibold">{c.label}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r, i) => (
-              <tr key={i} className="border-t border-slate-200">
-                {columns.map((c) => (
-                  <td key={c.key} className="py-2">{c.render ? c.render(r[c.key], r) : r[c.key]}</td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </Card>
-  );
-}
-
-const EmptyMini = ({ label }) => (
-  <div className="h-full w-full grid place-items-center text-center text-sm text-slate-600">
-    <div>
-      <Activity className="h-6 w-6 mx-auto mb-2 opacity-70" />
-      <p>{label}</p>
-    </div>
-  </div>
-);
-
-/* ======================== Data transforms (tolerant) ======================== */
 const fmtDay = (d) => {
   const dt = new Date(d);
   if (isNaN(dt)) return String(d || "");
@@ -257,15 +124,15 @@ const fmtDay = (d) => {
 
 const toRevenueDaily = (arr = []) =>
   (arr || []).map((d, i) => {
-    const iso = d?.date?.slice?.(0, 10) || d?.dayISO || d?.day || d?._id || null;
+    const iso = d?.date?.slice?.(0, 10) || d?.dayISO || d?.day || d?._id || `D${i + 1}`;
     const revenue = Number(d.totalRevenue ?? d.total ?? d.revenue ?? 0);
-    return { day: fmtDay(iso || `D${i + 1}`), dayISO: iso, revenue, bookings: Number(d.bookings ?? d.totalBookings ?? 0) };
+    return { day: fmtDay(iso), dayISO: iso, revenue, bookings: Number(d.bookings ?? d.totalBookings ?? 0) };
   });
 
 const toDauDaily = (arr = []) =>
   (arr || []).map((d, i) => {
-    const iso = d?.date?.slice?.(0, 10) || d?.dayISO || d?.day || d?._id || null;
-    return { day: fmtDay(iso || `D${i + 1}`), dayISO: iso, users: Number(d.dau ?? d.count ?? d.users ?? 0) };
+    const iso = d?.date?.slice?.(0, 10) || d?.dayISO || d?.day || d?._id || `D${i + 1}`;
+    return { day: fmtDay(iso), dayISO: iso, users: Number(d.dau ?? d.count ?? d.users ?? 0) };
   });
 
 const toMovies = (arr = []) =>
@@ -276,12 +143,10 @@ const toMovies = (arr = []) =>
       m.title ||
       (m.movie && (m.movie.title || m.movie.name)) ||
       (m.m && (m.m.title || m.m.name)) ||
-      (m.movieId ? String(m.movieId) : null) ||
-      "Unknown";
+      (m.movieId ? String(m.movieId) : "Unknown");
     const revenue = Number(m.totalRevenue ?? m.total ?? m.revenue ?? 0);
     const bookings = Number(m.totalBookings ?? m.bookings ?? 0);
-    const seatsBooked = Number(m.seatsBooked ?? m.bookedSeats ?? 0);
-    return { title, revenue, bookings, seatsBooked };
+    return { title, revenue, bookings, seatsBooked: Number(m.seatsBooked ?? 0) };
   });
 
 const toTheaterOcc = (arr = []) =>
@@ -292,17 +157,10 @@ const toTheaterOcc = (arr = []) =>
     if (occPct <= 1) occPct = occPct * 100;
     occPct = Math.round(Math.max(0, Math.min(100, occPct)));
     const name = t.theaterName ?? t.name ?? t.theater ?? t.theater_name ?? "Unknown";
-    return { name, occupancy: occPct };
+    return { name, occupancy: occPct, totalBooked: t.totalBooked ?? 0, totalCapacity: t.totalCapacity ?? 0 };
   });
 
-function buildSummary(summaryData = [], dauData = [], revenue7 = 0) {
-  const totals = (summaryData || []).reduce((acc, d) => { acc.revenue += Number(d.revenue ?? 0); acc.orders += Number(d.confirmed ?? d.confirmed ?? 0); return acc; }, { revenue: 0, orders: 0 });
-  const aov = totals.orders ? Math.round(totals.revenue / totals.orders) : 0;
-  const avgDau = dauData && dauData.length ? Math.round((dauData.reduce((s, d) => s + Number(d.dau ?? d.count ?? 0), 0)) / dauData.length) : 0;
-  return { revenue30d: totals.revenue, orders: totals.orders, aov, revenue7d: revenue7, dau: avgDau };
-}
-
-/* ======================== Main component ======================== */
+/* ======================== Main Component ======================== */
 export default function AdminAnalyticsDashboard() {
   const [range, setRange] = useState("30d");
   const [loading, setLoading] = useState(false);
@@ -314,85 +172,97 @@ export default function AdminAnalyticsDashboard() {
   const [topMovies, setTopMovies] = useState([]);
   const [theaterOcc, setTheaterOcc] = useState([]);
 
-  const [movieLimit] = useState(10);
+  // catalogs + filters
+  const [theaters, setTheaters] = useState([]);
+  const [moviesList, setMoviesList] = useState([]);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [filters, setFilters] = useState({ theater: "", movie: "" });
+
+  // alerts
+  const [alertsOpen, setAlertsOpen] = useState(false);
+  const [alerts, setAlerts] = useState([]);
+
   const controllerRef = useRef(null);
   const daysOf = (id) => ranges.find((r) => r.id === id)?.days ?? 30;
 
-  // Alerts + filter UI state
-  const [alertsOpen, setAlertsOpen] = useState(false);
-  const [filtersOpen, setFiltersOpen] = useState(false);
-  const [alerts, setAlerts] = useState([]);
-  const [theaters, setTheaters] = useState([]);
-  const [moviesList, setMoviesList] = useState([]);
-  const [filters, setFilters] = useState({ theater: "", movie: "" });
+  useEffect(() => {
+    // load catalogs for filter selects and alerts
+    const c = new AbortController();
+    loadCatalogs(c.signal);
+    loadAlerts(c.signal);
+    loadData(range, c.signal);
+    return () => c.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  async function loadAlerts(signal) {
-    try {
-      // root: true -> uses API_ROOT (which is <origin>/api)
-      const data = await getJSON("/notifications", {}, { root: true, signal });
-      setAlerts(Array.isArray(data) ? data : data.notifications ?? []);
-    } catch (e) {
-      console.debug("failed to load alerts:", e.message || e);
-    }
-  }
+  useEffect(() => {
+    loadData(range);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [range, filters.theater, filters.movie]);
 
   async function loadCatalogs(signal) {
     try {
       const [t, m] = await Promise.all([
         getJSON("/theaters", {}, { root: true, signal }).catch(() => []),
-        getJSON("/movies", { limit: 200 }, { root: true, signal }).catch(() => []),
+        getJSON("/movies", { limit: 500 }, { root: true, signal }).catch(() => []),
       ]);
       setTheaters(Array.isArray(t) ? t : []);
-      const normMovies = (Array.isArray(m) ? m : []).map((mm) => ({ id: mm._id ?? mm.id ?? mm.movieId ?? null, title: mm.title ?? mm.name ?? mm.movieName ?? String(mm._id ?? mm.id ?? "") }));
-      setMoviesList(normMovies);
+      const norm = (Array.isArray(m) ? m : []).map((mm) => ({
+        id: mm._id ?? mm.id ?? mm.movieId ?? null,
+        title: mm.title ?? mm.name ?? mm.movieName ?? String(mm._id ?? mm.id ?? ""),
+      }));
+      setMoviesList(norm);
     } catch (e) {
       console.debug("catalog load failed:", e.message || e);
+    }
+  }
+
+  async function loadAlerts(signal) {
+    try {
+      const data = await getJSON("/notifications", {}, { root: true, signal }).catch(() => []);
+      setAlerts(Array.isArray(data) ? data : data.notifications ?? []);
+    } catch (e) {
+      // ignore
     }
   }
 
   function ensureController(input) {
     if (!input) return new AbortController();
     if ("signal" in input && typeof input.abort === "function") return input;
-    if ("aborted" in input) {
-      const c = new AbortController();
-      input.addEventListener?.("abort", () => c.abort());
-      return c;
-    }
     return new AbortController();
   }
 
-  async function loadData(selectedRange, controllerOrSignal) {
+  async function loadData(selectedRange, providedSignal) {
     controllerRef.current?.abort?.();
-    const controller = ensureController(controllerOrSignal);
+    const controller = ensureController(providedSignal);
     controllerRef.current = controller;
     setLoading(true);
     setError("");
-    const days = daysOf(selectedRange);
     try {
+      const days = daysOf(selectedRange);
       const params = { days, ...(filters.theater ? { theater: filters.theater } : {}), ...(filters.movie ? { movie: filters.movie } : {}) };
 
-      // analytics endpoints live under API_BASE (/api/analytics); we keep root:false (default)
       const [revTrends, dau, movies, occ, bookSum, bookSum7] = await Promise.all([
         getJSON("/revenue/trends", params, { signal: controller.signal }),
         getJSON("/users/active", params, { signal: controller.signal }),
-        getJSON("/movies/popular", { ...params, limit: movieLimit }, { signal: controller.signal }),
+        getJSON("/movies/popular", { ...params, limit: 10 }, { signal: controller.signal }),
         getJSON("/occupancy", params, { signal: controller.signal }),
         getJSON("/bookings/summary", params, { signal: controller.signal }),
         getJSON("/bookings/summary", { days: 7 }, { signal: controller.signal }),
       ]);
 
-      const revenueDailyT = toRevenueDaily(revTrends || []);
-      const dauDailyT = toDauDaily(dau || []);
-      const moviesT = toMovies(movies || []);
-      const occT = toTheaterOcc(occ || []);
-      const revenue7 = (bookSum7 || []).reduce((s, d) => s + Number(d.revenue ?? 0), 0);
-      const kpis = buildSummary(bookSum || [], dau || [], revenue7);
+      setRevenueDaily(toRevenueDaily(revTrends || []));
+      setDauDaily(toDauDaily(dau || []));
+      setTopMovies(toMovies(movies || []));
+      setTheaterOcc(toTheaterOcc(occ || []));
 
-      setRevenueDaily(revenueDailyT);
-      setDauDaily(dauDailyT);
-      setTopMovies(moviesT);
-      setTheaterOcc(occT);
-      setSummary(kpis);
+      const revenue30 = (bookSum || []).reduce((s, d) => s + Number(d.revenue ?? 0), 0);
+      const orders = (bookSum || []).reduce((s, d) => s + Number(d.confirmed ?? d.confirmed ?? 0), 0);
+      const aov = orders ? Math.round(revenue30 / orders) : 0;
+      const revenue7 = (bookSum7 || []).reduce((s, d) => s + Number(d.revenue ?? 0), 0);
+      const avgDau = (dau || []).length ? Math.round((dau || []).reduce((s, d) => s + Number(d.dau ?? d.count ?? d.users ?? 0), 0) / dau.length) : 0;
+
+      setSummary({ revenue30d: revenue30, orders, aov, revenue7d: revenue7, dau: avgDau });
     } catch (e) {
       if (e.name === "AbortError") return;
       console.error("Analytics load failed:", e);
@@ -402,24 +272,26 @@ export default function AdminAnalyticsDashboard() {
     }
   }
 
-  useEffect(() => {
-    const c = new AbortController();
-    loadData(range, c);
-    loadCatalogs(c.signal).catch(() => {});
-    loadAlerts(c.signal).catch(() => {});
-    return () => c.abort();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [range, movieLimit, filters.theater, filters.movie]);
-
-  // UI actions
+  /* ================== CSV Export (multi-section) ================== */
   function exportCSV() {
-    const csvEscape = (v) => { if (v === undefined || v === null) return ""; const s = String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-    const makeCSV = (title, headers, rows) => { let csv = `${title}\n${headers.join(",")}\n`; csv += rows.map((r) => headers.map((h) => csvEscape(r[h] ?? "")).join(",")).join("\n"); csv += "\n\n"; return csv; };
+    const csvEscape = (v) => {
+      if (v === undefined || v === null) return "";
+      const s = String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const makeCSV = (title, headers, rows) => {
+      let csv = `${title}\n${headers.join(",")}\n`;
+      csv += rows.map((r) => headers.map((h) => csvEscape(r[h] ?? "")).join(",")).join("\n");
+      csv += "\n\n";
+      return csv;
+    };
+
     const sections = [];
     sections.push(makeCSV("Revenue (Daily)", ["day", "revenue", "bookings"], revenueDaily));
     sections.push(makeCSV("Active Users (Daily)", ["day", "users"], dauDaily));
-    sections.push(makeCSV("Theater Occupancy", ["name", "occupancy"], theaterOcc));
+    sections.push(makeCSV("Theater Occupancy", ["name", "occupancy", "totalBooked", "totalCapacity"], theaterOcc));
     sections.push(makeCSV("Top Movies", ["title", "bookings", "revenue", "seatsBooked"], topMovies));
+
     const blob = new Blob(sections, { type: "text/csv;charset=utf-8;" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
@@ -429,23 +301,23 @@ export default function AdminAnalyticsDashboard() {
     document.body.removeChild(link);
   }
 
-  // Filters form handlers
+  /* ================== Filters handlers ================== */
   function applyFilters(e) {
     e?.preventDefault?.();
     setFiltersOpen(false);
-    // loadData will re-run because filters state is in dependency
+    // loadData will run via useEffect watching filters
   }
   function resetFilters() {
     setFilters({ theater: "", movie: "" });
     setFiltersOpen(false);
   }
 
-  // Alerts UI
   async function refreshAlerts() {
     const c = new AbortController();
     await loadAlerts(c.signal);
   }
 
+  /* ================== Render ================== */
   return (
     <div className="min-h-screen w-screen [margin-inline:calc(50%-50vw)] bg-slate-50 text-slate-900 py-8">
       <div className="mx-auto max-w-7xl px-4 md:px-6 space-y-6">
@@ -457,10 +329,21 @@ export default function AdminAnalyticsDashboard() {
               <div className="text-sm text-slate-600">Revenue, usage, and theater performance at a glance.</div>
               <div className="flex items-center gap-2 flex-wrap justify-end">
                 <Pill onClick={() => { setAlertsOpen(true); refreshAlerts(); }}><Bell className="h-4 w-4" /> Alerts</Pill>
-                <Pill onClick={() => { setFiltersOpen(true); }}><Filter className="h-4 w-4" /> Filter</Pill>
+                <Pill onClick={() => setFiltersOpen(true)}><Filter className="h-4 w-4" /> Filter</Pill>
                 <Primary onClick={exportCSV}><Download className="h-4 w-4" /> Export CSV</Primary>
                 <Pill onClick={() => loadData(range)}><RefreshCcw className="h-4 w-4" /> Refresh</Pill>
-                <Segments value={range} onChange={setRange} />
+                <div className="flex items-center gap-1.5 bg-slate-100 rounded-full p-1">
+                  {ranges.map((r) => (
+                    <button
+                      key={r.id}
+                      onClick={() => setRange(r.id)}
+                      className={`px-3 py-1.5 rounded-full text-sm transition ${range === r.id ? "bg-white text-slate-900 shadow-sm border border-slate-200" : "text-slate-600 hover:text-slate-800"}`}
+                      aria-pressed={range === r.id}
+                    >
+                      {r.label}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           </Card>
@@ -470,9 +353,9 @@ export default function AdminAnalyticsDashboard() {
 
         {/* KPIs */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-          <Stat icon={CircleDollarSign} label={`Revenue (${range})`} value={formatCurrency(summary.revenue30d)} delta={0} />
-          <Stat icon={ShoppingBag} label="Orders" value={formatInt(summary.orders)} delta={0} />
-          <Stat icon={Gauge} label="Avg. Order Value" value={formatCurrency(summary.aov)} delta={0} />
+          <Stat icon={CircleDollarSign} label={`Revenue (${range})`} value={formatCurrency(summary.revenue30d)} />
+          <Stat icon={ShoppingBag} label="Orders" value={formatInt(summary.orders)} />
+          <Stat icon={Gauge} label="Avg. Order Value" value={formatCurrency(summary.aov)} />
           <Stat icon={BarChart3} label="Revenue (7d)" value={formatCurrency(summary.revenue7d)} />
           <Stat icon={Users} label="Avg DAU" value={formatInt(summary.dau)} />
         </div>
@@ -590,7 +473,7 @@ export default function AdminAnalyticsDashboard() {
                 <label className="block text-sm text-slate-600 mb-1">Theater</label>
                 <select value={filters.theater} onChange={(e) => setFilters((s) => ({ ...s, theater: e.target.value }))} className="w-full border p-2 rounded">
                   <option value="">All theaters</option>
-                  {theaters.map((t) => <option key={t._id ?? t.id} value={t._id ?? t.id}>{t.name ?? t.title ?? t.displayName ?? String(t._id ?? t.id)}</option>)}
+                  {theaters.map((t) => <option key={t._id ?? t.id} value={t._id ?? t.id}>{t.name ?? t.title ?? String(t._id ?? t.id)}</option>)}
                 </select>
               </div>
 
@@ -613,3 +496,74 @@ export default function AdminAnalyticsDashboard() {
     </div>
   );
 }
+
+/* ======================== small subcomponents ======================== */
+function Stat({ icon: Icon, label, value }) {
+  return (
+    <Card className="p-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <span className="inline-grid place-items-center h-10 w-10 rounded-xl border border-slate-200 bg-sky-50">
+            <Icon className="h-5 w-5 text-slate-900" />
+          </span>
+          <div>
+            <p className="text-xs text-slate-600">{label}</p>
+            <p className="text-xl font-extrabold text-slate-900">{value}</p>
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function ChartCard({ title, subtitle, children, right }) {
+  return (
+    <Card className="p-4">
+      <div className="flex items-start justify-between">
+        <div>
+          <p className="text-xs text-slate-600">{subtitle}</p>
+          <h3 className="text-lg font-extrabold text-slate-900">{title}</h3>
+        </div>
+        {right}
+      </div>
+      <div className="mt-4 h-64">{children}</div>
+    </Card>
+  );
+}
+
+function SimpleTable({ title, rows, columns }) {
+  return (
+    <Card className="p-4">
+      <h3 className="text-lg font-extrabold text-slate-900">{title}</h3>
+      <div className="mt-3 overflow-x-auto">
+        <table className="min-w-full text-sm">
+          <thead>
+            <tr className="text-left text-slate-600">
+              {columns.map((c) => (
+                <th key={c.key} className="py-2 font-semibold">{c.label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={i} className="border-t border-slate-200">
+                {columns.map((c) => (
+                  <td key={c.key} className="py-2">{c.render ? c.render(r[c.key], r) : r[c.key]}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
+const EmptyMini = ({ label }) => (
+  <div className="h-full w-full grid place-items-center text-center text-sm text-slate-600">
+    <div>
+      <Activity className="h-6 w-6 mx-auto mb-2 opacity-70" />
+      <p>{label}</p>
+    </div>
+  </div>
+);
