@@ -95,16 +95,21 @@ const QuickCard = ({ title, desc, to, cta, Icon }) => (
 );
 
 /* ------------------------------- Carousel (landscape) ----------------------- */
+/**
+ * Images array accepts objects:
+ *   { jpg: "/Poster1_land.jpg", webp: "/Poster1_land.webp", title: "Title", focus: "70% center" }
+ * focus is optional; default is "70% center" to reveal left area for your headline.
+ */
 function LandscapeCarousel({
   images = [
-    { webp: "/Poster1_land.webp", jpg: "/Poster1_land.jpg", title: "Poster 1" },
-    { webp: "/Poster2_land.webp", jpg: "/Poster2_land.jpg", title: "Poster 2" },
-    { webp: "/Poster3_land.webp", jpg: "/Poster3_land.jpg", title: "Poster 3" },
-    { webp: "/Poster4_land.webp", jpg: "/Poster4_land.jpg", title: "Poster 4" },
-     { webp: "/Poster5_land.webp", jpg: "/Poster5_land.jpg", title: "Poster 5" },
-    { webp: "/Poster6_land.webp", jpg: "/Poster6_land.jpg", title: "Poster 6" },
-    { webp: "/Poster7_land.webp", jpg: "/Poster7_land.jpg", title: "Poster 7" },
-    { webp: "/Poster8_land.webp", jpg: "/Poster8_land.jpg", title: "Poster 8" }
+    { jpg: "/Poster1_land.jpg", title: "Poster 1", focus: "70% center" },
+    { jpg: "/Poster2_land.jpg", title: "Poster 2", focus: "70% center" },
+    { jpg: "/Poster3_land.jpg", title: "Poster 3", focus: "70% center" },
+    { jpg: "/Poster4_land.jpg", title: "Poster 4", focus: "70% center" },
+    { jpg: "/Poster5_land.jpg", title: "Poster 5", focus: "70% center" },
+    { jpg: "/Poster6_land.jpg", title: "Poster 6", focus: "70% center" },
+    { jpg: "/Poster7_land.jpg", title: "Poster 7", focus: "70% center" },
+    { jpg: "/Poster8_land.jpg", title: "Poster 8", focus: "70% center" }
   ],
   interval = 3200,
 }) {
@@ -195,38 +200,43 @@ function LandscapeCarousel({
       ref={rootRef}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
-      className="relative w-[520px] h-[340px] md:w-[620px] md:h-[420px] lg:w-[820px] lg:h-[520px] overflow-hidden rounded-2xl shadow-2xl"
+      className="relative w-full h-full overflow-hidden rounded-2xl"
       aria-roledescription="carousel"
       aria-label="Featured posters"
     >
-      {/* sliding track */}
       <div style={trackStyle}>
-        {images.map((img, i) => (
-          <div key={i} className="flex-shrink-0 w-full h-full relative">
-            <picture>
-              {img.webp && <source srcSet={img.webp} type="image/webp" />}
-              <source srcSet={img.jpg} type="image/jpeg" />
-              <img
-                src={img.jpg}
-                alt={img.title || `Poster ${i + 1}`}
-                loading="lazy"
-                className="w-full h-full object-cover object-center"
-                draggable={false}
-              />
-            </picture>
+        {images.map((img, i) => {
+          const focus = img.focus || "70% center";
+          return (
+            <div key={i} className="flex-shrink-0 w-full h-full relative">
+              <picture>
+                {img.webp && <source srcSet={img.webp} type="image/webp" />}
+                <source srcSet={img.jpg} type="image/jpeg" />
+                <img
+                  src={img.jpg}
+                  alt={img.title || `Poster ${i + 1}`}
+                  loading="lazy"
+                  draggable={false}
+                  className="w-full h-full object-cover"
+                  style={{
+                    objectPosition: focus,
+                    imageRendering: "auto",
+                  }}
+                />
+              </picture>
 
-            <div className="pointer-events-none absolute left-6 bottom-6 bg-black/30 backdrop-blur-sm px-3 py-1.5 rounded-md text-sm text-white/90">
-              {img.title}
+              <div className="pointer-events-none absolute left-8 bottom-6 bg-black/35 backdrop-blur-sm px-3 py-1.5 rounded-md text-sm text-white/95">
+                {img.title}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* visual frame */}
       <div className="pointer-events-none absolute inset-0 rounded-2xl">
-        <div className="absolute inset-0 bg-[radial-gradient(120%_70%_at_10%_0%,rgba(255,255,255,0.12),transparent_55%)] rounded-2xl" />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/25 to-transparent rounded-2xl" />
-        <div className="absolute inset-0 border border-white/30 m-4 rounded-xl" />
+        <div className="absolute inset-0 bg-[radial-gradient(120%_70%_at_10%_0%,rgba(255,255,255,0.08),transparent_55%)] rounded-2xl" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent rounded-2xl" />
       </div>
 
       {/* indicators */}
@@ -264,17 +274,17 @@ export default function Home() {
   const HEADER_H = 64;
 
   // configure images used by the carousel (edit names to match your public/ files)
- const carouselImages = [
-  { jpg: "/Poster1_land.jpg" },
-  { jpg: "/Poster2_land.jpg" },
-  { jpg: "/Poster3_land.jpg" },
-  { jpg: "/Poster4_land.jpg" },
-  { jpg: "/Poster5_land.jpg" },
-  { jpg: "/Poster6_land.jpg" },
-  { jpg: "/Poster7_land.jpg" },
-  { jpg: "/Poster8_land.jpg" },
-];
-
+  // You can tune per-image `focus` values like '60% center' or '80% center'
+  const carouselImages = [
+    { jpg: "/Poster1_land.jpg", title: "Avengers: Dawn", focus: "72% center" },
+    { jpg: "/Poster2_land.jpg", title: "Nocturne", focus: "68% center" },
+    { jpg: "/Poster3_land.jpg", title: "The Great Escape", focus: "70% center" },
+    { jpg: "/Poster4_land.jpg", title: "Sunset Boulevard", focus: "65% center" },
+    { jpg: "/Poster5_land.jpg", title: "Neon Riders", focus: "75% center" },
+    { jpg: "/Poster6_land.jpg", title: "Hidden Shores", focus: "70% center" },
+    { jpg: "/Poster7_land.jpg", title: "Midnight City", focus: "70% center" },
+    { jpg: "/Poster8_land.jpg", title: "Final Cut", focus: "72% center" },
+  ];
 
   return (
     <main className="bg-slate-50 text-slate-900">
@@ -323,27 +333,27 @@ export default function Home() {
 
             {/* Right: empty flow column (carousel placed absolutely so it can bleed to the right edge) */}
             <div className="relative" />
-
           </div>
         </div>
 
         {/* ---- absolutely positioned carousel anchored to the section (not the centered container) ---- */}
-        {/* This lives outside the centered grid flow, but since the grid reserves the left column width,
-            the carousel won't overlap the left headline. */}
         <div className="hidden md:block">
           <div
             className="absolute top-1/2 right-0 -translate-y-1/2 z-20 pointer-events-auto"
             style={{
-              // width calculation: keep it responsive but ensure it starts after the fixed left column
-              // using calc(viewport - leftColumnWidth - gutter)
-              width: "min(60vw,1100px)",
-              maxWidth: "1100px",
-              paddingRight: "1.25rem", // small breathing room
+              // wider so the poster reads like a landscape poster and bleeds to the right
+              width: "min(72vw,1200px)",
+              maxWidth: "1200px",
+              // increase visual height for a poster look (keeps aspect ~ 16:9)
+              height: "min(52vh,660px)",
+              paddingRight: "1.25rem",
             }}
           >
-            <Card className="relative overflow-visible bg-white/8 border-white/30 backdrop-blur-sm shadow-sm">
-              <div className="p-3 md:p-4">
-                <LandscapeCarousel images={carouselImages} interval={3200} />
+            <Card className="relative overflow-visible bg-white/6 border-white/20 backdrop-blur-sm shadow-sm">
+              <div className="p-3 md:p-4 h-full">
+                <div className="h-full">
+                  <LandscapeCarousel images={carouselImages} interval={3200} />
+                </div>
               </div>
             </Card>
           </div>
