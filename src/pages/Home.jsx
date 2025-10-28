@@ -110,10 +110,10 @@ const QuickCard = ({ title, desc, to, cta, Icon }) => (
 */
 function VerticalPosterCarousel({
   images = [
-    "/posters/poster1.jpg",
-    "/posters/poster2.jpg",
-    "/posters/poster3.jpg",
-    "/posters/poster4.jpg",
+    "/poster1.jpg",
+    "/poster2.jpg",
+    "/poster3.jpg",
+    "/poster4.jpg",
   ],
   interval = 3000,
   className = ""
@@ -245,10 +245,10 @@ export default function Home() {
                 <div className="p-4">
                   <VerticalPosterCarousel
                     images={[
-                      "/posters/poster1.jpg",
-                      "/posters/poster2.jpg",
-                      "/posters/poster3.jpg",
-                      "/posters/poster4.jpg",
+                      "/poster1.jpg",
+                      "/poster2.jpg",
+                      "/poster3.jpg",
+                      "/poster4.jpg",
                       // add more if you like
                     ]}
                     interval={3000}
