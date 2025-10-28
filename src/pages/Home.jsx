@@ -94,33 +94,54 @@ const QuickCard = ({ title, desc, to, cta, Icon }) => (
   </Card>
 );
 
-/* ------------------------------- Carousel (landscape) ----------------------- */
+/* ------------------------------- Robust LandscapeCarousel ----------------------- */
 /**
- * LandscapeCarousel improvements:
- * - fitMode: "cover" | "contain" (choose contain to show entire 4k poster)
- * - objectPosition: control focal point (e.g. "center right" to push artwork right)
- * - responsive aspect ratio for consistent layout across breakpoints
+ * - Preloads images and logs load/error
+ * - Shows a tiny badge (loading/loaded/error) for debugging on each slide
+ * - Uses fallback.jpg when an image fails
+ * - Adds key={img.jpg} on img to avoid first-frame React reuse bug
  */
 function LandscapeCarousel({
   images = [
-    {  jpg: "/Poster1_land.jpg", title: "Poster 1" },
-    {  jpg: "/Poster2_land.jpg", title: "Poster 2" },
-    {  jpg: "/Poster3_land.jpg", title: "Poster 3" },
-    {  jpg: "/Poster4_land.jpg", title: "Poster 4" },
-    {  jpg: "/Poster5_land.jpg", title: "Poster 5" },
-    {  jpg: "/Poster6_land.jpg", title: "Poster 6" }
+    { jpg: "/Poster1_land.jpg", title: "Poster 1" },
+    { jpg: "/Poster2_land.jpg", title: "Poster 2" },
+    { jpg: "/Poster3_land.jpg", title: "Poster 3" },
+    { jpg: "/Poster4_land.jpg", title: "Poster 4" },
+    { jpg: "/Poster5_land.jpg", title: "Poster 5" },
+    { jpg: "/Poster6_land.jpg", title: "Poster 6" }
   ],
   interval = 3200,
-  fitMode = "contain",           // default to contain so 4K posters fit inside the frame
-  objectPosition = "center right", // nudge the artwork right so headline (left) is visible
+  fitMode = "contain",
+  objectPosition = "center right",
+  fallback = "/fallback.jpg",
 }) {
   const [index, setIndex] = useState(0);
-  const rootRef = useRef(null);
+  const [loadedStates, setLoadedStates] = useState(() => images.map(() => false));
+  const [errorStates, setErrorStates] = useState(() => images.map(() => false));
   const timerRef = useRef(null);
   const hoveringRef = useRef(false);
   const touchingRef = useRef(false);
+  const rootRef = useRef(null);
   const length = images.length;
 
+  // preload + set flags
+  useEffect(() => {
+    images.forEach((img, i) => {
+      const pre = new Image();
+      pre.src = img.jpg;
+      pre.onload = () => {
+        setLoadedStates(prev => { const n = [...prev]; n[i] = true; return n; });
+        console.log("Loaded:", img.jpg);
+      };
+      pre.onerror = () => {
+        setErrorStates(prev => { const n = [...prev]; n[i] = true; return n; });
+        console.error("Error loading:", img.jpg);
+      };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [images.map(im => im.jpg).join("|")]);
+
+  // autoplay
   useEffect(() => {
     startTimer();
     const handleKey = (e) => {
@@ -150,37 +171,24 @@ function LandscapeCarousel({
   const onMouseEnter = () => { hoveringRef.current = true; };
   const onMouseLeave = () => { hoveringRef.current = false; };
 
-  // touch handlers for swipe
+  // swipe handlers
   useEffect(() => {
     const el = rootRef.current;
     if (!el) return;
-    let startX = 0;
-    let moved = false;
-
-    const onTouchStart = (e) => {
-      touchingRef.current = true;
-      hoveringRef.current = true; // pause autoplay
-      startX = e.touches[0].clientX;
-      moved = false;
-    };
-    const onTouchMove = (e) => {
-      const dx = e.touches[0].clientX - startX;
-      if (Math.abs(dx) > 10) moved = true;
-    };
+    let startX = 0, moved = false;
+    const onTouchStart = (e) => { touchingRef.current = true; hoveringRef.current = true; startX = e.touches[0].clientX; moved = false; };
+    const onTouchMove = (e) => { const dx = e.touches[0].clientX - startX; if (Math.abs(dx) > 8) moved = true; };
     const onTouchEnd = (e) => {
-      touchingRef.current = false;
-      hoveringRef.current = false;
+      touchingRef.current = false; hoveringRef.current = false;
       if (!moved) return;
       const endX = (e.changedTouches && e.changedTouches[0].clientX) || 0;
       const dx = endX - startX;
-      if (dx < -40) setIndex(i => Math.min(length - 1, i + 1));
-      else if (dx > 40) setIndex(i => Math.max(0, i - 1));
+      if (dx < -40) setIndex(i => (i + 1) % length);
+      else if (dx > 40) setIndex(i => (i - 1 + length) % length);
     };
-
     el.addEventListener("touchstart", onTouchStart, { passive: true });
     el.addEventListener("touchmove", onTouchMove, { passive: true });
     el.addEventListener("touchend", onTouchEnd, { passive: true });
-
     return () => {
       el.removeEventListener("touchstart", onTouchStart);
       el.removeEventListener("touchmove", onTouchMove);
@@ -188,6 +196,7 @@ function LandscapeCarousel({
     };
   }, [length]);
 
+  // track style
   const trackStyle = {
     width: `${length * 100}%`,
     transform: `translateX(-${(index * 100) / length}%)`,
@@ -196,8 +205,6 @@ function LandscapeCarousel({
     height: "100%",
   };
 
-  // Responsive aspect-ratio via Tailwind's arbitrary values:
-  // small: ~16/10, md+: 16/9 to look more cinematic on large screens.
   const outerClass =
     "relative overflow-hidden rounded-2xl shadow-2xl w-full " +
     "aspect-[16/10] md:aspect-[16/9] lg:aspect-[16/9]";
@@ -211,42 +218,46 @@ function LandscapeCarousel({
       aria-roledescription="carousel"
       aria-label="Featured posters"
     >
-      {/* sliding track */}
       <div style={trackStyle}>
-        {images.map((img, i) => (
-          <div key={i} className="flex-shrink-0 w-full h-full relative">
-            <picture>
-              {/*
-                Optional: provide responsive srcSet/sizes to avoid downloading full 4K on small screens.
-                Example (prepare multiple sizes and uncomment):
-                <source
-                  srcSet={`${img.webp_800} 800w, ${img.webp_1280} 1280w, ${img.webp_1920} 1920w`}
-                  type="image/webp"
-                  sizes="(max-width: 640px) 100vw, (max-width: 1024px) 60vw, 40vw"
-                />
-              */}
-              {img.webp && <source srcSet={img.webp} type="image/webp" />}
-              <source srcSet={img.jpg} type="image/jpeg" />
+        {images.map((img, i) => {
+          const src = errorStates[i] ? fallback : img.jpg;
+          return (
+            <div key={i} className="flex-shrink-0 w-full h-full relative bg-gray-100">
               <img
-                src={img.jpg}
+                key={img.jpg} // important: force re-mount when src changes
+                src={src}
                 alt={img.title || `Poster ${i + 1}`}
                 loading="lazy"
                 draggable={false}
                 className="w-full h-full"
                 style={{
-                  objectFit: fitMode,           // "cover" or "contain"
+                  objectFit: fitMode,
                   objectPosition: objectPosition,
                   maxWidth: "100%",
                   maxHeight: "100%",
                 }}
+                onError={(e) => {
+                  console.error("img onError:", img.jpg);
+                  e.target.src = fallback;
+                  setErrorStates(prev => { const n = [...prev]; n[i] = true; return n; });
+                }}
+                onLoad={() => {
+                  setLoadedStates(prev => { const n = [...prev]; n[i] = true; return n; });
+                }}
               />
-            </picture>
 
-            <div className="pointer-events-none absolute left-6 bottom-6 bg-black/30 backdrop-blur-sm px-3 py-1.5 rounded-md text-sm text-white/90">
-              {img.title}
+              {/* debug badge — remove in production if you want */}
+              <div className="absolute left-3 top-3 px-2 py-1 rounded-sm text-xs bg-black/40 text-white z-10">
+                {errorStates[i] ? "error" : loadedStates[i] ? "loaded" : "loading"}
+              </div>
+
+              {/* small caption */}
+              <div className="pointer-events-none absolute left-6 bottom-6 bg-black/30 backdrop-blur-sm px-3 py-1.5 rounded-md text-sm text-white/90">
+                {img.title}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* visual frame */}
@@ -293,12 +304,12 @@ export default function Home() {
   // configure images used by the carousel (edit names to match your public/ files)
   // NOTE: ensure these files exist in public/ or your hosting setup.
   const carouselImages = [
-    {  jpg: "/Poster1_land.jpg", title: "Poster 1" },
-    {  jpg: "/Poster2_land.jpg", title: "Poster 2" },
-    {  jpg: "/Poster3_land.jpg", title: "Poster 3" },
-    {  jpg: "/Poster4_land.jpg", title: "Poster 4" },
-    {  jpg: "/Poster5_land.jpg", title: "Poster 5" },
-    {  jpg: "/Poster6_land.jpg", title: "Poster 6" }
+    { jpg: "/Poster1_land.jpg", title: "Poster 1" },
+    { jpg: "/Poster2_land.jpg", title: "Poster 2" },
+    { jpg: "/Poster3_land.jpg", title: "Poster 3" },
+    { jpg: "/Poster4_land.jpg", title: "Poster 4" },
+    { jpg: "/Poster5_land.jpg", title: "Poster 5" },
+    { jpg: "/Poster6_land.jpg", title: "Poster 6" }
   ];
 
   return (
@@ -363,13 +374,12 @@ export default function Home() {
           >
             <Card className="relative overflow-visible bg-white/8 border-white/30 backdrop-blur-sm shadow-sm">
               <div className="p-3 md:p-4">
-                {/* fitMode="contain" shows the entire 4K poster inside the frame.
-                    objectPosition="center right" nudges important subject right so headline area remains visible. */}
                 <LandscapeCarousel
                   images={carouselImages}
                   interval={3200}
                   fitMode="contain"
                   objectPosition="center right"
+                  fallback="/fallback.jpg"
                 />
               </div>
             </Card>
