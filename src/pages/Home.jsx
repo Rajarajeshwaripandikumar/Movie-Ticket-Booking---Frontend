@@ -103,14 +103,12 @@ const QuickCard = ({ title, desc, to, cta, Icon }) => (
  */
 function LandscapeCarousel({
   images = [
-    { webp: "/Poster1_land.webp", jpg: "/Poster1_land.jpg", title: "Poster 1" },
-    { webp: "/Poster2_land.webp", jpg: "/Poster2_land.jpg", title: "Poster 2" },
-    { webp: "/Poster3_land.webp", jpg: "/Poster3_land.jpg", title: "Poster 3" },
-    { webp: "/Poster4_land.webp", jpg: "/Poster4_land.jpg", title: "Poster 4" },
-    { webp: "/Poster5_land.webp", jpg: "/Poster5_land.jpg", title: "Poster 5" },
-    { webp: "/Poster6_land.webp", jpg: "/Poster6_land.jpg", title: "Poster 6" },
-    { webp: "/Poster7_land.webp", jpg: "/Poster7_land.jpg", title: "Poster 7" },
-    { webp: "/Poster8_land.webp", jpg: "/Poster8_land.jpg", title: "Poster 8" }
+    {  jpg: "/Poster1_land.jpg", title: "Poster 1" },
+    {  jpg: "/Poster2_land.jpg", title: "Poster 2" },
+    {  jpg: "/Poster3_land.jpg", title: "Poster 3" },
+    {  jpg: "/Poster4_land.jpg", title: "Poster 4" },
+    {  jpg: "/Poster5_land.jpg", title: "Poster 5" },
+    {  jpg: "/Poster6_land.jpg", title: "Poster 6" }
   ],
   interval = 3200,
   fitMode = "contain",           // default to contain so 4K posters fit inside the frame
@@ -295,14 +293,12 @@ export default function Home() {
   // configure images used by the carousel (edit names to match your public/ files)
   // NOTE: ensure these files exist in public/ or your hosting setup.
   const carouselImages = [
-    { jpg: "/Poster1_land.jpg", webp: "/Poster1_land.webp", title: "Poster 1" },
-    { jpg: "/Poster2_land.jpg", webp: "/Poster2_land.webp", title: "Poster 2" },
-    { jpg: "/Poster3_land.jpg", webp: "/Poster3_land.webp", title: "Poster 3" },
-    { jpg: "/Poster4_land.jpg", webp: "/Poster4_land.webp", title: "Poster 4" },
-    { jpg: "/Poster5_land.jpg", webp: "/Poster5_land.webp", title: "Poster 5" },
-    { jpg: "/Poster6_land.jpg", webp: "/Poster6_land.webp", title: "Poster 6" },
-    { jpg: "/Poster7_land.jpg", webp: "/Poster7_land.webp", title: "Poster 7" },
-    { jpg: "/Poster8_land.jpg", webp: "/Poster8_land.webp", title: "Poster 8" },
+    {  jpg: "/Poster1_land.jpg", title: "Poster 1" },
+    {  jpg: "/Poster2_land.jpg", title: "Poster 2" },
+    {  jpg: "/Poster3_land.jpg", title: "Poster 3" },
+    {  jpg: "/Poster4_land.jpg", title: "Poster 4" },
+    {  jpg: "/Poster5_land.jpg", title: "Poster 5" },
+    {  jpg: "/Poster6_land.jpg", title: "Poster 6" }
   ];
 
   return (
