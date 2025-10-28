@@ -98,13 +98,6 @@ const QuickCard = ({ title, desc, to, cta, Icon }) => (
 );
 
 /* ------------------------------- Carousel (landscape) ----------------------- */
-/*
-  Responsive landscape carousel that:
-   - uses transform/translateX for smooth sliding
-   - autoplay with pause on hover and during touch
-   - supports keyboard left/right
-   - supports optional WebP via <picture> (fallback to .jpg)
-*/
 function LandscapeCarousel({
   images = [
     { webp: "/Poster1_land.webp", jpg: "/Poster1_land.jpg", title: "Poster 1" },
@@ -210,9 +203,7 @@ function LandscapeCarousel({
         {images.map((img, i) => (
           <div key={i} className="flex-shrink-0 w-full h-full relative">
             <picture>
-              {/* webp source if provided */}
               {img.webp && <source srcSet={img.webp} type="image/webp" />}
-              {/* fallback */}
               <source srcSet={img.jpg} type="image/jpeg" />
               <img
                 src={img.jpg}
@@ -299,7 +290,7 @@ export default function Home() {
           }}
         />
 
-        {/* Hero content */}
+        {/* Hero content (centered column) */}
         <div className="relative z-10 h-full">
           <div className="h-full max-w-7xl mx-auto px-6 md:px-12 flex items-center gap-8">
             {/* Left text (narrowed so poster has room) */}
@@ -325,19 +316,26 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Spacer container: the wide carousel is absolutely positioned to the right so it bleeds to the page edge */}
-            <div className="hidden md:block ml-6 relative w-0 flex-1">
-              <div
-                className="absolute top-1/2 right-6 -translate-y-1/2 w-[55vw] max-w-[980px] min-w-[420px] z-10"
-                style={{ pointerEvents: "auto" }}
-              >
-                <Card className="relative overflow-visible bg-white/8 border-white/30 backdrop-blur-sm shadow-sm">
-                  <div className="p-3 md:p-4">
-                    <LandscapeCarousel images={carouselImages} interval={3200} />
-                  </div>
-                </Card>
+            {/* blank spacer so the centered layout keeps left column position */}
+            <div className="flex-1" />
+          </div>
+        </div>
+
+        {/* ----------
+            THE CAROUSEL IS ABSOLUTE TO THE HERO SECTION (not the centered container)
+            This lets it push to the viewport right edge.
+            Change right-6 -> right-0 to have it touch the edge.
+            ---------- */}
+        <div className="hidden md:block">
+          <div
+            className="absolute top-1/2 right-6 -translate-y-1/2 w-[60vw] max-w-[1100px] min-w-[420px] z-20 pointer-events-auto"
+            // TIP: to make it touch the viewport edge, set right-6 -> right-0 and change Card padding to p-0
+          >
+            <Card className="relative overflow-visible bg-white/8 border-white/30 backdrop-blur-sm shadow-sm">
+              <div className="p-3 md:p-4">
+                <LandscapeCarousel images={carouselImages} interval={3200} />
               </div>
-            </div>
+            </Card>
           </div>
         </div>
       </section>
