@@ -95,16 +95,21 @@ const QuickCard = ({ title, desc, to, cta, Icon }) => (
 );
 
 /* ------------------------------- Carousel (landscape) ----------------------- */
+/*
+  - root is responsive (fills wrapper)
+  - images use object-cover so poster fills the card without empty bands
+  - autoplay, swipe, keyboard preserved
+*/
 function LandscapeCarousel({
   images = [
     { webp: "/Poster1_land.webp", jpg: "/Poster1_land.jpg", title: "Poster 1" },
     { webp: "/Poster2_land.webp", jpg: "/Poster2_land.jpg", title: "Poster 2" },
     { webp: "/Poster3_land.webp", jpg: "/Poster3_land.jpg", title: "Poster 3" },
     { webp: "/Poster4_land.webp", jpg: "/Poster4_land.jpg", title: "Poster 4" },
-     { webp: "/Poster5_land.webp", jpg: "/Poster5_land.jpg", title: "Poster 5" },
+    { webp: "/Poster5_land.webp", jpg: "/Poster5_land.jpg", title: "Poster 5" },
     { webp: "/Poster6_land.webp", jpg: "/Poster6_land.jpg", title: "Poster 6" },
     { webp: "/Poster7_land.webp", jpg: "/Poster7_land.jpg", title: "Poster 7" },
-    { webp: "/Poster8_land.webp", jpg: "/Poster8_land.jpg", title: "Poster 8" }
+    { webp: "/Poster8_land.webp", jpg: "/Poster8_land.jpg", title: "Poster 8" },
   ],
   interval = 3200,
 }) {
@@ -195,7 +200,7 @@ function LandscapeCarousel({
       ref={rootRef}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
-      className="relative w-[520px] h-[340px] md:w-[620px] md:h-[420px] lg:w-[820px] lg:h-[520px] overflow-hidden rounded-2xl shadow-2xl"
+      className="relative w-full h-full overflow-hidden"
       aria-roledescription="carousel"
       aria-label="Featured posters"
     >
@@ -203,18 +208,27 @@ function LandscapeCarousel({
       <div style={trackStyle}>
         {images.map((img, i) => (
           <div key={i} className="flex-shrink-0 w-full h-full relative">
-            <picture>
+            <picture className="w-full h-full block">
               {img.webp && <source srcSet={img.webp} type="image/webp" />}
-              <source srcSet={img.jpg} type="image/jpeg" />
               <img
                 src={img.jpg}
                 alt={img.title || `Poster ${i + 1}`}
                 loading="lazy"
                 className="w-full h-full object-cover object-center"
                 draggable={false}
+                onError={(e) => {
+                  // hide broken image and show a gradient placeholder
+                  e.currentTarget.style.display = "none";
+                  const p = document.createElement("div");
+                  p.style.width = "100%";
+                  p.style.height = "100%";
+                  p.style.background = "linear-gradient(90deg,#0b63c6,#063f8e)";
+                  e.currentTarget.parentNode.appendChild(p);
+                }}
               />
             </picture>
 
+            {/* subtle caption overlay bottom-left */}
             <div className="pointer-events-none absolute left-6 bottom-6 bg-black/30 backdrop-blur-sm px-3 py-1.5 rounded-md text-sm text-white/90">
               {img.title}
             </div>
@@ -222,15 +236,8 @@ function LandscapeCarousel({
         ))}
       </div>
 
-      {/* visual frame */}
-      <div className="pointer-events-none absolute inset-0 rounded-2xl">
-        <div className="absolute inset-0 bg-[radial-gradient(120%_70%_at_10%_0%,rgba(255,255,255,0.12),transparent_55%)] rounded-2xl" />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/25 to-transparent rounded-2xl" />
-        <div className="absolute inset-0 border border-white/30 m-4 rounded-xl" />
-      </div>
-
       {/* indicators */}
-      <div className="absolute left-1/2 bottom-4 transform -translate-x-1/2 flex gap-2 z-20">
+      <div className="absolute left-1/2 bottom-4 transform -translate-x-1/2 flex gap-2 z-30">
         {images.map((_, i) => (
           <button
             key={i}
@@ -242,17 +249,18 @@ function LandscapeCarousel({
         ))}
       </div>
 
+      {/* prev / next */}
       <button
         onClick={() => setIndex((i) => (i - 1 + length) % length)}
         aria-label="Previous slide"
-        className="pointer-events-auto absolute left-3 top-1/2 -translate-y-1/2 rounded-full bg-black/30 p-2 text-white hover:bg-black/45"
+        className="pointer-events-auto absolute left-3 top-1/2 -translate-y-1/2 rounded-full bg-black/30 p-2 text-white hover:bg-black/45 z-30"
         style={{ backdropFilter: "blur(4px)" }}
       >‹</button>
 
       <button
         onClick={() => setIndex((i) => (i + 1) % length)}
         aria-label="Next slide"
-        className="pointer-events-auto absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-black/30 p-2 text-white hover:bg-black/45"
+        className="pointer-events-auto absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-black/30 p-2 text-white hover:bg-black/45 z-30"
         style={{ backdropFilter: "blur(4px)" }}
       >›</button>
     </div>
@@ -264,17 +272,16 @@ export default function Home() {
   const HEADER_H = 64;
 
   // configure images used by the carousel (edit names to match your public/ files)
- const carouselImages = [
-  { jpg: "/Poster1_land.jpg" },
-  { jpg: "/Poster2_land.jpg" },
-  { jpg: "/Poster3_land.jpg" },
-  { jpg: "/Poster4_land.jpg" },
-  { jpg: "/Poster5_land.jpg" },
-  { jpg: "/Poster6_land.jpg" },
-  { jpg: "/Poster7_land.jpg" },
-  { jpg: "/Poster8_land.jpg" },
-];
-
+  const carouselImages = [
+    { jpg: "/Poster1_land.jpg" },
+    { jpg: "/Poster2_land.jpg" },
+    { jpg: "/Poster3_land.jpg" },
+    { jpg: "/Poster4_land.jpg" },
+    { jpg: "/Poster5_land.jpg" },
+    { jpg: "/Poster6_land.jpg" },
+    { jpg: "/Poster7_land.jpg" },
+    { jpg: "/Poster8_land.jpg" },
+  ];
 
   return (
     <main className="bg-slate-50 text-slate-900">
@@ -283,7 +290,7 @@ export default function Home() {
         className="relative overflow-hidden w-screen [margin-inline:calc(50%-50vw)]"
         style={{ height: `calc(100vh - ${HEADER_H}px)` }}
       >
-        {/* Background gradient + grid pattern */}
+        {/* Background gradient & subtle grid */}
         <div className="absolute inset-0 bg-[linear-gradient(110deg,#0071DC_0%,#0654BA_55%,#003F8E_100%)] pointer-events-none" />
         <div
           className="absolute inset-0 opacity-20 pointer-events-none"
@@ -323,7 +330,6 @@ export default function Home() {
 
             {/* Right: empty flow column (carousel placed absolutely so it can bleed to the right edge) */}
             <div className="relative" />
-
           </div>
         </div>
 
@@ -335,17 +341,22 @@ export default function Home() {
             className="absolute top-1/2 right-0 -translate-y-1/2 z-20 pointer-events-auto"
             style={{
               // width calculation: keep it responsive but ensure it starts after the fixed left column
-              // using calc(viewport - leftColumnWidth - gutter)
-              width: "min(60vw,1100px)",
+              width: "min(65vw,1100px)",
               maxWidth: "1100px",
-              paddingRight: "1.25rem", // small breathing room
+              // set height responsively so the carousel scales nicely with viewport
+              height: "calc(100vh - 160px)",
+              maxHeight: "720px",
             }}
           >
-            <Card className="relative overflow-visible bg-white/8 border-white/30 backdrop-blur-sm shadow-sm">
-              <div className="p-3 md:p-4">
+            {/* NO white Card wrapper — poster bleeds edge-to-edge */}
+            <div className="relative w-full h-full overflow-hidden rounded-2xl">
+              {/* subtle left gradient to blend poster into blue hero */}
+              <div className="absolute left-0 top-0 bottom-0 w-24 pointer-events-none z-10"
+                   style={{ background: "linear-gradient(90deg, rgba(3,65,160,1) 0%, rgba(3,65,160,0.6) 40%, transparent 100%)" }} />
+              <div className="absolute inset-0 z-0">
                 <LandscapeCarousel images={carouselImages} interval={3200} />
               </div>
-            </Card>
+            </div>
           </div>
         </div>
       </section>
