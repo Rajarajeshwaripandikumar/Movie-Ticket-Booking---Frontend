@@ -97,12 +97,12 @@ const QuickCard = ({ title, desc, to, cta, Icon }) => (
 /* ------------------------------- Tailwind-friendly LandscapeCarousel ----------------------- */
 function LandscapeCarousel({
   images = [
-    { jpg: "/Poster1_land.jpg", title: "Poster 1" },
-    { jpg: "/Poster2_land.jpg", title: "Poster 2" },
-    { jpg: "/Poster3_land.jpg", title: "Poster 3" },
-    { jpg: "/Poster4_land.jpg", title: "Poster 4" },
-    { jpg: "/Poster5_land.jpg", title: "Poster 5" },
-    { jpg: "/Poster6_land.jpg", title: "Poster 6" }
+    { jpg: "/Poster1_land.jpg" },
+    { jpg: "/Poster2_land.jpg" },
+    { jpg: "/Poster3_land.jpg" },
+    { jpg: "/Poster4_land.jpg" },
+    { jpg: "/Poster5_land.jpg" },
+    { jpg: "/Poster6_land.jpg" }
   ],
   interval = 3200,
   fitMode = "cover",
@@ -268,12 +268,12 @@ export default function Home() {
   // configure images used by the carousel (edit names to match your public/ files)
   // NOTE: ensure these files exist in public/ or your hosting setup.
   const carouselImages = [
-    { jpg: "/Poster1_land.jpg", title: "Poster 1" },
-    { jpg: "/Poster2_land.jpg", title: "Poster 2" },
-    { jpg: "/Poster3_land.jpg", title: "Poster 3" },
-    { jpg: "/Poster4_land.jpg", title: "Poster 4" },
-    { jpg: "/Poster5_land.jpg", title: "Poster 5" },
-    { jpg: "/Poster6_land.jpg", title: "Poster 6" }
+    { jpg: "/Poster1_land.jpg" },
+    { jpg: "/Poster2_land.jpg" },
+    { jpg: "/Poster3_land.jpg" },
+    { jpg: "/Poster4_land.jpg" },
+    { jpg: "/Poster5_land.jpg" },
+    { jpg: "/Poster6_land.jpg" }
   ];
 
   return (
@@ -365,7 +365,7 @@ export default function Home() {
           <QuickCard
             title="Showtimes"
             desc="Filter by city, date, and theater to land the perfect slot."
-            to="/movies?tab=showtimes"
+            to="/Showtimes"
             cta="Find"
             Icon={IconClock}
           />
