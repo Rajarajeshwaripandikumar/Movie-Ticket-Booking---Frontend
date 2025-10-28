@@ -81,14 +81,22 @@ const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
   </Tag>
 );
 
-const Pill = ({ children, className = "", ...props }) => (
-  <button {...props} className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[${BLUE}] ${className}`}>
+const Pill = ({ children, className = "", style = {}, ...props }) => (
+  <button
+    {...props}
+    style={{ background: "white", borderColor: "#E6E7EB", ...style }}
+    className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm text-slate-800 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 ${className}`}
+  >
     {children}
   </button>
 );
 
-const Primary = ({ children, className = "", ...props }) => (
-  <button {...props} className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold bg-[${BLUE}] text-white hover:bg-[${BLUE_DARK}] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[${BLUE}] ${className}`}>
+const Primary = ({ children, className = "", style = {}, ...props }) => (
+  <button
+    {...props}
+    style={{ backgroundColor: BLUE, color: "white", ...style }}
+    className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold hover:opacity-95 focus-visible:outline-none focus-visible:ring-2 ${className}`}
+  >
     {children}
   </button>
 );
@@ -227,15 +235,28 @@ const toDauDaily = (arr = []) =>
 
 const toMovies = (arr = []) =>
   (arr || []).map((m = {}) => {
-    const tryStr = (...vals) => { for (const v of vals) if (typeof v === "string" && v.trim()) return v.trim(); return null; };
-    const title = tryStr(m.movieName, m.movie, m.movieTitle, m.movie?.title, m.movie?.name, m.m?.title, m.m?.name, m.title, m.name, m.movieDoc?.title, m.movieDoc?.name) || (m.movieId ? String(m.movieId) : null) || "Unknown";
-    return { title, revenue: Number(m.totalRevenue ?? m.total ?? m.revenue ?? 0), bookings: Number(m.totalBookings ?? m.bookings ?? 0), seatsBooked: Number(m.seatsBooked ?? 0) };
+    // Prefer backend-provided movieName and movieId fields from the updated analytics API
+    const title =
+      m.movieName ||
+      m.movieTitle ||
+      m.title ||
+      (m.movie && (m.movie.title || m.movie.name)) ||
+      (m.m && (m.m.title || m.m.name)) ||
+      (m.movieId ? String(m.movieId) : null) ||
+      "Unknown";
+    const revenue = Number(m.totalRevenue ?? m.total ?? m.revenue ?? 0);
+    const bookings = Number(m.totalBookings ?? m.bookings ?? 0);
+    const seatsBooked = Number(m.seatsBooked ?? m.bookedSeats ?? 0);
+    return { title, revenue, bookings, seatsBooked };
   });
 
 const toTheaterOcc = (arr = []) =>
   (arr || []).map((t = {}) => {
+    // backend returns occupancy as percent 0-100 in many pipelines; handle both fraction and percent
     const raw = t.occupancy ?? t.occupancyRate ?? t.avgOccupancy ?? t.occupancyPercent ?? 0;
     let occPct = Number(raw ?? 0);
+    if (!Number.isFinite(occPct)) occPct = 0;
+    // if value is fraction (0-1) convert to percent
     if (occPct <= 1) occPct = occPct * 100;
     occPct = Math.round(Math.max(0, Math.min(100, occPct)));
     const name = t.theaterName ?? t.name ?? t.theater ?? t.theater_name ?? "Unknown";
@@ -243,7 +264,7 @@ const toTheaterOcc = (arr = []) =>
   });
 
 function buildSummary(summaryData = [], dauData = [], revenue7 = 0) {
-  const totals = (summaryData || []).reduce((acc, d) => { acc.revenue += Number(d.revenue ?? 0); acc.orders += Number(d.confirmed ?? 0); return acc; }, { revenue: 0, orders: 0 });
+  const totals = (summaryData || []).reduce((acc, d) => { acc.revenue += Number(d.revenue ?? 0); acc.orders += Number(d.confirmed ?? d.confirmed ?? 0); return acc; }, { revenue: 0, orders: 0 });
   const aov = totals.orders ? Math.round(totals.revenue / totals.orders) : 0;
   const avgDau = dauData && dauData.length ? Math.round((dauData.reduce((s, d) => s + Number(d.dau ?? d.count ?? 0), 0)) / dauData.length) : 0;
   return { revenue30d: totals.revenue, orders: totals.orders, aov, revenue7d: revenue7, dau: avgDau };
