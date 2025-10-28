@@ -1,4 +1,3 @@
-// src/pages/Home.jsx — Walmart style hero with horizontal auto-sliding poster carousel
 import React, { useEffect, useState, useRef } from "react";
 import { Link } from "react-router-dom";
 
@@ -100,11 +99,10 @@ const QuickCard = ({ title, desc, to, cta, Icon }) => (
 
 /* ------------------------------- Horizontal Carousel ------------------------ */
 /*
-  Place posters in public/ (e.g. /Poster1.jpg, /Poster2.jpg, ...)
-  This carousel is horizontal, auto-advances, pauses on hover, and supports basic touch swipe.
+  Use landscape posters placed under public/, e.g. /Poster1-4k.jpg
 */
 function HorizontalPosterCarousel({
-  images = ["/Poster1.jpg", "/Poster2.jpg", "/Poster3.jpg", "/Poster4.jpg"],
+  images = ["/Poster1-4k.jpg", "/Poster2-4k.jpg", "/Poster3-4k.jpg", "/Poster4-4k.jpg"],
   interval = 3000,
   className = ""
 }) {
@@ -136,7 +134,6 @@ function HorizontalPosterCarousel({
   const handleMouseEnter = () => { hoverRef.current = true; };
   const handleMouseLeave = () => { hoverRef.current = false; };
 
-  // Touch swipe handling (basic)
   useEffect(() => {
     const el = rootRef.current;
     if (!el) return;
@@ -146,7 +143,7 @@ function HorizontalPosterCarousel({
     const onTouchStart = (e) => {
       startX = e.touches[0].clientX;
       moved = false;
-      hoverRef.current = true; // pause while touching
+      hoverRef.current = true;
     };
     const onTouchMove = (e) => {
       const dx = e.touches[0].clientX - startX;
@@ -172,7 +169,6 @@ function HorizontalPosterCarousel({
     };
   }, [images.length]);
 
-  // prepare transform: translateX(-index * (100%))
   const trackStyle = {
     width: `${images.length * 100}%`,
     transform: `translateX(-${index * (100 / images.length)}%)`,
@@ -186,33 +182,36 @@ function HorizontalPosterCarousel({
       ref={rootRef}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
-      className={cx("relative w-[320px] h-[480px] lg:w-[380px] lg:h-[560px] overflow-hidden rounded-2xl shadow-sm", className)}
+      className={cx(
+        // landscape poster sizes: desktop 16:9, large desktop 4:3-ish for emphasis
+        "relative w-[520px] h-[292px] lg:w-[880px] lg:h-[495px] overflow-hidden rounded-2xl shadow-sm",
+        className
+      )}
     >
-      {/* track */}
       <div style={trackStyle}>
         {images.map((src, i) => (
           <div key={i} className="flex-shrink-0 w-full h-full">
-            <img src={src} alt={`Poster ${i + 1}`} className="w-full h-full object-cover" />
+            {/* object-cover with center to preserve landscape framing */}
+            <img src={src} alt={`Poster ${i + 1}`} className="w-full h-full object-cover object-center" />
           </div>
         ))}
       </div>
 
-      {/* overlays (same as original) */}
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(120%_70%_at_30%_0%,rgba(255,255,255,0.25),transparent_60%)]" />
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/35 to-transparent rounded-2xl" />
-      <div className="pointer-events-none absolute inset-0 border border-white/50 m-4 rounded-xl" />
+      {/* subtle overlays */}
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/30 to-transparent rounded-2xl" />
+      <div className="pointer-events-none absolute inset-0 border border-white/30 m-3 rounded-xl" />
 
       {/* indicators bottom center */}
       <div className="absolute left-1/2 bottom-4 transform -translate-x-1/2 flex gap-2 pointer-events-none">
         {images.map((_, i) => (
-          <span key={i} className={`w-8 h-1.5 rounded-full transition-all duration-300 ${i === index ? "bg-white/90 scale-100" : "bg-white/40 scale-75"}`} />
+          <span key={i} className={`w-8 h-1.5 rounded-full transition-all duration-300 ${i === index ? "bg-white/90" : "bg-white/40"}`} />
         ))}
       </div>
 
-      {/* simple prev/next buttons (optional) */}
+      {/* prev/next (pointer-events auto) */}
       <button
         onClick={() => setIndex((i) => (i - 1 + images.length) % images.length)}
-        className="pointer-events-auto absolute left-2 top-1/2 transform -translate-y-1/2 rounded-full bg-black/30 p-2 text-white hover:bg-black/45"
+        className="pointer-events-auto absolute left-3 top-1/2 transform -translate-y-1/2 rounded-full bg-black/30 p-2 text-white hover:bg-black/45"
         aria-label="Previous poster"
         style={{ backdropFilter: "blur(4px)" }}
       >
@@ -220,7 +219,7 @@ function HorizontalPosterCarousel({
       </button>
       <button
         onClick={() => setIndex((i) => (i + 1) % images.length)}
-        className="pointer-events-auto absolute right-2 top-1/2 transform -translate-y-1/2 rounded-full bg-black/30 p-2 text-white hover:bg-black/45"
+        className="pointer-events-auto absolute right-3 top-1/2 transform -translate-y-1/2 rounded-full bg-black/30 p-2 text-white hover:bg-black/45"
         aria-label="Next poster"
         style={{ backdropFilter: "blur(4px)" }}
       >
@@ -239,29 +238,34 @@ export default function Home() {
       {/* Hero */}
       <section
         className="relative overflow-hidden w-screen [margin-inline:calc(50%-50vw)]"
-        style={{ height: `calc(100vh - ${HEADER_H}px)` }}
+        // make hero shorter than full viewport so content below is visible
+        style={{ minHeight: `calc(65vh - ${HEADER_H}px)`, display: "flex", alignItems: "center" }}
       >
-        {/* Visual layers must NOT intercept clicks */}
-        <div className="absolute inset-0 bg-[linear-gradient(110deg,#0071DC_0%,#0654BA_55%,#003F8E_100%)] pointer-events-none" />
+        {/* Blue background (kept but not full screen height) */}
+        <div className="absolute inset-0 pointer-events-none" style={{ background: "linear-gradient(110deg,#0071DC 0%,#0654BA 55%,#003F8E 100%)", opacity: 1 }} />
+
+        {/* subtle blueprint grid reduced opacity & scale so it doesn't dominate */}
         <div
-          className="absolute inset-0 opacity-20 pointer-events-none"
+          className="absolute inset-0 opacity-18 pointer-events-none"
           style={{
             backgroundImage:
-              "linear-gradient(to right, rgba(255,255,255,0.35) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.35) 1px, transparent 1px)",
-            backgroundSize: "28px 28px",
+              "linear-gradient(to right, rgba(255,255,255,0.18) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.18) 1px, transparent 1px)",
+            backgroundSize: "30px 30px",
+            mixBlendMode: "overlay"
           }}
         />
 
         {/* Hero content */}
-        <div className="relative z-10 h-full">
-          <div className="h-full max-w-7xl mx-auto px-6 md:px-12 flex items-center">
-            {/* Left: text + buttons */}
-            <div className="max-w-3xl text-white">
-              <h1 className="mt-3 text-[2.3rem] md:text-6xl lg:text-7xl font-extrabold leading-[1.05] drop-shadow-[0_2px_0_rgba(0,0,0,0.2)]">
-                Book Movies, <span className="underline decoration-4 decoration-[#FFC220] underline-offset-8">Your-Style</span>
+        <div className="relative z-10 w-full">
+          <div className="max-w-7xl mx-auto px-6 md:px-12 flex items-center gap-8">
+            {/* Left: text (shifted left by using flex-1 and margin-right) */}
+            <div className="flex-1 max-w-2xl text-white mr-auto">
+              <h1 className="mt-3 text-[2rem] md:text-5xl lg:text-6xl font-extrabold leading-[1.02] drop-shadow-[0_2px_0_rgba(0,0,0,0.18)]">
+                Book Movies,{" "}
+                <span className="underline decoration-4 decoration-[#FFC220] underline-offset-8">Your-Style</span>
               </h1>
 
-              <p className="mt-4 md:mt-6 text-base md:text-xl text-white/95 leading-relaxed max-w-2xl">
+              <p className="mt-4 md:mt-6 text-sm md:text-lg text-white/95 leading-relaxed max-w-xl">
                 Search titles, pick a city and date, lock seats in real-time, and pay securely.
                 Admins manage theaters, screens, shows, and pricing with clean, robust controls.
               </p>
@@ -278,17 +282,16 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Right side poster with HORIZONTAL carousel */}
-            <div className="hidden md:block ml-auto relative">
-              <Card className="relative overflow-hidden bg-white/10 border-white/30 backdrop-blur-sm shadow-sm" as="div">
-                {/* Horizontal carousel component */}
+            {/* Right: poster (landscape) */}
+            <div className="hidden md:block ml-4 relative">
+              <Card className="relative overflow-hidden bg-white/6 border-white/20 backdrop-blur-sm shadow-sm" as="div">
                 <div className="p-4">
                   <HorizontalPosterCarousel
                     images={[
-                      "/Poster1.jpg",
-                      "/Poster2.jpg",
-                      "/Poster3.jpg",
-                      "/Poster4.jpg",
+                      "/Poster1-4k.jpg",
+                      "/Poster2-4k.jpg",
+                      "/Poster3-4k.jpg",
+                      "/Poster4-4k.jpg",
                     ]}
                     interval={3000}
                   />
@@ -300,7 +303,7 @@ export default function Home() {
       </section>
 
       {/* Main content below hero */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 -mt-6">
         {/* Quick Access */}
         <section className="py-10 md:py-14 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           <QuickCard
@@ -326,7 +329,6 @@ export default function Home() {
           />
         </section>
 
-        {/* Secondary strip with compact badges */}
         <section className="pb-16">
           <div className="grid gap-4 md:grid-cols-3">
             <Card className="p-4 flex items-center gap-3">
