@@ -1,5 +1,6 @@
 // src/pages/Home.jsx
 // Grid-based hero: fixed left column (headline) + flexible right column (bleeding landscape carousel)
+// Updated: carousel placed in grid (no absolute overflow) + image objectPosition center right
 
 import React, { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
@@ -96,29 +97,18 @@ const QuickCard = ({ title, desc, to, cta, Icon }) => (
 
 /* ------------------------------- Carousel (landscape) ----------------------- */
 /*
-  - root is responsive (fills wrapper)
-  - images use object-cover so poster fills the card without empty bands
-  - autoplay, swipe, keyboard preserved
+  Responsive landscape carousel:
+  - root fills the wrapper (w-full h-full)
+  - images set to object-fit: cover and object-position: center right
+  - autoplay pause on hover, swipe, keyboard
 */
-function LandscapeCarousel({
-  images = [
-    { webp: "/Poster1_land.webp", jpg: "/Poster1_land.jpg", title: "Poster 1" },
-    { webp: "/Poster2_land.webp", jpg: "/Poster2_land.jpg", title: "Poster 2" },
-    { webp: "/Poster3_land.webp", jpg: "/Poster3_land.jpg", title: "Poster 3" },
-    { webp: "/Poster4_land.webp", jpg: "/Poster4_land.jpg", title: "Poster 4" },
-    { webp: "/Poster5_land.webp", jpg: "/Poster5_land.jpg", title: "Poster 5" },
-    { webp: "/Poster6_land.webp", jpg: "/Poster6_land.jpg", title: "Poster 6" },
-    { webp: "/Poster7_land.webp", jpg: "/Poster7_land.jpg", title: "Poster 7" },
-    { webp: "/Poster8_land.webp", jpg: "/Poster8_land.jpg", title: "Poster 8" },
-  ],
-  interval = 3200,
-}) {
+function LandscapeCarousel({ images = [], interval = 3200 }) {
   const [index, setIndex] = useState(0);
   const rootRef = useRef(null);
   const timerRef = useRef(null);
   const hoveringRef = useRef(false);
   const touchingRef = useRef(false);
-  const length = images.length;
+  const length = images.length || 0;
 
   useEffect(() => {
     startTimer();
@@ -137,7 +127,7 @@ function LandscapeCarousel({
   const startTimer = () => {
     stopTimer();
     timerRef.current = setInterval(() => {
-      if (!hoveringRef.current && !touchingRef.current) {
+      if (!hoveringRef.current && !touchingRef.current && length > 0) {
         setIndex(i => (i + 1) % length);
       }
     }, interval);
@@ -149,37 +139,30 @@ function LandscapeCarousel({
   const onMouseEnter = () => { hoveringRef.current = true; };
   const onMouseLeave = () => { hoveringRef.current = false; };
 
-  // touch handlers for swipe
+  // touch handlers
   useEffect(() => {
     const el = rootRef.current;
     if (!el) return;
     let startX = 0;
     let moved = false;
-
     const onTouchStart = (e) => {
-      touchingRef.current = true;
-      hoveringRef.current = true; // pause autoplay
-      startX = e.touches[0].clientX;
-      moved = false;
+      touchingRef.current = true; hoveringRef.current = true;
+      startX = e.touches[0].clientX; moved = false;
     };
     const onTouchMove = (e) => {
       const dx = e.touches[0].clientX - startX;
       if (Math.abs(dx) > 10) moved = true;
     };
     const onTouchEnd = (e) => {
-      touchingRef.current = false;
-      hoveringRef.current = false;
+      touchingRef.current = false; hoveringRef.current = false;
       if (!moved) return;
-      const endX = (e.changedTouches && e.changedTouches[0].clientX) || 0;
-      const dx = endX - startX;
-      if (dx < -40) setIndex(i => Math.min(length - 1, i + 1));
-      else if (dx > 40) setIndex(i => Math.max(0, i - 1));
+      const endX = e.changedTouches?.[0]?.clientX || 0; const dx = endX - startX;
+      if (dx < -40) setIndex(i => (i + 1) % length);
+      else if (dx > 40) setIndex(i => (i - 1 + length) % length);
     };
-
     el.addEventListener("touchstart", onTouchStart, { passive: true });
     el.addEventListener("touchmove", onTouchMove, { passive: true });
     el.addEventListener("touchend", onTouchEnd, { passive: true });
-
     return () => {
       el.removeEventListener("touchstart", onTouchStart);
       el.removeEventListener("touchmove", onTouchMove);
@@ -189,7 +172,7 @@ function LandscapeCarousel({
 
   const trackStyle = {
     width: `${length * 100}%`,
-    transform: `translateX(-${(index * 100) / length}%)`,
+    transform: `translateX(-${(index * 100) / (length || 1)}%)`,
     transition: "transform 700ms cubic-bezier(.2,.9,.2,1)",
     display: "flex",
     height: "100%",
@@ -200,11 +183,10 @@ function LandscapeCarousel({
       ref={rootRef}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
-      className="relative w-full h-full overflow-hidden"
+      className="relative w-full h-full overflow-hidden rounded-2xl"
       aria-roledescription="carousel"
       aria-label="Featured posters"
     >
-      {/* sliding track */}
       <div style={trackStyle}>
         {images.map((img, i) => (
           <div key={i} className="flex-shrink-0 w-full h-full relative">
@@ -214,10 +196,10 @@ function LandscapeCarousel({
                 src={img.jpg}
                 alt={img.title || `Poster ${i + 1}`}
                 loading="lazy"
-                className="w-full h-full object-cover object-center"
+                className="w-full h-full object-cover"
+                style={{ objectPosition: "center right" }}
                 draggable={false}
                 onError={(e) => {
-                  // hide broken image and show a gradient placeholder
                   e.currentTarget.style.display = "none";
                   const p = document.createElement("div");
                   p.style.width = "100%";
@@ -228,7 +210,6 @@ function LandscapeCarousel({
               />
             </picture>
 
-            {/* subtle caption overlay bottom-left */}
             <div className="pointer-events-none absolute left-6 bottom-6 bg-black/30 backdrop-blur-sm px-3 py-1.5 rounded-md text-sm text-white/90">
               {img.title}
             </div>
@@ -273,14 +254,14 @@ export default function Home() {
 
   // configure images used by the carousel (edit names to match your public/ files)
   const carouselImages = [
-    { jpg: "/Poster1_land.jpg" },
-    { jpg: "/Poster2_land.jpg" },
-    { jpg: "/Poster3_land.jpg" },
-    { jpg: "/Poster4_land.jpg" },
-    { jpg: "/Poster5_land.jpg" },
-    { jpg: "/Poster6_land.jpg" },
-    { jpg: "/Poster7_land.jpg" },
-    { jpg: "/Poster8_land.jpg" },
+    { jpg: "/Poster1_land.jpg", title: "The Epic Adventure" },
+    { jpg: "/Poster2_land.jpg", title: "Mystery of the Night" },
+    { jpg: "/Poster3_land.jpg", title: "Summer Heist" },
+    { jpg: "/Poster4_land.jpg", title: "Legends Rise" },
+    { jpg: "/Poster5_land.jpg", title: "Poster 5" },
+    { jpg: "/Poster6_land.jpg", title: "Poster 6" },
+    { jpg: "/Poster7_land.jpg", title: "Poster 7" },
+    { jpg: "/Poster8_land.jpg", title: "Poster 8" },
   ];
 
   return (
@@ -305,7 +286,7 @@ export default function Home() {
         <div className="relative z-10 h-full">
           <div className="h-full max-w-7xl mx-auto px-6 md:px-12 grid items-center gap-8"
                style={{ gridTemplateColumns: "minmax(300px,420px) 1fr" }}>
-            {/* Left: headline (fixed max width, high z so it sits above carousel) */}
+            {/* Left: headline (fixed max width) */}
             <div className="text-white relative z-30">
               <h1 className="mt-3 text-[2.3rem] md:text-6xl lg:text-7xl font-extrabold leading-[1.05] drop-shadow-[0_2px_0_rgba(0,0,0,0.2)]">
                 Book Movies, <span className="underline decoration-4 decoration-[#FFC220] underline-offset-8">Your-Style</span>
@@ -328,34 +309,30 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Right: empty flow column (carousel placed absolutely so it can bleed to the right edge) */}
+            {/* Right: carousel sits here in normal flow (prevents overflow/scroll) */}
             <div className="relative" />
           </div>
         </div>
 
-        {/* ---- absolutely positioned carousel anchored to the section (not the centered container) ---- */}
-        {/* This lives outside the centered grid flow, but since the grid reserves the left column width,
-            the carousel won't overlap the left headline. */}
-        <div className="hidden md:block">
+        {/* Carousel placed in grid's right area (not absolutely anchored to viewport) */}
+        <div className="hidden md:flex justify-end">
           <div
-            className="absolute top-1/2 right-0 -translate-y-1/2 z-20 pointer-events-auto"
+            // width = responsive but never larger than viewport minus left column
             style={{
-              // width calculation: keep it responsive but ensure it starts after the fixed left column
-              width: "min(65vw,1100px)",
-              maxWidth: "1100px",
-              // set height responsively so the carousel scales nicely with viewport
+              width: "min(65vw, 1100px)",
+              maxWidth: "calc(100vw - 420px - 48px)", // 420px left column + 48px gutter
               height: "calc(100vh - 160px)",
               maxHeight: "720px",
             }}
+            className="mx-6 md:mx-0 relative w-full h-full overflow-hidden rounded-2xl"
           >
-            {/* NO white Card wrapper — poster bleeds edge-to-edge */}
-            <div className="relative w-full h-full overflow-hidden rounded-2xl">
-              {/* subtle left gradient to blend poster into blue hero */}
-              <div className="absolute left-0 top-0 bottom-0 w-24 pointer-events-none z-10"
-                   style={{ background: "linear-gradient(90deg, rgba(3,65,160,1) 0%, rgba(3,65,160,0.6) 40%, transparent 100%)" }} />
-              <div className="absolute inset-0 z-0">
-                <LandscapeCarousel images={carouselImages} interval={3200} />
-              </div>
+            {/* left blend for nicer visual integration */}
+            <div
+              className="absolute left-0 top-0 bottom-0 w-24 pointer-events-none z-10"
+              style={{ background: "linear-gradient(90deg, rgba(3,65,160,1) 0%, rgba(3,65,160,0.6) 40%, transparent 100%)" }}
+            />
+            <div className="absolute inset-0 z-0">
+              <LandscapeCarousel images={carouselImages} interval={3200} />
             </div>
           </div>
         </div>
