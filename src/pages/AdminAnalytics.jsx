@@ -279,20 +279,53 @@ export default function AdminAnalyticsDashboard() {
       const s = String(v);
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
+
     const makeCSV = (title, headers, rows) => {
       let csv = `${title}\n${headers.join(",")}\n`;
-      csv += rows.map((r) => headers.map((h) => csvEscape(r[h] ?? "")).join(",")).join("\n");
+      csv += rows
+        .map((r) =>
+          headers.map((h) => csvEscape(r[h] ?? "")).join(",")
+        )
+        .join("\n");
       csv += "\n\n";
       return csv;
     };
 
-    const sections = [];
-    sections.push(makeCSV("Revenue (Daily)", ["day", "revenue", "bookings"], revenueDaily));
-    sections.push(makeCSV("Active Users (Daily)", ["day", "users"], dauDaily));
-    sections.push(makeCSV("Theater Occupancy", ["name", "occupancy", "totalBooked", "totalCapacity"], theaterOcc));
-    sections.push(makeCSV("Top Movies", ["title", "bookings", "revenue", "seatsBooked"], topMovies));
+    // Prepare rows with explicit dayISO fields so Excel can parse dates reliably.
+    const revRows = (revenueDaily || []).map((r) => ({
+      dayISO: r.dayISO || "",
+      day: r.day || "",
+      revenue: r.revenue ?? 0,
+      bookings: r.bookings ?? 0,
+    }));
+    const dauRows = (dauDaily || []).map((r) => ({
+      dayISO: r.dayISO || "",
+      day: r.day || "",
+      users: r.users ?? 0,
+    }));
+    const occRows = (theaterOcc || []).map((r) => ({
+      name: r.name ?? "",
+      occupancy: r.occupancy ?? "",
+      totalBooked: r.totalBooked ?? "",
+      totalCapacity: r.totalCapacity ?? "",
+    }));
+    const movieRows = (topMovies || []).map((r) => ({
+      title: r.title ?? "",
+      bookings: r.bookings ?? 0,
+      revenue: r.revenue ?? 0,
+      seatsBooked: r.seatsBooked ?? 0,
+    }));
 
-    const blob = new Blob(sections, { type: "text/csv;charset=utf-8;" });
+    const sections = [];
+    sections.push(makeCSV("Revenue (Daily)", ["dayISO", "day", "revenue", "bookings"], revRows));
+    sections.push(makeCSV("Active Users (Daily)", ["dayISO", "day", "users"], dauRows));
+    sections.push(makeCSV("Theater Occupancy", ["name", "occupancy", "totalBooked", "totalCapacity"], occRows));
+    sections.push(makeCSV("Top Movies", ["title", "bookings", "revenue", "seatsBooked"], movieRows));
+
+    // Prepend UTF-8 BOM so Excel (Windows) recognizes UTF-8 and date columns better.
+    const csvContent = "\uFEFF" + sections.join("");
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
     link.setAttribute("download", `analytics_${range}_${new Date().toISOString().slice(0, 10)}.csv`);
