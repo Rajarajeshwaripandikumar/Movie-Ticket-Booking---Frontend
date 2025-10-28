@@ -147,8 +147,8 @@ export default function AdminLogin() {
             </SecondaryBtn>
 
             <p className="text-slate-600 italic text-[13px] text-center">
-              Tip: Use <span className="font-semibold">admin@cinema.com</span> and {""}
-              <span className="font-semibold">password</span>.
+              Tip: Use <span className="font-semibold">Email(admin@cinema.com)</span> and {""}
+              <span className="font-semibold">password(NewPass123!)</span>.
             </p>
           </div>
         </form>
