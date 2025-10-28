@@ -1,5 +1,5 @@
 // src/pages/Home.jsx
-// Clean version: No white frame, no padding, pure edge-to-edge landscape poster hero.
+// Grid-based hero: fixed left column (headline) + flexible right column (bleeding landscape carousel)
 
 import React, { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
@@ -38,9 +38,7 @@ const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
   </Tag>
 );
 
-function cx(...a) {
-  return a.filter(Boolean).join(" ");
-}
+function cx(...a) { return a.filter(Boolean).join(" "); }
 const PrimaryBtn = ({ as: As = "button", to, href, className = "", children, ...props }) => (
   <As
     {...(to ? { to } : {})}
@@ -79,9 +77,7 @@ const QuickCard = ({ title, desc, to, cta, Icon }) => (
         <Icon className="w-6 h-6 text-slate-800" />
       </div>
       <div className="flex-1">
-        <div className="text-base md:text-lg font-semibold tracking-tight text-slate-900">
-          {title}
-        </div>
+        <div className="text-base md:text-lg font-semibold tracking-tight text-slate-900">{title}</div>
         <p className="text-sm text-slate-600 mt-1 leading-snug">{desc}</p>
       </div>
     </div>
@@ -118,39 +114,33 @@ function LandscapeCarousel({
   useEffect(() => {
     startTimer();
     const handleKey = (e) => {
-      if (e.key === "ArrowLeft") setIndex((i) => (i - 1 + length) % length);
-      if (e.key === "ArrowRight") setIndex((i) => (i + 1) % length);
+      if (e.key === "ArrowLeft") setIndex(i => (i - 1 + length) % length);
+      if (e.key === "ArrowRight") setIndex(i => (i + 1) % length);
     };
     window.addEventListener("keydown", handleKey);
     return () => {
       stopTimer();
       window.removeEventListener("keydown", handleKey);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [length]);
 
   const startTimer = () => {
     stopTimer();
     timerRef.current = setInterval(() => {
       if (!hoveringRef.current && !touchingRef.current) {
-        setIndex((i) => (i + 1) % length);
+        setIndex(i => (i + 1) % length);
       }
     }, interval);
   };
   const stopTimer = () => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
   };
 
-  const onMouseEnter = () => {
-    hoveringRef.current = true;
-  };
-  const onMouseLeave = () => {
-    hoveringRef.current = false;
-  };
+  const onMouseEnter = () => { hoveringRef.current = true; };
+  const onMouseLeave = () => { hoveringRef.current = false; };
 
-  // swipe support
+  // touch handlers for swipe
   useEffect(() => {
     const el = rootRef.current;
     if (!el) return;
@@ -159,7 +149,7 @@ function LandscapeCarousel({
 
     const onTouchStart = (e) => {
       touchingRef.current = true;
-      hoveringRef.current = true;
+      hoveringRef.current = true; // pause autoplay
       startX = e.touches[0].clientX;
       moved = false;
     };
@@ -171,10 +161,10 @@ function LandscapeCarousel({
       touchingRef.current = false;
       hoveringRef.current = false;
       if (!moved) return;
-      const endX = e.changedTouches?.[0]?.clientX || 0;
+      const endX = (e.changedTouches && e.changedTouches[0].clientX) || 0;
       const dx = endX - startX;
-      if (dx < -40) setIndex((i) => (i + 1) % length);
-      else if (dx > 40) setIndex((i) => (i - 1 + length) % length);
+      if (dx < -40) setIndex(i => Math.min(length - 1, i + 1));
+      else if (dx > 40) setIndex(i => Math.max(0, i - 1));
     };
 
     el.addEventListener("touchstart", onTouchStart, { passive: true });
@@ -201,50 +191,66 @@ function LandscapeCarousel({
       ref={rootRef}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
-      className="relative w-full h-full overflow-hidden"
+      className="relative w-[520px] h-[340px] md:w-[620px] md:h-[420px] lg:w-[820px] lg:h-[520px] overflow-hidden rounded-2xl shadow-2xl"
       aria-roledescription="carousel"
       aria-label="Featured posters"
     >
+      {/* sliding track */}
       <div style={trackStyle}>
         {images.map((img, i) => (
           <div key={i} className="flex-shrink-0 w-full h-full relative">
             <picture>
               {img.webp && <source srcSet={img.webp} type="image/webp" />}
+              <source srcSet={img.jpg} type="image/jpeg" />
               <img
                 src={img.jpg}
-                alt={img.title}
+                alt={img.title || `Poster ${i + 1}`}
+                loading="lazy"
                 className="w-full h-full object-cover object-center"
                 draggable={false}
               />
             </picture>
+
+            <div className="pointer-events-none absolute left-6 bottom-6 bg-black/30 backdrop-blur-sm px-3 py-1.5 rounded-md text-sm text-white/90">
+              {img.title}
+            </div>
           </div>
         ))}
       </div>
 
-      {/* navigation */}
-      <div className="absolute left-1/2 bottom-4 transform -translate-x-1/2 flex gap-2">
+      {/* visual frame */}
+      <div className="pointer-events-none absolute inset-0 rounded-2xl">
+        <div className="absolute inset-0 bg-[radial-gradient(120%_70%_at_10%_0%,rgba(255,255,255,0.12),transparent_55%)] rounded-2xl" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/25 to-transparent rounded-2xl" />
+        <div className="absolute inset-0 border border-white/30 m-4 rounded-xl" />
+      </div>
+
+      {/* indicators */}
+      <div className="absolute left-1/2 bottom-4 transform -translate-x-1/2 flex gap-2 z-20">
         {images.map((_, i) => (
           <button
             key={i}
             onClick={() => setIndex(i)}
-            className={`w-8 h-1.5 rounded-full transition-all duration-200 ${
-              i === index ? "bg-white/90" : "bg-white/30"
-            }`}
+            aria-label={`Go to slide ${i + 1}`}
+            className={`w-8 h-1.5 rounded-full transition-all duration-200 ${i === index ? "bg-white/90" : "bg-white/30"}`}
+            style={{ pointerEvents: "auto" }}
           />
         ))}
       </div>
+
       <button
         onClick={() => setIndex((i) => (i - 1 + length) % length)}
-        className="absolute left-3 top-1/2 -translate-y-1/2 bg-black/30 hover:bg-black/45 text-white rounded-full p-2"
-      >
-        ‹
-      </button>
+        aria-label="Previous slide"
+        className="pointer-events-auto absolute left-3 top-1/2 -translate-y-1/2 rounded-full bg-black/30 p-2 text-white hover:bg-black/45"
+        style={{ backdropFilter: "blur(4px)" }}
+      >‹</button>
+
       <button
         onClick={() => setIndex((i) => (i + 1) % length)}
-        className="absolute right-3 top-1/2 -translate-y-1/2 bg-black/30 hover:bg-black/45 text-white rounded-full p-2"
-      >
-        ›
-      </button>
+        aria-label="Next slide"
+        className="pointer-events-auto absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-black/30 p-2 text-white hover:bg-black/45"
+        style={{ backdropFilter: "blur(4px)" }}
+      >›</button>
     </div>
   );
 }
@@ -252,23 +258,26 @@ function LandscapeCarousel({
 /* --------------------------------- Page ----------------------------------- */
 export default function Home() {
   const HEADER_H = 64;
-  const carouselImages = [
-  { jpg: "/Poster1_land.jpg", title: "The Epic Adventure" },
-  { jpg: "/Poster1_land.jpg", title: "Mystery of the Night" },
-  { jpg: "/Poster1_land.jpg", title: "Summer Heist" },
-  { jpg: "/Poster1_land.jpg", title: "Legends Rise" },
-];
 
+  // configure images used by the carousel (edit names to match your public/ files)
+  const carouselImages = [
+    { webp: "/Poster1_land.webp", jpg: "/Poster1_land.jpg", title: "The Epic Adventure" },
+    { webp: "/Poster2_land.webp", jpg: "/Poster2_land.jpg", title: "Mystery of the Night" },
+    { webp: "/Poster3_land.webp", jpg: "/Poster3_land.jpg", title: "Summer Heist" },
+    { webp: "/Poster4_land.webp", jpg: "/Poster4_land.jpg", title: "Legends Rise" },
+  ];
 
   return (
     <main className="bg-slate-50 text-slate-900">
+      {/* Hero */}
       <section
         className="relative overflow-hidden w-screen [margin-inline:calc(50%-50vw)]"
         style={{ height: `calc(100vh - ${HEADER_H}px)` }}
       >
-        <div className="absolute inset-0 bg-[linear-gradient(110deg,#0071DC_0%,#0654BA_55%,#003F8E_100%)]" />
+        {/* Background gradient + grid pattern */}
+        <div className="absolute inset-0 bg-[linear-gradient(110deg,#0071DC_0%,#0654BA_55%,#003F8E_100%)] pointer-events-none" />
         <div
-          className="absolute inset-0 opacity-20"
+          className="absolute inset-0 opacity-20 pointer-events-none"
           style={{
             backgroundImage:
               "linear-gradient(to right, rgba(255,255,255,0.35) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.35) 1px, transparent 1px)",
@@ -276,19 +285,14 @@ export default function Home() {
           }}
         />
 
-        {/* Grid layout */}
+        {/* Grid: left column fixed width, right flexible */}
         <div className="relative z-10 h-full">
-          <div
-            className="h-full max-w-7xl mx-auto px-6 md:px-12 grid items-center gap-8"
-            style={{ gridTemplateColumns: "minmax(320px, 440px) 1fr" }}
-          >
-            {/* Left content */}
+          <div className="h-full max-w-7xl mx-auto px-6 md:px-12 grid items-center gap-8"
+               style={{ gridTemplateColumns: "minmax(300px,420px) 1fr" }}>
+            {/* Left: headline (fixed max width, high z so it sits above carousel) */}
             <div className="text-white relative z-30">
               <h1 className="mt-3 text-[2.3rem] md:text-6xl lg:text-7xl font-extrabold leading-[1.05] drop-shadow-[0_2px_0_rgba(0,0,0,0.2)]">
-                Book Movies,{" "}
-                <span className="underline decoration-4 decoration-[#FFC220] underline-offset-8">
-                  Your-Style
-                </span>
+                Book Movies, <span className="underline decoration-4 decoration-[#FFC220] underline-offset-8">Your-Style</span>
               </h1>
 
               <p className="mt-4 md:mt-6 text-base md:text-xl text-white/95 leading-relaxed max-w-lg">
@@ -297,36 +301,49 @@ export default function Home() {
               </p>
 
               <div className="mt-7 flex flex-wrap items-center gap-3">
-                <PrimaryBtn as={Link} to="/movies">
-                  Browse Movies <IconArrow className="w-5 h-5" />
+                <PrimaryBtn as={Link} to="/movies" className="!no-underline" aria-label="Browse Movies">
+                  Browse Movies
+                  <IconArrow className="w-5 h-5" />
                 </PrimaryBtn>
-                <GhostBtn as={Link} to="/showtimes">
+
+                <GhostBtn as={Link} to="/showtimes" aria-label="Quick Showtimes">
                   Quick Showtimes
                 </GhostBtn>
               </div>
             </div>
-            <div />
+
+            {/* Right: empty flow column (carousel placed absolutely so it can bleed to the right edge) */}
+            <div className="relative" />
+
           </div>
         </div>
 
-        {/* Poster — edge-to-edge clean */}
+        {/* ---- absolutely positioned carousel anchored to the section (not the centered container) ---- */}
+        {/* This lives outside the centered grid flow, but since the grid reserves the left column width,
+            the carousel won't overlap the left headline. */}
         <div className="hidden md:block">
           <div
-            className="absolute top-1/2 right-0 -translate-y-1/2 z-20"
+            className="absolute top-1/2 right-0 -translate-y-1/2 z-20 pointer-events-auto"
             style={{
-              width: "min(70vw,1200px)",
-              maxWidth: "1200px",
+              // width calculation: keep it responsive but ensure it starts after the fixed left column
+              // using calc(viewport - leftColumnWidth - gutter)
+              width: "min(60vw,1100px)",
+              maxWidth: "1100px",
+              paddingRight: "1.25rem", // small breathing room
             }}
           >
-            <div className="relative overflow-hidden rounded-2xl">
-              <LandscapeCarousel images={carouselImages} interval={3200} />
-            </div>
+            <Card className="relative overflow-visible bg-white/8 border-white/30 backdrop-blur-sm shadow-sm">
+              <div className="p-3 md:p-4">
+                <LandscapeCarousel images={carouselImages} interval={3200} />
+              </div>
+            </Card>
           </div>
         </div>
       </section>
 
-      {/* Quick Access below */}
+      {/* Main content below hero */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        {/* Quick Access */}
         <section className="py-10 md:py-14 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           <QuickCard
             title="Movies"
