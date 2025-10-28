@@ -1,4 +1,4 @@
-// src/pages/Home.jsx — Walmart style hero with working buttons + vertical auto-sliding poster carousel
+// src/pages/Home.jsx — Walmart style hero with horizontal auto-sliding poster carousel
 import React, { useEffect, useState, useRef } from "react";
 import { Link } from "react-router-dom";
 
@@ -40,11 +40,6 @@ const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
   <Tag className={`bg-white border border-slate-200 rounded-2xl shadow-sm ${className}`} {...rest}>
     {children}
   </Tag>
-);
-const Pill = ({ children, className = "" }) => (
-  <span className={`inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700 ${className}`}>
-    {children}
-  </span>
 );
 
 function cx(...a) { return a.filter(Boolean).join(" "); }
@@ -103,24 +98,20 @@ const QuickCard = ({ title, desc, to, cta, Icon }) => (
   </Card>
 );
 
-/* ------------------------------- Vertical Carousel -------------------------- */
+/* ------------------------------- Horizontal Carousel ------------------------ */
 /*
-  Place posters in public/posters/ as poster1.jpg, poster2.jpg, etc.
-  The carousel is vertical, auto-advances every 3s, and pauses on hover.
+  Place posters in public/ (e.g. /Poster1.jpg, /Poster2.jpg, ...)
+  This carousel is horizontal, auto-advances, pauses on hover, and supports basic touch swipe.
 */
-function VerticalPosterCarousel({
-  images = [
-    "/poster1.jpg",
-    "/poster2.jpg",
-    "/poster3.jpg",
-    "/poster4.jpg",
-  ],
+function HorizontalPosterCarousel({
+  images = ["/Poster1.jpg", "/Poster2.jpg", "/Poster3.jpg", "/Poster4.jpg"],
   interval = 3000,
   className = ""
 }) {
   const [index, setIndex] = useState(0);
   const timerRef = useRef(null);
   const hoverRef = useRef(false);
+  const rootRef = useRef(null);
 
   useEffect(() => {
     startTimer();
@@ -145,29 +136,63 @@ function VerticalPosterCarousel({
   const handleMouseEnter = () => { hoverRef.current = true; };
   const handleMouseLeave = () => { hoverRef.current = false; };
 
-  // styles: the outer card has fixed height; inner stack is N * 100% height and translateY by index*100%
+  // Touch swipe handling (basic)
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    let startX = 0;
+    let moved = false;
+
+    const onTouchStart = (e) => {
+      startX = e.touches[0].clientX;
+      moved = false;
+      hoverRef.current = true; // pause while touching
+    };
+    const onTouchMove = (e) => {
+      const dx = e.touches[0].clientX - startX;
+      if (Math.abs(dx) > 10) moved = true;
+    };
+    const onTouchEnd = (e) => {
+      hoverRef.current = false;
+      if (!moved) return;
+      const endX = (e.changedTouches && e.changedTouches[0].clientX) || 0;
+      const dx = endX - startX;
+      if (dx < -40) setIndex((i) => Math.min(images.length - 1, i + 1));
+      else if (dx > 40) setIndex((i) => Math.max(0, i - 1));
+    };
+
+    el.addEventListener("touchstart", onTouchStart, { passive: true });
+    el.addEventListener("touchmove", onTouchMove, { passive: true });
+    el.addEventListener("touchend", onTouchEnd, { passive: true });
+
+    return () => {
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove", onTouchMove);
+      el.removeEventListener("touchend", onTouchEnd);
+    };
+  }, [images.length]);
+
+  // prepare transform: translateX(-index * (100%))
+  const trackStyle = {
+    width: `${images.length * 100}%`,
+    transform: `translateX(-${index * (100 / images.length)}%)`,
+    transition: "transform 700ms cubic-bezier(.2,.9,.2,1)",
+    display: "flex",
+    height: "100%"
+  };
+
   return (
     <div
+      ref={rootRef}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
       className={cx("relative w-[320px] h-[480px] lg:w-[380px] lg:h-[560px] overflow-hidden rounded-2xl shadow-sm", className)}
     >
-      <div
-        className="absolute inset-0"
-        style={{
-          // inner stack total height
-          height: `${images.length * 100}%`,
-          transform: `translateY(-${index * (100 / images.length)}%)`,
-          transition: "transform 700ms cubic-bezier(.2,.9,.2,1)"
-        }}
-      >
+      {/* track */}
+      <div style={trackStyle}>
         {images.map((src, i) => (
-          <div key={i} className="w-full" style={{ height: `${100 / images.length}%` }}>
-            <img
-              src={src}
-              alt={`Poster ${i + 1}`}
-              className="w-full h-full object-cover"
-            />
+          <div key={i} className="flex-shrink-0 w-full h-full">
+            <img src={src} alt={`Poster ${i + 1}`} className="w-full h-full object-cover" />
           </div>
         ))}
       </div>
@@ -177,15 +202,30 @@ function VerticalPosterCarousel({
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/35 to-transparent rounded-2xl" />
       <div className="pointer-events-none absolute inset-0 border border-white/50 m-4 rounded-xl" />
 
-      {/* small vertical indicators at left (optional UX) */}
-      <div className="absolute left-4 top-1/2 transform -translate-y-1/2 flex flex-col gap-2 pointer-events-none">
+      {/* indicators bottom center */}
+      <div className="absolute left-1/2 bottom-4 transform -translate-x-1/2 flex gap-2 pointer-events-none">
         {images.map((_, i) => (
-          <span
-            key={i}
-            className={`w-1.5 h-7 rounded-full transition-all duration-300 ${i === index ? "bg-white/90 scale-100" : "bg-white/40 scale-75"}`}
-          />
+          <span key={i} className={`w-8 h-1.5 rounded-full transition-all duration-300 ${i === index ? "bg-white/90 scale-100" : "bg-white/40 scale-75"}`} />
         ))}
       </div>
+
+      {/* simple prev/next buttons (optional) */}
+      <button
+        onClick={() => setIndex((i) => (i - 1 + images.length) % images.length)}
+        className="pointer-events-auto absolute left-2 top-1/2 transform -translate-y-1/2 rounded-full bg-black/30 p-2 text-white hover:bg-black/45"
+        aria-label="Previous poster"
+        style={{ backdropFilter: "blur(4px)" }}
+      >
+        ‹
+      </button>
+      <button
+        onClick={() => setIndex((i) => (i + 1) % images.length)}
+        className="pointer-events-auto absolute right-2 top-1/2 transform -translate-y-1/2 rounded-full bg-black/30 p-2 text-white hover:bg-black/45"
+        aria-label="Next poster"
+        style={{ backdropFilter: "blur(4px)" }}
+      >
+        ›
+      </button>
     </div>
   );
 }
@@ -238,18 +278,17 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Right side poster with vertical carousel */}
+            {/* Right side poster with HORIZONTAL carousel */}
             <div className="hidden md:block ml-auto relative">
               <Card className="relative overflow-hidden bg-white/10 border-white/30 backdrop-blur-sm shadow-sm" as="div">
-                {/* Vertical carousel component */}
+                {/* Horizontal carousel component */}
                 <div className="p-4">
-                  <VerticalPosterCarousel
+                  <HorizontalPosterCarousel
                     images={[
-                      "/poster1.jpg",
-                      "/poster2.jpg",
-                      "/poster3.jpg",
-                      "/poster4.jpg",
-                      // add more if you like
+                      "/Poster1.jpg",
+                      "/Poster2.jpg",
+                      "/Poster3.jpg",
+                      "/Poster4.jpg",
                     ]}
                     interval={3000}
                   />
