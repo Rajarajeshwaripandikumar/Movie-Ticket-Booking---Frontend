@@ -1,4 +1,5 @@
 // frontend/src/pages/AdminAnalytics.jsx — Walmart Style (Blue, Rounded, Clean)
+// Robust version: tolerant API base resolution and correct /api root handling
 import React, { useState, useEffect, useRef } from "react";
 import {
   TrendingUp,
@@ -29,16 +30,35 @@ import {
   Line,
 } from "recharts";
 
-/* ======================== Config / API helpers ======================== */
+/* ======================== Config / API helpers ========================
+   This version makes resolveApiBase tolerant of VITE_API_BASE values that
+   may already contain `/api` or `/api/analytics`. It exposes two values:
+     - API_BASE  => analytics endpoints (ends with /api/analytics)
+     - API_ROOT  => backend API root (ends with /api)
+   Use getJSON(..., { root: true }) when you need the "root" APIs
+   (theaters, movies, notifications).
+   Use getJSON(..., { root: false }) for analytics endpoints (revenue/users/...).
+   ===================================================================== */
 function resolveApiBase() {
-  const base =
+  const raw =
     import.meta.env.VITE_API_BASE ||
     import.meta.env.VITE_API_BASE_URL ||
     "http://localhost:8080";
-  return `${base.replace(/\/+$/, "")}/api/analytics`;
+
+  // strip trailing slashes
+  let base = String(raw).replace(/\/+$/, "");
+
+  // If base contains /api/... remove it to get origin/root
+  base = base.replace(/\/api(\/.*)?$/i, "");
+
+  const API_ROOT = `${base}/api`.replace(/\/+$/, ""); // e.g. https://host/.../api
+  const API_BASE = `${API_ROOT}/analytics`.replace(/\/+$/, ""); // e.g. https://host/.../api/analytics
+
+  // keep legacy compat: many callers expect /api/analytics/<route>
+  // We'll call analytics routes like `${API_BASE}/revenue/trends`
+  return { API_BASE, API_ROOT };
 }
-const API_BASE = resolveApiBase();
-const API_ROOT = API_BASE.replace(/\/api\/analytics$/, "").replace(/\/+$/, "");
+const { API_BASE, API_ROOT } = resolveApiBase();
 
 const authHeaders = () => {
   const token =
@@ -47,7 +67,10 @@ const authHeaders = () => {
 };
 
 async function getJSON(path, params = {}, options = {}) {
+  // options: { root: boolean, signal: AbortSignal }
+  // root: uses API_ROOT (e.g. /api/theaters). false: uses API_BASE (analytics).
   const base = options.root ? API_ROOT : API_BASE;
+  // ensure path isn't duplicated (strip leading slash)
   const rel = path.startsWith("/") ? path.slice(1) : path;
   const url = new URL(rel, base + "/");
   Object.entries(params || {}).forEach(([k, v]) => {
@@ -305,6 +328,7 @@ export default function AdminAnalyticsDashboard() {
 
   async function loadAlerts(signal) {
     try {
+      // root: true -> uses API_ROOT (which is <origin>/api)
       const data = await getJSON("/notifications", {}, { root: true, signal });
       setAlerts(Array.isArray(data) ? data : data.notifications ?? []);
     } catch (e) {
@@ -347,6 +371,7 @@ export default function AdminAnalyticsDashboard() {
     try {
       const params = { days, ...(filters.theater ? { theater: filters.theater } : {}), ...(filters.movie ? { movie: filters.movie } : {}) };
 
+      // analytics endpoints live under API_BASE (/api/analytics); we keep root:false (default)
       const [revTrends, dau, movies, occ, bookSum, bookSum7] = await Promise.all([
         getJSON("/revenue/trends", params, { signal: controller.signal }),
         getJSON("/users/active", params, { signal: controller.signal }),
