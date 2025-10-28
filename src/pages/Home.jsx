@@ -261,10 +261,10 @@ export default function Home() {
 
   // configure images used by the carousel (edit names to match your public/ files)
  const carouselImages = [
-  { jpg: "/Poster1_land.jpg", title: "The Epic Adventure" },
-  { jpg: "/Poster1_land.jpg", title: "Mystery of the Night" },
-  { jpg: "/Poster1_land.jpg", title: "Summer Heist" },
-  { jpg: "/Poster1_land.jpg", title: "Legends Rise" },
+  { jpg: "/Poster1_land.jpg" },
+  { jpg: "/Poster1_land.jpg" },
+  { jpg: "/Poster1_land.jpg" },
+  { jpg: "/Poster1_land.jpg" },
 ];
 
 
