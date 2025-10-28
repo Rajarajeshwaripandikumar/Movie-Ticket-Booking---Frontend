@@ -209,7 +209,6 @@ export default function AdminAnalyticsDashboard() {
   const [range, setRange] = useState("30d");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-
   const [summary, setSummary] = useState({
     revenue30d: 0,
     orders: 0,
@@ -221,15 +220,12 @@ export default function AdminAnalyticsDashboard() {
   const [dauDaily, setDauDaily] = useState([]);
   const [topMovies, setTopMovies] = useState([]);
   const [theaterOcc, setTheaterOcc] = useState([]);
-
   const [theaters, setTheaters] = useState([]);
   const [moviesList, setMoviesList] = useState([]);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [filters, setFilters] = useState({ theater: "", movie: "" });
-
   const [alertsOpen, setAlertsOpen] = useState(false);
   const [alerts, setAlerts] = useState([]);
-
   const controllerRef = useRef(null);
   const daysOf = (id) => ranges.find((r) => r.id === id)?.days ?? 30;
 
@@ -239,12 +235,10 @@ export default function AdminAnalyticsDashboard() {
     loadAlerts(c.signal);
     loadData(range, c.signal);
     return () => c.abort();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     loadData(range);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [range, filters.theater, filters.movie]);
 
   async function loadCatalogs(signal) {
@@ -349,12 +343,12 @@ export default function AdminAnalyticsDashboard() {
     }
   }
 
-  /* ================== CSV Export (multi-section) ================== */
+  /* ================== CSV Export ================== */
   function exportCSV() {
     const csvEscape = (v) => {
       if (v === undefined || v === null) return '""';
       const s = String(v);
-      return `"${s.replace(/"/g, '""')}"`; // always quote
+      return `"${s.replace(/"/g, '""')}"`;
     };
 
     const makeCSV = (title, headers, rows) => {
@@ -391,7 +385,6 @@ export default function AdminAnalyticsDashboard() {
     document.body.removeChild(link);
   }
 
-  /* ================== Filters + Alerts ================== */
   function applyFilters(e) {
     e?.preventDefault?.();
     setFiltersOpen(false);
@@ -407,7 +400,7 @@ export default function AdminAnalyticsDashboard() {
 
   /* ================== Render ================== */
   return (
-    <div className="min-h-screen w-screen [margin-inline:calc(50%-50vw)] bg-slate-50 text-slate-900 py-8">
+    <div className="min-h-screen w-screen bg-slate-50 text-slate-900 py-8">
       <div className="mx-auto max-w-7xl px-4 md:px-6 space-y-6">
         {/* Header */}
         <div className="space-y-3">
@@ -442,7 +435,6 @@ export default function AdminAnalyticsDashboard() {
                           ? "bg-white text-slate-900 shadow-sm border border-slate-200"
                           : "text-slate-600 hover:text-slate-800"
                       }`}
-                      aria-pressed={range === r.id}
                     >
                       {r.label}
                     </button>
@@ -459,7 +451,7 @@ export default function AdminAnalyticsDashboard() {
           </Card>
         )}
 
-        {/* KPIs */}
+        {/* KPI cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           <Stat icon={CircleDollarSign} label={`Revenue (${range})`} value={formatCurrency(summary.revenue30d)} />
           <Stat icon={ShoppingBag} label="Orders" value={formatInt(summary.orders)} />
@@ -471,21 +463,53 @@ export default function AdminAnalyticsDashboard() {
         {/* Charts */}
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
           <div className="lg:col-span-3">
-            <ChartCard title="Daily Revenue" subtitle="Aggregate revenue per day" right={<Pill onClick={() => loadData(range)}><RefreshCcw className="h-3.5 w-3.5" /> Refresh</Pill>}>
-              {loading ? <EmptyMini label="Loading revenue..." /> : (
+            <ChartCard title="Daily Revenue" subtitle="Aggregate revenue per day">
+              {loading ? (
+                <EmptyMini label="Loading revenue..." />
+              ) : (
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={revenueDaily} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                                    <AreaChart
+                    data={revenueDaily}
+                    margin={{ top: 10, right: 20, left: 0, bottom: 0 }}
+                  >
                     <defs>
                       <linearGradient id="revFill" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="0%" stopColor={BLUE} stopOpacity={0.18} />
-                        <stop offset="100%" stopColor={BLUE} stopOpacity={0.03} />
+                        <stop
+                          offset="100%"
+                          stopColor={BLUE}
+                          stopOpacity={0.03}
+                        />
                       </linearGradient>
                     </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke={SOFT} opacity={0.45} />
-                    <XAxis dataKey="day" tick={{ fontSize: 12, fill: SOFT }} stroke={SOFT} />
-                    <YAxis tick={{ fontSize: 12, fill: SOFT }} domain={["dataMin", "auto"]} stroke={SOFT} />
-                    <Tooltip formatter={(v, k) => (k === "revenue" ? formatCurrency(v) : formatInt(v))} />
-                    <Area type="monotone" dataKey="revenue" stroke={BLUE} fill="url(#revFill)" strokeWidth={2} activeDot={{ r: 4 }} />
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      stroke={SOFT}
+                      opacity={0.45}
+                    />
+                    <XAxis
+                      dataKey="day"
+                      tick={{ fontSize: 12, fill: SOFT }}
+                      stroke={SOFT}
+                    />
+                    <YAxis
+                      tick={{ fontSize: 12, fill: SOFT }}
+                      domain={["dataMin", "auto"]}
+                      stroke={SOFT}
+                    />
+                    <Tooltip
+                      formatter={(v, k) =>
+                        k === "revenue" ? formatCurrency(v) : formatInt(v)
+                      }
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="revenue"
+                      stroke={BLUE}
+                      fill="url(#revFill)"
+                      strokeWidth={2}
+                      activeDot={{ r: 4 }}
+                    />
                   </AreaChart>
                 </ResponsiveContainer>
               )}
@@ -493,18 +517,48 @@ export default function AdminAnalyticsDashboard() {
           </div>
 
           <div className="lg:col-span-2">
-            <ChartCard title="Daily Active Users" subtitle="Unique users per day">
-              {loading ? <EmptyMini label="Loading users..." /> : dauDaily && dauDaily.length ? (
+            <ChartCard
+              title="Daily Active Users"
+              subtitle="Unique users per day"
+            >
+              {loading ? (
+                <EmptyMini label="Loading users..." />
+              ) : dauDaily && dauDaily.length ? (
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={dauDaily} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke={SOFT} opacity={0.45} />
-                    <XAxis dataKey="day" tick={{ fontSize: 12, fill: SOFT }} stroke={SOFT} />
-                    <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: SOFT }} domain={[0, "auto"]} stroke={SOFT} />
+                  <LineChart
+                    data={dauDaily}
+                    margin={{ top: 10, right: 20, left: 0, bottom: 0 }}
+                  >
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      stroke={SOFT}
+                      opacity={0.45}
+                    />
+                    <XAxis
+                      dataKey="day"
+                      tick={{ fontSize: 12, fill: SOFT }}
+                      stroke={SOFT}
+                    />
+                    <YAxis
+                      allowDecimals={false}
+                      tick={{ fontSize: 12, fill: SOFT }}
+                      domain={[0, "auto"]}
+                      stroke={SOFT}
+                    />
                     <Tooltip formatter={(v) => formatInt(v)} />
-                    <Line type="monotone" dataKey="users" stroke={BLUE} strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
+                    <Line
+                      type="monotone"
+                      dataKey="users"
+                      stroke={BLUE}
+                      strokeWidth={2}
+                      dot={false}
+                      activeDot={{ r: 4 }}
+                    />
                   </LineChart>
                 </ResponsiveContainer>
-              ) : <EmptyMini label="No DAU yet — drive sign-ups and visits to see activity here." />}
+              ) : (
+                <EmptyMini label="No DAU yet — drive sign-ups and visits to see activity here." />
+              )}
             </ChartCard>
           </div>
         </div>
@@ -515,8 +569,21 @@ export default function AdminAnalyticsDashboard() {
             title="Theater Occupancy (Avg)"
             rows={theaterOcc}
             columns={[
-              { key: "name", label: "Theater", render: (v) => (<div className="flex items-center gap-2"><Building2 className="h-4 w-4" /><span>{v}</span></div>) },
-              { key: "occupancy", label: "Occupancy", render: (v) => `${formatInt(v)}%` },
+              {
+                key: "name",
+                label: "Theater",
+                render: (v) => (
+                  <div className="flex items-center gap-2">
+                    <Building2 className="h-4 w-4" />
+                    <span>{v}</span>
+                  </div>
+                ),
+              },
+              {
+                key: "occupancy",
+                label: "Occupancy",
+                render: (v) => `${formatInt(v)}%`,
+              },
             ]}
           />
 
@@ -524,9 +591,26 @@ export default function AdminAnalyticsDashboard() {
             title="Popular Movies"
             rows={topMovies}
             columns={[
-              { key: "title", label: "Movie", render: (v) => (<div className="flex items-center gap-2"><Film className="h-4 w-4" /><span>{v}</span></div>) },
-              { key: "bookings", label: "Bookings", render: (v) => formatInt(v) },
-              { key: "revenue", label: "Revenue", render: (v) => formatCurrency(v) },
+              {
+                key: "title",
+                label: "Movie",
+                render: (v) => (
+                  <div className="flex items-center gap-2">
+                    <Film className="h-4 w-4" />
+                    <span>{v}</span>
+                  </div>
+                ),
+              },
+              {
+                key: "bookings",
+                label: "Bookings",
+                render: (v) => formatInt(v),
+              },
+              {
+                key: "revenue",
+                label: "Revenue",
+                render: (v) => formatCurrency(v),
+              },
             ]}
           />
         </div>
@@ -535,32 +619,58 @@ export default function AdminAnalyticsDashboard() {
       {/* Alerts slide-over */}
       {alertsOpen && (
         <div className="fixed inset-0 z-50 flex">
-          <div className="fixed inset-0 bg-black/30" onClick={() => setAlertsOpen(false)} />
+          <div
+            className="fixed inset-0 bg-black/30"
+            onClick={() => setAlertsOpen(false)}
+          />
           <div className="ml-auto w-full sm:w-[520px] h-full bg-white p-4 overflow-auto">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold">Alerts</h3>
               <div className="flex items-center gap-2">
-                <button onClick={() => refreshAlerts()} className="inline-flex items-center gap-1 px-3 py-1 rounded-full border">Refresh</button>
-                <button onClick={() => setAlertsOpen(false)} className="rounded-full p-2"><X /></button>
+                <button
+                  onClick={() => refreshAlerts()}
+                  className="inline-flex items-center gap-1 px-3 py-1 rounded-full border"
+                >
+                  Refresh
+                </button>
+                <button
+                  onClick={() => setAlertsOpen(false)}
+                  className="rounded-full p-2"
+                >
+                  <X />
+                </button>
               </div>
             </div>
 
             {alerts && alerts.length ? (
               <div className="space-y-3">
                 {alerts.map((a, i) => (
-                  <div key={a._id ?? i} className="p-3 border border-slate-100 rounded-lg">
+                  <div
+                    key={a._id ?? i}
+                    className="p-3 border border-slate-100 rounded-lg"
+                  >
                     <div className="flex items-start justify-between">
                       <div>
-                        <div className="text-sm font-semibold">{a.title ?? a.message ?? "Alert"}</div>
-                        <div className="text-xs text-slate-500 mt-1">{a.body ?? a.message ?? ""}</div>
-                        <div className="text-xs text-slate-400 mt-2">{new Date(a.createdAt ?? a.created_at ?? Date.now()).toLocaleString()}</div>
+                        <div className="text-sm font-semibold">
+                          {a.title ?? a.message ?? "Alert"}
+                        </div>
+                        <div className="text-xs text-slate-500 mt-1">
+                          {a.body ?? a.message ?? ""}
+                        </div>
+                        <div className="text-xs text-slate-400 mt-2">
+                          {new Date(
+                            a.createdAt ?? a.created_at ?? Date.now()
+                          ).toLocaleString()}
+                        </div>
                       </div>
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="py-12 text-center text-sm text-slate-600">No alerts</div>
+              <div className="py-12 text-center text-sm text-slate-600">
+                No alerts
+              </div>
             )}
           </div>
         </div>
@@ -569,17 +679,26 @@ export default function AdminAnalyticsDashboard() {
       {/* Filters modal */}
       {filtersOpen && (
         <div className="fixed inset-0 z-40 flex items-center justify-center">
-          <div className="fixed inset-0 bg-black/30" onClick={() => setFiltersOpen(false)} />
+          <div
+            className="fixed inset-0 bg-black/30"
+            onClick={() => setFiltersOpen(false)}
+          />
           <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-2xl z-50">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold">Filters</h3>
-              <button onClick={() => setFiltersOpen(false)} className="p-2 rounded-full"><X /></button>
+              <button
+                onClick={() => setFiltersOpen(false)}
+                className="p-2 rounded-full"
+              >
+                <X />
+              </button>
             </div>
 
             <form onSubmit={applyFilters} className="space-y-4">
               <div>
-                <label className="block text-sm text-slate-600 mb-1">Theater</label>
-                <select value={filters.theater} onChange={(e) => setFilters((s)
+                <label className="block text-sm text-slate-600 mb-1">
+                  Theater
+                </label>
                 <select
                   value={filters.theater}
                   onChange={(e) =>
@@ -597,7 +716,9 @@ export default function AdminAnalyticsDashboard() {
               </div>
 
               <div>
-                <label className="block text-sm text-slate-600 mb-1">Movie</label>
+                <label className="block text-sm text-slate-600 mb-1">
+                  Movie
+                </label>
                 <select
                   value={filters.movie}
                   onChange={(e) =>
@@ -632,7 +753,7 @@ export default function AdminAnalyticsDashboard() {
   );
 }
 
-/* ======================== small subcomponents ======================== */
+/* ======================== Subcomponents ======================== */
 function Stat({ icon: Icon, label, value }) {
   return (
     <Card className="p-4">
@@ -651,7 +772,7 @@ function Stat({ icon: Icon, label, value }) {
   );
 }
 
-function ChartCard({ title, subtitle, children, right }) {
+function ChartCard({ title, subtitle, children }) {
   return (
     <Card className="p-4">
       <div className="flex items-start justify-between">
@@ -659,7 +780,6 @@ function ChartCard({ title, subtitle, children, right }) {
           <p className="text-xs text-slate-600">{subtitle}</p>
           <h3 className="text-lg font-extrabold text-slate-900">{title}</h3>
         </div>
-        {right}
       </div>
       <div className="mt-4 h-64">{children}</div>
     </Card>
@@ -707,4 +827,3 @@ const EmptyMini = ({ label }) => (
   </div>
 );
 
-                                                                            
