@@ -239,7 +239,7 @@ function LandscapeCarousel({
       </div>
 
       {/* indicators */}
-      <div className="absolute left-1/2 bottom-4 transform -translate-x-1/2 flex gap-2">
+      <div className="absolute left-1/2 bottom-4 transform -translate-x-1/2 flex gap-2 z-20">
         {images.map((_, i) => (
           <button
             key={i}
@@ -302,8 +302,8 @@ export default function Home() {
         {/* Hero content */}
         <div className="relative z-10 h-full">
           <div className="h-full max-w-7xl mx-auto px-6 md:px-12 flex items-center gap-8">
-            {/* Left text */}
-            <div className="max-w-3xl text-white">
+            {/* Left text (narrowed so poster has room) */}
+            <div className="max-w-2xl text-white relative z-20">
               <h1 className="mt-3 text-[2.3rem] md:text-6xl lg:text-7xl font-extrabold leading-[1.05] drop-shadow-[0_2px_0_rgba(0,0,0,0.2)]">
                 Book Movies, <span className="underline decoration-4 decoration-[#FFC220] underline-offset-8">Your-Style</span>
               </h1>
@@ -325,13 +325,18 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Right side: landscape carousel (hidden on small screens) */}
-            <div className="hidden md:flex ml-auto items-center">
-              <Card className="relative overflow-visible bg-white/8 border-white/30 backdrop-blur-sm shadow-sm">
-                <div className="p-4">
-                  <LandscapeCarousel images={carouselImages} interval={3200} />
-                </div>
-              </Card>
+            {/* Spacer container: the wide carousel is absolutely positioned to the right so it bleeds to the page edge */}
+            <div className="hidden md:block ml-6 relative w-0 flex-1">
+              <div
+                className="absolute top-1/2 right-6 -translate-y-1/2 w-[55vw] max-w-[980px] min-w-[420px] z-10"
+                style={{ pointerEvents: "auto" }}
+              >
+                <Card className="relative overflow-visible bg-white/8 border-white/30 backdrop-blur-sm shadow-sm">
+                  <div className="p-3 md:p-4">
+                    <LandscapeCarousel images={carouselImages} interval={3200} />
+                  </div>
+                </Card>
+              </div>
             </div>
           </div>
         </div>
