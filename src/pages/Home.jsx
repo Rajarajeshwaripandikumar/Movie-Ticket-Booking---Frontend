@@ -1,8 +1,5 @@
 // src/pages/Home.jsx
-// Walmart/District style hero with polished landscape poster carousel (responsive, autoplay, swipe, keyboard)
-//
-// Put your images in public/ as: Poster1_land.jpg (and optionally Poster1_land.webp)
-// Example: public/Poster1_land.jpg, public/Poster2_land.jpg, ...
+// Grid-based hero: fixed left column (headline) + flexible right column (bleeding landscape carousel)
 
 import React, { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
@@ -214,7 +211,6 @@ function LandscapeCarousel({
               />
             </picture>
 
-            {/* subtle caption overlay bottom-left */}
             <div className="pointer-events-none absolute left-6 bottom-6 bg-black/30 backdrop-blur-sm px-3 py-1.5 rounded-md text-sm text-white/90">
               {img.title}
             </div>
@@ -222,7 +218,7 @@ function LandscapeCarousel({
         ))}
       </div>
 
-      {/* border & inner frame */}
+      {/* visual frame */}
       <div className="pointer-events-none absolute inset-0 rounded-2xl">
         <div className="absolute inset-0 bg-[radial-gradient(120%_70%_at_10%_0%,rgba(255,255,255,0.12),transparent_55%)] rounded-2xl" />
         <div className="absolute inset-0 bg-gradient-to-t from-black/25 to-transparent rounded-2xl" />
@@ -242,7 +238,6 @@ function LandscapeCarousel({
         ))}
       </div>
 
-      {/* prev / next */}
       <button
         onClick={() => setIndex((i) => (i - 1 + length) % length)}
         aria-label="Previous slide"
@@ -279,7 +274,7 @@ export default function Home() {
         className="relative overflow-hidden w-screen [margin-inline:calc(50%-50vw)]"
         style={{ height: `calc(100vh - ${HEADER_H}px)` }}
       >
-        {/* Background gradient & subtle grid */}
+        {/* Background gradient + grid pattern */}
         <div className="absolute inset-0 bg-[linear-gradient(110deg,#0071DC_0%,#0654BA_55%,#003F8E_100%)] pointer-events-none" />
         <div
           className="absolute inset-0 opacity-20 pointer-events-none"
@@ -290,16 +285,17 @@ export default function Home() {
           }}
         />
 
-        {/* Hero content (centered column) */}
+        {/* Grid: left column fixed width, right flexible */}
         <div className="relative z-10 h-full">
-          <div className="h-full max-w-7xl mx-auto px-6 md:px-12 flex items-center gap-8">
-            {/* Left text (narrowed so poster has room) */}
-            <div className="max-w-2xl text-white relative z-20">
+          <div className="h-full max-w-7xl mx-auto px-6 md:px-12 grid items-center gap-8"
+               style={{ gridTemplateColumns: "minmax(300px,420px) 1fr" }}>
+            {/* Left: headline (fixed max width, high z so it sits above carousel) */}
+            <div className="text-white relative z-30">
               <h1 className="mt-3 text-[2.3rem] md:text-6xl lg:text-7xl font-extrabold leading-[1.05] drop-shadow-[0_2px_0_rgba(0,0,0,0.2)]">
                 Book Movies, <span className="underline decoration-4 decoration-[#FFC220] underline-offset-8">Your-Style</span>
               </h1>
 
-              <p className="mt-4 md:mt-6 text-base md:text-xl text-white/95 leading-relaxed max-w-2xl">
+              <p className="mt-4 md:mt-6 text-base md:text-xl text-white/95 leading-relaxed max-w-lg">
                 Search titles, pick a city and date, lock seats in real-time, and pay securely.
                 Admins manage theaters, screens, shows, and pricing with clean, robust controls.
               </p>
@@ -316,20 +312,25 @@ export default function Home() {
               </div>
             </div>
 
-            {/* blank spacer so the centered layout keeps left column position */}
-            <div className="flex-1" />
+            {/* Right: empty flow column (carousel placed absolutely so it can bleed to the right edge) */}
+            <div className="relative" />
+
           </div>
         </div>
 
-        {/* ----------
-            THE CAROUSEL IS ABSOLUTE TO THE HERO SECTION (not the centered container)
-            This lets it push to the viewport right edge.
-            Change right-6 -> right-0 to have it touch the edge.
-            ---------- */}
+        {/* ---- absolutely positioned carousel anchored to the section (not the centered container) ---- */}
+        {/* This lives outside the centered grid flow, but since the grid reserves the left column width,
+            the carousel won't overlap the left headline. */}
         <div className="hidden md:block">
           <div
-            className="absolute top-1/2 right-6 -translate-y-1/2 w-[60vw] max-w-[1100px] min-w-[420px] z-20 pointer-events-auto"
-            // TIP: to make it touch the viewport edge, set right-6 -> right-0 and change Card padding to p-0
+            className="absolute top-1/2 right-0 -translate-y-1/2 z-20 pointer-events-auto"
+            style={{
+              // width calculation: keep it responsive but ensure it starts after the fixed left column
+              // using calc(viewport - leftColumnWidth - gutter)
+              width: "min(60vw,1100px)",
+              maxWidth: "1100px",
+              paddingRight: "1.25rem", // small breathing room
+            }}
           >
             <Card className="relative overflow-visible bg-white/8 border-white/30 backdrop-blur-sm shadow-sm">
               <div className="p-3 md:p-4">
