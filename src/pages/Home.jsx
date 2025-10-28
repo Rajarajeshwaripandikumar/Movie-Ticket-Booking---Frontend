@@ -1,6 +1,6 @@
 // src/pages/Home.jsx
 // Grid-based hero: fixed left column (headline) + flexible right column (bleeding landscape carousel)
-// Updated: carousel placed in grid (no absolute overflow) + image objectPosition center right
+// Updated: placed in grid, image objectPosition center right, subtle parallax on mouse move
 
 import React, { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
@@ -97,19 +97,22 @@ const QuickCard = ({ title, desc, to, cta, Icon }) => (
 
 /* ------------------------------- Carousel (landscape) ----------------------- */
 /*
-  Responsive landscape carousel:
-  - root fills the wrapper (w-full h-full)
-  - images set to object-fit: cover and object-position: center right
-  - autoplay pause on hover, swipe, keyboard
+  - responsive root
+  - images object-cover + objectPosition center right
+  - small parallax effect on mouse move (desktop)
+  - fallback to full origin URL if needed
 */
 function LandscapeCarousel({ images = [], interval = 3200 }) {
   const [index, setIndex] = useState(0);
+  const [pointerX, setPointerX] = useState(0.5); // 0..1, center default
   const rootRef = useRef(null);
+  const rafRef = useRef(null);
   const timerRef = useRef(null);
   const hoveringRef = useRef(false);
   const touchingRef = useRef(false);
   const length = images.length || 0;
 
+  // autoplay and keyboard
   useEffect(() => {
     startTimer();
     const handleKey = (e) => {
@@ -120,6 +123,7 @@ function LandscapeCarousel({ images = [], interval = 3200 }) {
     return () => {
       stopTimer();
       window.removeEventListener("keydown", handleKey);
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [length]);
@@ -137,9 +141,9 @@ function LandscapeCarousel({ images = [], interval = 3200 }) {
   };
 
   const onMouseEnter = () => { hoveringRef.current = true; };
-  const onMouseLeave = () => { hoveringRef.current = false; };
+  const onMouseLeave = () => { hoveringRef.current = false; setPointerX(0.5); };
 
-  // touch handlers
+  // touch handlers (swipe)
   useEffect(() => {
     const el = rootRef.current;
     if (!el) return;
@@ -170,12 +174,50 @@ function LandscapeCarousel({ images = [], interval = 3200 }) {
     };
   }, [length]);
 
+  // mouse move -> pointerX (throttled with rAF)
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    let last = null;
+    const onMove = (e) => {
+      const rect = el.getBoundingClientRect();
+      const x = (e.clientX - rect.left) / rect.width;
+      last = Math.min(1, Math.max(0, x));
+      if (!rafRef.current) {
+        rafRef.current = requestAnimationFrame(() => {
+          if (last != null) setPointerX(last);
+          rafRef.current = null;
+          last = null;
+        });
+      }
+    };
+    el.addEventListener("mousemove", onMove);
+    el.addEventListener("mouseleave", () => setPointerX(0.5));
+    return () => {
+      el.removeEventListener("mousemove", onMove);
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
+  }, []);
+
+  // track translation for slides
   const trackStyle = {
     width: `${length * 100}%`,
     transform: `translateX(-${(index * 100) / (length || 1)}%)`,
     transition: "transform 700ms cubic-bezier(.2,.9,.2,1)",
     display: "flex",
     height: "100%",
+  };
+
+  // helper to resolve image url robustly
+  const resolveSrc = (p) => {
+    if (!p) return p;
+    try {
+      // if absolute URL already, use it
+      const u = new URL(p, typeof window !== "undefined" ? window.location.origin : undefined);
+      return u.href;
+    } catch {
+      return p;
+    }
   };
 
   return (
@@ -188,33 +230,53 @@ function LandscapeCarousel({ images = [], interval = 3200 }) {
       aria-label="Featured posters"
     >
       <div style={trackStyle}>
-        {images.map((img, i) => (
-          <div key={i} className="flex-shrink-0 w-full h-full relative">
-            <picture className="w-full h-full block">
-              {img.webp && <source srcSet={img.webp} type="image/webp" />}
-              <img
-                src={img.jpg}
-                alt={img.title || `Poster ${i + 1}`}
-                loading="lazy"
-                className="w-full h-full object-cover"
-                style={{ objectPosition: "center right" }}
-                draggable={false}
-                onError={(e) => {
-                  e.currentTarget.style.display = "none";
-                  const p = document.createElement("div");
-                  p.style.width = "100%";
-                  p.style.height = "100%";
-                  p.style.background = "linear-gradient(90deg,#0b63c6,#063f8e)";
-                  e.currentTarget.parentNode.appendChild(p);
-                }}
-              />
-            </picture>
+        {images.map((img, i) => {
+          // parallax offset: small X translate based on pointer position relative to center
+          const px = (pointerX - 0.5) * 18; // -9px .. +9px
+          const slideStyle = {
+            transform: `translateX(${px}px)`,
+            transition: "transform 260ms linear",
+            willChange: "transform",
+            height: "100%",
+            width: "100%",
+          };
 
-            <div className="pointer-events-none absolute left-6 bottom-6 bg-black/30 backdrop-blur-sm px-3 py-1.5 rounded-md text-sm text-white/90">
-              {img.title}
+          const src = resolveSrc(img.jpg);
+          return (
+            <div key={i} className="flex-shrink-0 w-full h-full relative">
+              <div style={slideStyle} className="w-full h-full">
+                <picture className="w-full h-full block">
+                  {img.webp && <source srcSet={resolveSrc(img.webp)} type="image/webp" />}
+                  <img
+                    src={src}
+                    alt={img.title || `Poster ${i + 1}`}
+                    loading="lazy"
+                    className="w-full h-full object-cover"
+                    style={{ objectPosition: "center right" }}
+                    draggable={false}
+                    onError={(e) => {
+                      // show gradient block instead of removing node to keep layout stable
+                      const parent = e.currentTarget.parentNode;
+                      e.currentTarget.style.display = "none";
+                      const fallback = document.createElement("div");
+                      fallback.style.width = "100%";
+                      fallback.style.height = "100%";
+                      fallback.style.background = "linear-gradient(90deg,#0b63c6,#063f8e)";
+                      parent.appendChild(fallback);
+                    }}
+                  />
+                </picture>
+
+                {/* caption */}
+                {img.title && (
+                  <div className="pointer-events-none absolute left-6 bottom-6 bg-black/30 backdrop-blur-sm px-3 py-1.5 rounded-md text-sm text-white/90">
+                    {img.title}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* indicators */}
@@ -309,18 +371,17 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Right: carousel sits here in normal flow (prevents overflow/scroll) */}
+            {/* Right: empty placeholder so grid reserves correct left width */}
             <div className="relative" />
           </div>
         </div>
 
-        {/* Carousel placed in grid's right area (not absolutely anchored to viewport) */}
+        {/* Carousel placed inside flow (prevents overflow/scroll) */}
         <div className="hidden md:flex justify-end">
           <div
-            // width = responsive but never larger than viewport minus left column
             style={{
               width: "min(65vw, 1100px)",
-              maxWidth: "calc(100vw - 420px - 48px)", // 420px left column + 48px gutter
+              maxWidth: "calc(100vw - 420px - 48px)", // left column + gutter
               height: "calc(100vh - 160px)",
               maxHeight: "720px",
             }}
