@@ -27,6 +27,61 @@ const PrimaryBtn = ({ children, className = "", ...props }) => (
   </button>
 );
 
+/* ------------------------------- Helpers --------------------------------- */
+
+/**
+ * Simple post retry wrapper with jittered exponential backoff.
+ * Returns axios response (not response.data) to match existing usage.
+ */
+async function postWithRetry(url, payload = {}, opts = {}, retries = 2, baseDelay = 400) {
+  for (let i = 0; i <= retries; i++) {
+    try {
+      return await api.post(url, payload, opts);
+    } catch (err) {
+      // If it's the last attempt, rethrow
+      if (i === retries) throw err;
+      // If network is offline, wait until online and then continue
+      if (typeof navigator !== "undefined" && !navigator.onLine) {
+        await new Promise((resolve) => {
+          const onOnline = () => {
+            window.removeEventListener("online", onOnline);
+            resolve();
+          };
+          window.addEventListener("online", onOnline);
+        });
+      } else {
+        // jittered exponential backoff
+        const delay = baseDelay * Math.pow(2, i) + Math.round(Math.random() * 150);
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+  }
+}
+
+/* ---------------------------- PosterImage --------------------------------
+   Avoid Chromium lazy-placeholder intervention; fallback to local image on error.
+   (decoding=async + loading="eager" help reliability).
+*/
+function PosterImage({ src, alt, className = "" }) {
+  const onErr = (e) => {
+    e.currentTarget.onerror = null;
+    e.currentTarget.src = "/logo_rounded.png";
+  };
+
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className={className}
+      loading="eager"
+      decoding="async"
+      onError={onErr}
+      width="160"
+      height="200"
+    />
+  );
+}
+
 /* -------------------------------- Component -------------------------------- */
 export default function Checkout() {
   const { showtimeId } = useParams();
@@ -54,6 +109,8 @@ export default function Checkout() {
   const [msg, setMsg] = useState("");
   const [order, setOrder] = useState(null);
   const [showtime, setShowtime] = useState(null);
+  const [reloadKey, setReloadKey] = useState(0); // used to re-run create-order
+  const [offline, setOffline] = useState(typeof navigator !== "undefined" ? !navigator.onLine : false);
 
   // Fee/tax (example; replace with backend values if available)
   const BOOKING_FEE_RATE = 0.245;
@@ -67,6 +124,28 @@ export default function Checkout() {
     }
   }, [showtimeId, seats.length, navigate]);
 
+  /* ---------- network online/offline handling ---------- */
+  useEffect(() => {
+    const update = () => setOffline(!navigator.onLine);
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    update();
+    // when coming online, try recreate order if missing
+    const onOnlineRetry = () => {
+      if (!order && showtimeId && seats.length) {
+        console.info("[Checkout] Online -> retrying create-order by bumping reloadKey");
+        setReloadKey((k) => k + 1);
+      }
+    };
+    window.addEventListener("online", onOnlineRetry);
+
+    return () => {
+      window.removeEventListener("online", update);
+      window.removeEventListener("offline", update);
+      window.removeEventListener("online", onOnlineRetry);
+    };
+  }, [order, showtimeId, seats.length]);
+
   /* ---------- fetch showtime (for UI) ---------- */
   useEffect(() => {
     const run = async () => {
@@ -74,8 +153,8 @@ export default function Checkout() {
       try {
         const { data } = await api.get(`/showtimes/${showtimeId}`);
         setShowtime(data?.data || data);
-      } catch {
-        // non-blocking UI
+      } catch (err) {
+        console.warn("[Checkout] fetch showtime failed:", err);
       }
     };
     run();
@@ -83,32 +162,42 @@ export default function Checkout() {
 
   /* ---------- STEP 1: create payment order (send FINAL total) ---------- */
   useEffect(() => {
+    let mounted = true;
     const createOrder = async () => {
       try {
         setLoading(true);
+        setMsg("");
         const payload = {
           // 👇 IMPORTANT: send the final total so Razorpay popup matches UI
-          amount: totalToPay,        // server converts to paise
+          amount: totalToPay, // server converts to paise
           showtimeId,
-          // If you switch to server-side calc later:
-          // base, convFee, gst
-          // base: amount,
-          // convFee: bookingCharge,
-          // gst: 0,
         };
-        console.log("[Checkout] Creating order with ₹", totalToPay);
-        const { data } = await api.post("/payments/create-order", payload);
-        setOrder(data);
+        console.info("[Checkout] Creating order with ₹", totalToPay, "payload:", payload);
+        const res = await postWithRetry("/payments/create-order", payload, { timeout: 15000 }, 3);
+        if (!mounted) return;
+        setOrder(res.data);
+        setMsg("");
+        console.info("[Checkout] order initialized:", res.data);
       } catch (err) {
         console.error("❌ create-order failed:", err);
-        setMsg("❌ Failed to create payment order.");
+        // detect common network error
+        if (err?.message?.includes("Network Error") || err?.code === "ERR_NETWORK") {
+          setMsg("⚠️ Network issue while initializing payment. Reconnect or try again.");
+        } else {
+          setMsg("❌ Failed to create payment order. Try refreshing.");
+        }
       } finally {
-        setLoading(false);
+        if (mounted) setLoading(false);
       }
     };
+
     if (showtimeId && seats.length) createOrder();
-    // include totalToPay so an amount change re-creates order
-  }, [showtimeId, seats.length, totalToPay]);
+
+    return () => {
+      mounted = false;
+    };
+    // include reloadKey so an online event can force re-run
+  }, [showtimeId, seats.length, totalToPay, reloadKey]);
 
   /* ---------- keep seat lock alive on checkout ---------- */
   useEffect(() => {
@@ -119,11 +208,8 @@ export default function Checkout() {
     const keepAlive = async () => {
       if (stopped) return;
       try {
-        await api.post("/bookings/lock/extend", {
-          showtimeId,
-          seats,
-          holdSeconds: 120,
-        });
+        // try a couple of retry attempts for the lock extend
+        await postWithRetry("/bookings/lock/extend", { showtimeId, seats, holdSeconds: 120 }, { timeout: 10000 }, 1);
       } catch (err) {
         const res = err?.response?.data;
         const code = res?.code;
@@ -132,6 +218,7 @@ export default function Checkout() {
           stopped = true;
           return;
         }
+        console.warn("[Checkout] lock extend failed (non-fatal):", err);
       } finally {
         if (!stopped) timer = setTimeout(keepAlive, 60_000);
       }
@@ -173,12 +260,16 @@ export default function Checkout() {
   /* ---------- STEP 2: Razorpay ---------- */
   const handlePayment = useCallback(async () => {
     if (!order) return alert("Order not initialized yet.");
+    if (offline) {
+      setMsg("⚠️ You are offline. Reconnect to make payment.");
+      return;
+    }
     setMsg("");
     idemKeyRef.current = uuid();
 
     const options = {
       key: import.meta.env.VITE_RAZORPAY_KEY_ID,
-      amount: order.amount,          // already in paise from server
+      amount: order.amount, // already in paise from server
       currency: order.currency,
       name: "Cinema by Site",
       description: "Movie Ticket Booking",
@@ -221,7 +312,7 @@ export default function Checkout() {
       handler: async (response) => {
         try {
           // Verify payment
-          const verifyRes = await api.post("/payments/verify-payment", response);
+          const verifyRes = await postWithRetry("/payments/verify-payment", response, { timeout: 15000 }, 2);
           if (!verifyRes.data?.ok) {
             setMsg("❌ Payment verification failed!");
             return;
@@ -230,7 +321,7 @@ export default function Checkout() {
 
           // Confirm booking (idempotent) — send the same final amount used for payment
           try {
-            const confirmRes = await api.post(
+            const confirmRes = await postWithRetry(
               "/bookings/confirm",
               {
                 showtimeId,
@@ -241,7 +332,8 @@ export default function Checkout() {
                 paymentId: response.razorpay_payment_id,
                 paymentSignature: response.razorpay_signature,
               },
-              { headers: { "Idempotency-Key": idemKeyRef.current }, timeout: 15000 }
+              { headers: { "Idempotency-Key": idemKeyRef.current }, timeout: 15000 },
+              2
             );
 
             const booking = confirmRes?.data?.booking;
@@ -264,7 +356,8 @@ export default function Checkout() {
               setMsg("❌ Booking confirmation failed. Try again later.");
             }
           }
-        } catch {
+        } catch (err) {
+          console.error("[Checkout] payment handler error:", err);
           setMsg("❌ Payment verification failed!");
         }
       },
@@ -276,10 +369,16 @@ export default function Checkout() {
       },
     };
 
-    const rzp = new window.Razorpay(options);
-    rzp.on("payment.failed", () => setMsg("❌ Payment failed or cancelled."));
-    rzp.open();
-  }, [order, showtimeId, seats, totalToPay, navigate]);
+    // open Razorpay UI
+    try {
+      const rzp = new window.Razorpay(options);
+      rzp.on("payment.failed", () => setMsg("❌ Payment failed or cancelled."));
+      rzp.open();
+    } catch (err) {
+      console.error("[Checkout] Razorpay open error:", err);
+      setMsg("❌ Unable to open payment window.");
+    }
+  }, [order, showtimeId, seats, totalToPay, navigate, offline]);
 
   /* ---------- UI ---------- */
   if (!showtimeId || seats.length === 0) return <Loader text="Returning to seat selection..." />;
@@ -287,6 +386,15 @@ export default function Checkout() {
 
   return (
     <main className="min-h-screen w-screen [margin-inline:calc(50%-50vw)] bg-slate-50 text-slate-900">
+      {/* Offline banner */}
+      {offline && (
+        <div className="sticky top-0 z-20 px-3 sm:px-4 md:px-6 lg:px-8 pt-3">
+          <Card className="p-2 border-yellow-200 bg-yellow-50 text-yellow-800">
+            You are offline — reconnect to continue. Some actions (payment) will be blocked.
+          </Card>
+        </div>
+      )}
+
       {/* Countdown strip */}
       <div className="sticky top-0 z-10 px-3 sm:px-4 md:px-6 lg:px-8 pt-3">
         <Card className="overflow-hidden">
@@ -314,7 +422,7 @@ export default function Checkout() {
                 {/* Poster */}
                 <Card className="w-16 h-20 overflow-hidden p-0">
                   {showtime?.movie?.posterUrl ? (
-                    <img
+                    <PosterImage
                       src={showtime.movie.posterUrl}
                       alt={showtime?.movie?.title}
                       className="w-full h-full object-cover rounded-xl"
@@ -387,8 +495,12 @@ export default function Checkout() {
                 <div className="text-xs uppercase text-slate-700 tracking-wide">Total</div>
                 <div className="text-lg font-extrabold">₹{totalToPay.toFixed(2)}</div>
               </div>
-              <PrimaryBtn onClick={handlePayment} disabled={!order} className="w-full">
-                {order ? "Proceed To Pay" : "Preparing order…"}
+              <PrimaryBtn
+                onClick={handlePayment}
+                disabled={!order || loading || offline}
+                className="w-full"
+              >
+                {offline ? "Offline" : order ? "Proceed To Pay" : "Preparing order…"}
               </PrimaryBtn>
 
               {msg && (
