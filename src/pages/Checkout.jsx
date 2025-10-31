@@ -112,6 +112,9 @@ export default function Checkout() {
   const [reloadKey, setReloadKey] = useState(0); // used to re-run create-order
   const [offline, setOffline] = useState(typeof navigator !== "undefined" ? !navigator.onLine : false);
 
+  // Razorpay script loaded flag
+  const [rzpLoaded, setRzpLoaded] = useState(false);
+
   // Fee/tax (example; replace with backend values if available)
   const BOOKING_FEE_RATE = 0.245;
   const bookingCharge = +(amount * BOOKING_FEE_RATE).toFixed(2);
@@ -145,6 +148,45 @@ export default function Checkout() {
       window.removeEventListener("online", onOnlineRetry);
     };
   }, [order, showtimeId, seats.length]);
+
+  /* ---------- load Razorpay checkout script ---------- */
+  useEffect(() => {
+    let cancelled = false;
+    const SRC = "https://checkout.razorpay.com/v1/checkout.js";
+
+    if (typeof window !== "undefined" && window.Razorpay) {
+      setRzpLoaded(true);
+      return;
+    }
+
+    const existing = document.querySelector(`script[src="${SRC}"]`);
+    if (existing) {
+      const onLoad = () => !cancelled && setRzpLoaded(true);
+      existing.addEventListener("load", onLoad);
+      existing.addEventListener("error", () => !cancelled && setRzpLoaded(false));
+      return () => {
+        existing.removeEventListener("load", onLoad);
+        existing.removeEventListener("error", () => {});
+      };
+    }
+
+    const s = document.createElement("script");
+    s.src = SRC;
+    s.async = true;
+    s.defer = true;
+    s.onload = () => {
+      if (!cancelled) setRzpLoaded(true);
+    };
+    s.onerror = () => {
+      console.error("[Checkout] Failed to load Razorpay script");
+      if (!cancelled) setRzpLoaded(false);
+    };
+    document.head.appendChild(s);
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   /* ---------- fetch showtime (for UI) ---------- */
   useEffect(() => {
@@ -267,8 +309,28 @@ export default function Checkout() {
     setMsg("");
     idemKeyRef.current = uuid();
 
+    // Ensure Razorpay script is loaded
+    if (!rzpLoaded) {
+      setMsg("⚠️ Payment gateway not ready. Please try again in a moment.");
+      // Kick a background retry if script hasn't loaded
+      const attemptLoad = () => {
+        const existing = document.querySelector('script[src="https://checkout.razorpay.com/v1/checkout.js"]');
+        if (existing && window.Razorpay) setRzpLoaded(true);
+      };
+      setTimeout(attemptLoad, 1000);
+      return;
+    }
+
+    // Ensure client key is present (exposed key id)
+    const keyId = import.meta.env.VITE_RAZORPAY_KEY_ID;
+    if (!keyId) {
+      setMsg("❌ Payment not configured. Missing razorpay key.");
+      console.error("[Checkout] Missing VITE_RAZORPAY_KEY_ID");
+      return;
+    }
+
     const options = {
-      key: import.meta.env.VITE_RAZORPAY_KEY_ID,
+      key: keyId,
       amount: order.amount, // already in paise from server
       currency: order.currency,
       name: "Cinema by Site",
@@ -378,7 +440,7 @@ export default function Checkout() {
       console.error("[Checkout] Razorpay open error:", err);
       setMsg("❌ Unable to open payment window.");
     }
-  }, [order, showtimeId, seats, totalToPay, navigate, offline]);
+  }, [order, showtimeId, seats, totalToPay, navigate, offline, rzpLoaded]);
 
   /* ---------- UI ---------- */
   if (!showtimeId || seats.length === 0) return <Loader text="Returning to seat selection..." />;
