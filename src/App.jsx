@@ -40,6 +40,9 @@ import AdminProfile from "./pages/AdminProfile";
 import AdminAnalytics from "./pages/AdminAnalytics";
 import AdminBookingDetails from "./pages/AdminBookingDetails";
 
+// 🧠 SSE hook
+import useSSE from "./hooks/useSSE";
+
 /* ----------------------------- Utils & Guards ----------------------------- */
 
 function NotFound() {
@@ -84,6 +87,9 @@ function ScrollToTop() {
 /* ---------------------------------- App ---------------------------------- */
 
 export default function App() {
+  // ✅ Initialize SSE connection when user logs in
+  useSSE();
+
   return (
     <div className="flex flex-col min-h-screen text-gray-800 overflow-x-hidden bg-transparent">
       {/* Header stays plain */}
@@ -131,63 +137,119 @@ export default function App() {
             {/* Ticket / details */}
             <Route
               path="/bookings/:id"
-              element={<RequireAuth role="USER"><TicketDetails /></RequireAuth>}
+              element={
+                <RequireAuth role="USER">
+                  <TicketDetails />
+                </RequireAuth>
+              }
             />
             <Route
               path="/ticket/:bookingId"
-              element={<RequireAuth role="USER"><TicketDetails /></RequireAuth>}
+              element={
+                <RequireAuth role="USER">
+                  <TicketDetails />
+                </RequireAuth>
+              }
             />
 
             {/* USER protected routes */}
             <Route
               path="/account"
-              element={<RequireAuth role="USER"><AccountInfo /></RequireAuth>}
+              element={
+                <RequireAuth role="USER">
+                  <AccountInfo />
+                </RequireAuth>
+              }
             />
             <Route
               path="/profile"
-              element={<RequireAuth role="USER"><ProfilePage /></RequireAuth>}
+              element={
+                <RequireAuth role="USER">
+                  <ProfilePage />
+                </RequireAuth>
+              }
             />
             <Route
               path="/bookings"
-              element={<RequireAuth role="USER"><MyBookings /></RequireAuth>}
+              element={
+                <RequireAuth role="USER">
+                  <MyBookings />
+                </RequireAuth>
+              }
             />
 
             {/* ADMIN protected routes */}
             <Route
               path="/admin"
-              element={<RequireAuth role="ADMIN"><AdminDashboard /></RequireAuth>}
+              element={
+                <RequireAuth role="ADMIN">
+                  <AdminDashboard />
+                </RequireAuth>
+              }
             />
             <Route
               path="/admin/profile"
-              element={<RequireAuth role="ADMIN"><AdminProfile /></RequireAuth>}
+              element={
+                <RequireAuth role="ADMIN">
+                  <AdminProfile />
+                </RequireAuth>
+              }
             />
             <Route
               path="/admin/movies"
-              element={<RequireAuth role="ADMIN"><AdminMoviesPage /></RequireAuth>}
+              element={
+                <RequireAuth role="ADMIN">
+                  <AdminMoviesPage />
+                </RequireAuth>
+              }
             />
             <Route
               path="/admin/theaters"
-              element={<RequireAuth role="ADMIN"><AdminTheaters /></RequireAuth>}
+              element={
+                <RequireAuth role="ADMIN">
+                  <AdminTheaters />
+                </RequireAuth>
+              }
             />
             <Route
               path="/admin/screens"
-              element={<RequireAuth role="ADMIN"><AdminScreens /></RequireAuth>}
+              element={
+                <RequireAuth role="ADMIN">
+                  <AdminScreens />
+                </RequireAuth>
+              }
             />
             <Route
               path="/admin/showtimes"
-              element={<RequireAuth role="ADMIN"><AdminShowtimes /></RequireAuth>}
+              element={
+                <RequireAuth role="ADMIN">
+                  <AdminShowtimes />
+                </RequireAuth>
+              }
             />
             <Route
               path="/admin/pricing"
-              element={<RequireAuth role="ADMIN"><AdminPricing /></RequireAuth>}
+              element={
+                <RequireAuth role="ADMIN">
+                  <AdminPricing />
+                </RequireAuth>
+              }
             />
             <Route
               path="/admin/analytics"
-              element={<RequireAuth role="ADMIN"><AdminAnalytics /></RequireAuth>}
+              element={
+                <RequireAuth role="ADMIN">
+                  <AdminAnalytics />
+                </RequireAuth>
+              }
             />
             <Route
               path="/admin/bookings/:id"
-              element={<RequireAuth role="ADMIN"><AdminBookingDetails /></RequireAuth>}
+              element={
+                <RequireAuth role="ADMIN">
+                  <AdminBookingDetails />
+                </RequireAuth>
+              }
             />
 
             {/* Redirect from legacy reports */}
