@@ -29,7 +29,7 @@ import AccountInfo from "./pages/AccountInfo";
 import ProfilePage from "./pages/ProfilePage";
 import MyBookings from "./pages/MyBookings";
 
-// Admin pages
+// Admin pages (SUPER_ADMIN area)
 import AdminDashboard from "./pages/AdminDashboard";
 import AdminTheaters from "./pages/AdminTheaters";
 import AdminScreens from "./pages/AdminScreens";
@@ -40,6 +40,13 @@ import AdminProfile from "./pages/AdminProfile";
 import AdminAnalytics from "./pages/AdminAnalytics";
 import AdminBookingDetails from "./pages/AdminBookingDetails";
 
+// Theatre-admin pages (THEATRE_ADMIN area)
+import TheatreDashboard from "./pages/theatre/TheatreDashboard";
+import TheatreScreens from "./pages/theatre/TheatreScreens";
+import TheatreShowtimes from "./pages/theatre/TheatreShowtimes";
+import TheatreProfile from "./pages/theatre/TheatreProfile";
+import TheatreReports from "./pages/theatre/TheatreReports";
+
 // 🧠 SSE hook
 import useSSE from "./hooks/useSSE";
 
@@ -49,30 +56,55 @@ function NotFound() {
   return <p className="p-6 text-center text-gray-500">404 — Page not found</p>;
 }
 
-/** Guard: requires auth + role */
+/**
+ * Guard: requires auth and optional roles (string or array)
+ *
+ * role can be:
+ *  - undefined/null -> any authenticated user allowed
+ *  - "USER" | "THEATRE_ADMIN" | "SUPER_ADMIN" | "ADMIN"
+ *  - or an array like ["SUPER_ADMIN","THEATRE_ADMIN"]
+ *
+ * It accepts a token in the query string (token=...) for special cases like SSE / tokenized links.
+ */
 function RequireAuth({ children, role }) {
   const { token, role: userRole } = useAuth();
   const { search } = useLocation();
   const urlToken = new URLSearchParams(search).get("token");
 
-  const need = (role || "").toUpperCase();
-  const have = (userRole || "").toUpperCase();
+  const normalize = (r) => (r ? String(r).toUpperCase() : "");
+  const needRaw = role;
+  const need = Array.isArray(needRaw)
+    ? needRaw.map(normalize)
+    : needRaw
+    ? [normalize(needRaw)]
+    : [];
 
-  // Allow tokenized email links
+  const have = normalize(userRole);
+
+  // Allow token via query param for special endpoints (streams / email links)
   if (!token && urlToken) return children;
 
-  // Redirect if no token
+  // Not logged in -> redirect to login; if any admin role is required, go to admin login
   if (!token) {
-    const loginPath = need === "ADMIN" ? "/admin/login" : "/login";
+    const wantsAdmin = need.some((r) => r.includes("ADMIN"));
+    const loginPath = wantsAdmin ? "/admin/login" : "/login";
     return <Navigate to={loginPath} replace />;
   }
 
-  // Redirect if role mismatch
-  if (need && have !== need) {
-    return have === "ADMIN" ? <Navigate to="/admin" replace /> : <Navigate to="/" replace />;
-  }
+  // No specific role required -> allow
+  if (!need.length) return children;
 
-  return children;
+  // If user's role is one of the required roles -> allow
+  if (need.includes(have)) return children;
+
+  // Optionally permit SUPER_ADMIN to access THEATRE_ADMIN pages (uncomment if desired)
+  // if (have === "SUPER_ADMIN" && need.includes("THEATRE_ADMIN")) return children;
+
+  // If user is any admin (contains "ADMIN") but not the required role -> send to admin dashboard
+  if (have.includes("ADMIN")) return <Navigate to="/admin" replace />;
+
+  // Otherwise regular user trying to access admin area -> send to homepage
+  return <Navigate to="/" replace />;
 }
 
 /** Scroll to top on route change */
@@ -87,17 +119,16 @@ function ScrollToTop() {
 /* ---------------------------------- App ---------------------------------- */
 
 export default function App() {
-  // ✅ Initialize SSE connection when user logs in
+  // Initialize SSE connection when user logs in (hook handles internal logic)
   useSSE();
 
   return (
     <div className="flex flex-col min-h-screen text-gray-800 overflow-x-hidden bg-transparent">
-      {/* Header stays plain */}
+      {/* Header */}
       <Navbar />
 
-      {/* Main area ONLY (background lives here) */}
+      {/* Main area (background inside) */}
       <main className="relative flex-grow">
-        {/* Background inside main, not behind navbar/footer */}
         <div className="absolute inset-0 -z-10">
           <GlobalBackdrop />
         </div>
@@ -134,7 +165,7 @@ export default function App() {
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/reset-password/:token" element={<ResetPassword />} />
 
-            {/* Ticket / details */}
+            {/* Ticket / details (USER) */}
             <Route
               path="/bookings/:id"
               element={
@@ -178,11 +209,11 @@ export default function App() {
               }
             />
 
-            {/* ADMIN protected routes */}
+            {/* SUPER_ADMIN protected routes */}
             <Route
               path="/admin"
               element={
-                <RequireAuth role="ADMIN">
+                <RequireAuth role={["SUPER_ADMIN"]}>
                   <AdminDashboard />
                 </RequireAuth>
               }
@@ -190,7 +221,7 @@ export default function App() {
             <Route
               path="/admin/profile"
               element={
-                <RequireAuth role="ADMIN">
+                <RequireAuth role={["SUPER_ADMIN","THEATRE_ADMIN"]}>
                   <AdminProfile />
                 </RequireAuth>
               }
@@ -198,7 +229,7 @@ export default function App() {
             <Route
               path="/admin/movies"
               element={
-                <RequireAuth role="ADMIN">
+                <RequireAuth role={["SUPER_ADMIN"]}>
                   <AdminMoviesPage />
                 </RequireAuth>
               }
@@ -206,7 +237,7 @@ export default function App() {
             <Route
               path="/admin/theaters"
               element={
-                <RequireAuth role="ADMIN">
+                <RequireAuth role={["SUPER_ADMIN"]}>
                   <AdminTheaters />
                 </RequireAuth>
               }
@@ -214,7 +245,7 @@ export default function App() {
             <Route
               path="/admin/screens"
               element={
-                <RequireAuth role="ADMIN">
+                <RequireAuth role={["SUPER_ADMIN"]}>
                   <AdminScreens />
                 </RequireAuth>
               }
@@ -222,7 +253,7 @@ export default function App() {
             <Route
               path="/admin/showtimes"
               element={
-                <RequireAuth role="ADMIN">
+                <RequireAuth role={["SUPER_ADMIN"]}>
                   <AdminShowtimes />
                 </RequireAuth>
               }
@@ -230,7 +261,7 @@ export default function App() {
             <Route
               path="/admin/pricing"
               element={
-                <RequireAuth role="ADMIN">
+                <RequireAuth role={["SUPER_ADMIN","THEATRE_ADMIN"]}>
                   <AdminPricing />
                 </RequireAuth>
               }
@@ -238,7 +269,7 @@ export default function App() {
             <Route
               path="/admin/analytics"
               element={
-                <RequireAuth role="ADMIN">
+                <RequireAuth role={["SUPER_ADMIN"]}>
                   <AdminAnalytics />
                 </RequireAuth>
               }
@@ -246,8 +277,50 @@ export default function App() {
             <Route
               path="/admin/bookings/:id"
               element={
-                <RequireAuth role="ADMIN">
+                <RequireAuth role={["SUPER_ADMIN","THEATRE_ADMIN"]}>
                   <AdminBookingDetails />
+                </RequireAuth>
+              }
+            />
+
+            {/* THEATRE_ADMIN scoped routes */}
+            <Route
+              path="/theatre/my"
+              element={
+                <RequireAuth role={["THEATRE_ADMIN"]}>
+                  <TheatreDashboard />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/theatre/screens"
+              element={
+                <RequireAuth role={["THEATRE_ADMIN"]}>
+                  <TheatreScreens />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/theatre/showtimes"
+              element={
+                <RequireAuth role={["THEATRE_ADMIN"]}>
+                  <TheatreShowtimes />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/theatre/profile"
+              element={
+                <RequireAuth role={["THEATRE_ADMIN"]}>
+                  <TheatreProfile />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/theatre/reports"
+              element={
+                <RequireAuth role={["THEATRE_ADMIN"]}>
+                  <TheatreReports />
                 </RequireAuth>
               }
             />
@@ -261,7 +334,7 @@ export default function App() {
         </div>
       </main>
 
-      {/* Footer stays plain */}
+      {/* Footer */}
       <Footer />
     </div>
   );
