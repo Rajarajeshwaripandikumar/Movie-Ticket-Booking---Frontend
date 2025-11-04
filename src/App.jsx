@@ -47,48 +47,71 @@ import TheatreShowtimes from "./pages/theatre/TheatreShowtimes";
 import TheatreProfile from "./pages/theatre/TheatreProfile";
 import TheatreReports from "./pages/theatre/TheatreReports";
 
-// 🧠 SSE hook
+// SSE hook
 import useSSE from "./hooks/useSSE";
 
-/* ----------------------------- Utils & Guards ----------------------------- */
+/* ----------------------------- Helpers & Guards ----------------------------- */
 
+/** NotFound fallback */
 function NotFound() {
   return <p className="p-6 text-center text-gray-500">404 — Page not found</p>;
 }
 
+/**
+ * RequireAuth guard
+ * - children: element to render
+ * - role: undefined | "USER" | "THEATRE_ADMIN" | "SUPER_ADMIN" | array of roles
+ *
+ * Notes:
+ * - reads token from useAuth() but also falls back to localStorage token to avoid brief missing-token issues.
+ * - normalizes role strings to uppercase.
+ * - optional debug bypass via REACT_APP_DEBUG_BYPASS_AUTH=1 (use only for local debugging)
+ */
 function RequireAuth({ children, role }) {
-  const { token, role: userRole } = useAuth();
-  const { search } = useLocation();
-  const urlToken = new URLSearchParams(search).get("token");
+  // Debug bypass (use only locally)
+  if (process.env.REACT_APP_DEBUG_BYPASS_AUTH === "1") {
+    return children;
+  }
+
+  const auth = useAuth() || {};
+  // prefer provider token, fallback to localStorage (helps SSR/rehydration timing)
+  const token = auth.token || (typeof window !== "undefined" && window.localStorage?.getItem("token"));
+  const userRoleRaw = auth.role || (typeof window !== "undefined" && window.localStorage?.getItem("role"));
 
   const normalize = (r) => (r ? String(r).toUpperCase() : "");
   const needRaw = role;
-  const need = Array.isArray(needRaw)
-    ? needRaw.map(normalize)
-    : needRaw
-    ? [normalize(needRaw)]
-    : [];
+  const need = Array.isArray(needRaw) ? needRaw.map(normalize) : needRaw ? [normalize(needRaw)] : [];
+  const have = normalize(userRoleRaw);
 
-  const have = normalize(userRole);
-
+  // allow token via query param for special endpoints (streams / email links)
+  const { search } = useLocation();
+  const urlToken = new URLSearchParams(search).get("token");
   if (!token && urlToken) return children;
 
+  // not logged in -> redirect to login; if admin route requested, go to admin login
   if (!token) {
     const wantsAdmin = need.some((r) => r.includes("ADMIN"));
     const loginPath = wantsAdmin ? "/admin/login" : "/login";
     return <Navigate to={loginPath} replace />;
   }
 
+  // no specific role required -> allow
   if (!need.length) return children;
 
+  // exact role allowed
   if (need.includes(have)) return children;
 
+  // super admin access to theatre admin? optionally allow — uncomment if desired
+  // if (have === "SUPER_ADMIN" && need.includes("THEATRE_ADMIN")) return children;
+
+  // if user has any admin substring but not matching required -> send to admin index
   if (have.includes("ADMIN")) return <Navigate to="/admin" replace />;
 
+  // otherwise not allowed -> home
   return <Navigate to="/" replace />;
 }
 
-/** Scroll to top on route change */
+/** scroll to top on route change */
 function ScrollToTop() {
   const { pathname, search } = useLocation();
   useEffect(() => {
@@ -100,6 +123,7 @@ function ScrollToTop() {
 /* ---------------------------------- App ---------------------------------- */
 
 export default function App() {
+  // initialize SSE hook (no-op if not used)
   useSSE();
 
   return (
@@ -107,7 +131,8 @@ export default function App() {
       <Navbar />
 
       <main className="relative flex-grow">
-        <div className="absolute inset-0 -z-10">
+        {/* Backdrop should not block pointer events */}
+        <div className="absolute inset-0 -z-10 pointer-events-none">
           <GlobalBackdrop />
         </div>
 
@@ -199,7 +224,7 @@ export default function App() {
             <Route
               path="/admin/profile"
               element={
-                <RequireAuth role={["SUPER_ADMIN","THEATRE_ADMIN"]}>
+                <RequireAuth role={["SUPER_ADMIN", "THEATRE_ADMIN"]}>
                   <AdminProfile />
                 </RequireAuth>
               }
@@ -239,7 +264,7 @@ export default function App() {
             <Route
               path="/admin/pricing"
               element={
-                <RequireAuth role={["SUPER_ADMIN","THEATRE_ADMIN"]}>
+                <RequireAuth role={["SUPER_ADMIN", "THEATRE_ADMIN"]}>
                   <AdminPricing />
                 </RequireAuth>
               }
@@ -255,7 +280,7 @@ export default function App() {
             <Route
               path="/admin/bookings/:id"
               element={
-                <RequireAuth role={["SUPER_ADMIN","THEATRE_ADMIN"]}>
+                <RequireAuth role={["SUPER_ADMIN", "THEATRE_ADMIN"]}>
                   <AdminBookingDetails />
                 </RequireAuth>
               }
