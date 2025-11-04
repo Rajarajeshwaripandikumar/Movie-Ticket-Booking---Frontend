@@ -56,16 +56,6 @@ function NotFound() {
   return <p className="p-6 text-center text-gray-500">404 — Page not found</p>;
 }
 
-/**
- * Guard: requires auth and optional roles (string or array)
- *
- * role can be:
- *  - undefined/null -> any authenticated user allowed
- *  - "USER" | "THEATRE_ADMIN" | "SUPER_ADMIN" | "ADMIN"
- *  - or an array like ["SUPER_ADMIN","THEATRE_ADMIN"]
- *
- * It accepts a token in the query string (token=...) for special cases like SSE / tokenized links.
- */
 function RequireAuth({ children, role }) {
   const { token, role: userRole } = useAuth();
   const { search } = useLocation();
@@ -81,29 +71,20 @@ function RequireAuth({ children, role }) {
 
   const have = normalize(userRole);
 
-  // Allow token via query param for special endpoints (streams / email links)
   if (!token && urlToken) return children;
 
-  // Not logged in -> redirect to login; if any admin role is required, go to admin login
   if (!token) {
     const wantsAdmin = need.some((r) => r.includes("ADMIN"));
     const loginPath = wantsAdmin ? "/admin/login" : "/login";
     return <Navigate to={loginPath} replace />;
   }
 
-  // No specific role required -> allow
   if (!need.length) return children;
 
-  // If user's role is one of the required roles -> allow
   if (need.includes(have)) return children;
 
-  // Optionally permit SUPER_ADMIN to access THEATRE_ADMIN pages (uncomment if desired)
-  // if (have === "SUPER_ADMIN" && need.includes("THEATRE_ADMIN")) return children;
-
-  // If user is any admin (contains "ADMIN") but not the required role -> send to admin dashboard
   if (have.includes("ADMIN")) return <Navigate to="/admin" replace />;
 
-  // Otherwise regular user trying to access admin area -> send to homepage
   return <Navigate to="/" replace />;
 }
 
@@ -119,15 +100,12 @@ function ScrollToTop() {
 /* ---------------------------------- App ---------------------------------- */
 
 export default function App() {
-  // Initialize SSE connection when user logs in (hook handles internal logic)
   useSSE();
 
   return (
     <div className="flex flex-col min-h-screen text-gray-800 overflow-x-hidden bg-transparent">
-      {/* Header */}
       <Navbar />
 
-      {/* Main area (background inside) */}
       <main className="relative flex-grow">
         <div className="absolute inset-0 -z-10">
           <GlobalBackdrop />
@@ -334,7 +312,6 @@ export default function App() {
         </div>
       </main>
 
-      {/* Footer */}
       <Footer />
     </div>
   );
