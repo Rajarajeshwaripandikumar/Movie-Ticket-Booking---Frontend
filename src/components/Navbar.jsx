@@ -55,7 +55,7 @@ function GhostLink({ active, className = "", ...rest }) {
 }
 
 /* ------------------------------- Constants ------------------------------ */
-const ADMIN_LINKS = [
+const SUPER_ADMIN_LINKS = [
   { label: "Admin Dashboard", to: "/admin" },
   { label: "Manage Theaters", to: "/admin/theaters" },
   { label: "Manage Screens", to: "/admin/screens" },
@@ -63,6 +63,15 @@ const ADMIN_LINKS = [
   { label: "Update Pricing", to: "/admin/pricing" },
   { label: "Admin Analytics", to: "/admin/analytics" },
   { label: "Manage Movies", to: "/admin/movies" },
+  { label: "Theatre Admins", to: "/super/theatre-admins" }, // super-only
+];
+
+const THEATRE_ADMIN_LINKS = [
+  { label: "My Theatre", to: "/theatre/my" },
+  { label: "Manage Screens", to: "/theatre/screens" },
+  { label: "Manage Showtimes", to: "/theatre/showtimes" },
+  { label: "Update Pricing", to: "/theatre/pricing" },
+  { label: "Theatre Reports", to: "/theatre/reports" },
 ];
 
 export default function Navbar() {
@@ -75,9 +84,13 @@ export default function Navbar() {
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
 
-  const isAdmin = String(role || "").toUpperCase() === "ADMIN";
+  // new role flags — support multi-admin roles
+  const normalizedRole = String(role || (user?.role || "USER")).toUpperCase();
+  const isSuperAdmin = normalizedRole === "SUPER_ADMIN";
+  const isTheatreAdmin = normalizedRole === "THEATRE_ADMIN";
+  const isAdmin = isSuperAdmin || isTheatreAdmin;
   const isLoggedIn = !!token;
-  const isAdminRoute = location.pathname.startsWith("/admin");
+  const isAdminRoute = location.pathname.startsWith("/admin") || location.pathname.startsWith("/super") || location.pathname.startsWith("/theatre");
   const API_BASE = api.defaults.baseURL?.replace(/\/+$/, "") || "";
 
   // ---------- utils ----------
@@ -212,7 +225,9 @@ export default function Navbar() {
 
   const handleAdminClick = () => {
     if (!isLoggedIn) navigate("/admin/login");
-    else if (isAdmin) navigate("/admin");
+    else if (isSuperAdmin) navigate("/admin");
+    else if (isTheatreAdmin) navigate("/theatre/my");
+    else navigate("/admin/login");
   };
 
   const closeAllMenus = () => {
@@ -243,12 +258,7 @@ export default function Navbar() {
 
             {/* Main nav */}
             <nav className="hidden md:flex items-center gap-5">
-              {[
-                { to: "/movies", label: "Movies" },
-                { to: "/theaters", label: "Theaters" },
-                { to: "/showtimes", label: "Showtimes" },
-                ...(isLoggedIn && !isAdmin ? [{ to: "/bookings", label: "My Bookings" }] : []),
-              ].map((item) => (
+              {[{ to: "/movies", label: "Movies" }, { to: "/theaters", label: "Theaters" }, { to: "/showtimes", label: "Showtimes" }, ...(isLoggedIn && !isAdmin ? [{ to: "/bookings", label: "My Bookings" }] : [])].map((item) => (
                 <NavLink key={item.to} to={item.to} onClick={closeAllMenus} className="focus:outline-none">
                   {({ isActive }) => <GhostLink active={isActive}>{item.label}</GhostLink>}
                 </NavLink>
@@ -402,7 +412,7 @@ export default function Navbar() {
                       <button
                         onClick={() => {
                           setAdminMenu(false);
-                          navigate(isAdmin ? "/admin/profile" : "/profile");
+                          navigate(isAdmin ? (isSuperAdmin ? "/admin/profile" : "/theatre/profile") : "/profile");
                         }}
                         className="block w-full text-left px-3 py-2 text-sm rounded-xl hover:bg-slate-50 font-semibold"
                       >
@@ -421,10 +431,28 @@ export default function Navbar() {
                         </button>
                       )}
 
-                      {isAdmin && (
+                      {isSuperAdmin && (
                         <>
                           <div className="my-1 h-px bg-slate-200" />
-                          {ADMIN_LINKS.map((item) => (
+                          {SUPER_ADMIN_LINKS.map((item) => (
+                            <button
+                              key={item.to}
+                              onClick={() => {
+                                setAdminMenu(false);
+                                navigate(item.to);
+                              }}
+                              className="block w-full text-left px-3 py-2 text-sm rounded-xl hover:bg-slate-50 font-semibold"
+                            >
+                              {item.label}
+                            </button>
+                          ))}
+                        </>
+                      )}
+
+                      {isTheatreAdmin && (
+                        <>
+                          <div className="my-1 h-px bg-slate-200" />
+                          {THEATRE_ADMIN_LINKS.map((item) => (
                             <button
                               key={item.to}
                               onClick={() => {
@@ -563,32 +591,40 @@ export default function Navbar() {
                 <button
                   onClick={() => {
                     closeAllMenus();
-                    navigate(isAdmin ? "/admin/profile" : "/profile");
+                    navigate(isAdmin ? (isSuperAdmin ? "/admin/profile" : "/theatre/profile") : "/profile");
                   }}
                   className="block w-full text-left text-sm font-semibold hover:text-[#0654BA]"
                 >
                   Profile
                 </button>
 
-                {isAdmin && (
-                  <>
-                    <div className="mt-2 mb-1 text-[11px] font-extrabold uppercase text-slate-500">
-                      Admin
-                    </div>
-                    {ADMIN_LINKS.map((item) => (
-                      <button
-                        key={item.to}
-                        onClick={() => {
-                          closeAllMenus();
-                          navigate(item.to);
-                        }}
-                        className="block w-full text-left text-sm py-1.5 font-semibold hover:text-[#0654BA]"
-                      >
-                        {item.label}
-                      </button>
-                    ))}
-                  </>
-                )}
+                {isSuperAdmin &&
+                  SUPER_ADMIN_LINKS.map((item) => (
+                    <button
+                      key={item.to}
+                      onClick={() => {
+                        closeAllMenus();
+                        navigate(item.to);
+                      }}
+                      className="block w-full text-left text-sm py-1.5 font-semibold hover:text-[#0654BA]"
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+
+                {isTheatreAdmin &&
+                  THEATRE_ADMIN_LINKS.map((item) => (
+                    <button
+                      key={item.to}
+                      onClick={() => {
+                        closeAllMenus();
+                        navigate(item.to);
+                      }}
+                      className="block w-full text-left text-sm py-1.5 font-semibold hover:text-[#0654BA]"
+                    >
+                      {item.label}
+                    </button>
+                  ))}
 
                 <button
                   onClick={() => {
@@ -600,10 +636,7 @@ export default function Navbar() {
                   Logout
                 </button>
               </>
-            ) : (
-              // already handled above when !isLoggedIn
-              null
-            )}
+            ) : null}
           </div>
         </div>
       )}
