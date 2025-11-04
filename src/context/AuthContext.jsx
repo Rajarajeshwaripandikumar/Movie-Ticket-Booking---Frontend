@@ -32,10 +32,24 @@ function decodeJwt(token) {
   return safeJsonBase64Decode(parts[1]);
 }
 
+/* ---------------- normalize role helper ---------------- */
+function normalizeRole(raw) {
+  if (!raw && raw !== "") return null;
+  try {
+    return String(raw).trim().toUpperCase().replace(/\s+/g, "_");
+  } catch {
+    return null;
+  }
+}
+
 /* ---------------- AuthProvider ---------------- */
 export function AuthProvider({ children }) {
-  const [token, setToken] = useState(() => localStorage.getItem("token") || null);
-  const [role, setRole] = useState(() => localStorage.getItem("role") || null);
+  const [token, setToken] = useState(() => {
+    try { return localStorage.getItem("token") || null; } catch { return null; }
+  });
+  const [role, setRole] = useState(() => {
+    try { return normalizeRole(localStorage.getItem("role")) || null; } catch { return null; }
+  });
   const [user, setUser] = useState(() => {
     try {
       const raw = localStorage.getItem("user");
@@ -48,44 +62,62 @@ export function AuthProvider({ children }) {
   /* ---------------- Keep in sync ---------------- */
   useEffect(() => {
     if (token) {
-      localStorage.setItem("token", token);
+      try { localStorage.setItem("token", token); } catch {}
       api.setAuthToken(token);
     } else {
-      localStorage.removeItem("token");
+      try { localStorage.removeItem("token"); } catch {}
       api.setAuthToken(null);
     }
   }, [token]);
 
   useEffect(() => {
-    if (role) localStorage.setItem("role", role);
-    else localStorage.removeItem("role");
+    if (role) {
+      try { localStorage.setItem("role", role); } catch {}
+    } else {
+      try { localStorage.removeItem("role"); } catch {}
+    }
   }, [role]);
 
   useEffect(() => {
-    if (user) localStorage.setItem("user", JSON.stringify(user));
-    else localStorage.removeItem("user");
+    if (user) {
+      try { localStorage.setItem("user", JSON.stringify(user)); } catch {}
+    } else {
+      try { localStorage.removeItem("user"); } catch {}
+    }
   }, [user]);
 
   /* ---------------- LOGIN ---------------- */
-  const login = useCallback(async (email, password) => {
+  /**
+   * login(email, password, roleHint?)
+   * roleHint is optional and used as fallback if server/JWT don't provide a role.
+   */
+  const login = useCallback(async (email, password, roleHint) => {
     if (!email || !password) throw new Error("Missing credentials");
 
     try {
-      const res = await api.post("/auth/login", { email, password });
+      // call your API - adjust path if your backend uses a different route
+      const res = await api.post("/auth/login", { email, password, roleHint });
       const t = res?.data?.token;
       if (!t) throw new Error("No token returned from server");
 
-      // decode the JWT
+      // decode the JWT for claims (if available)
       const claims = decodeJwt(t) || {};
-      const derivedRole = String(claims.role || res?.data?.user?.role || "USER").toUpperCase();
+
+      // try multiple places the server might return role
+      const rawRoleFromJwt = claims.role || claims?.roles?.[0];
+      const rawRoleFromBody = res?.data?.role || res?.data?.user?.role;
+      const chosenRawRole = rawRoleFromJwt || rawRoleFromBody || roleHint || "USER";
+
+      const derivedRole = normalizeRole(chosenRawRole);
       const theatreId = claims.theatreId || res?.data?.user?.theatreId || null;
 
       const finalUser = {
-        ...res.data.user,
+        ...(res.data.user || {}),
         role: derivedRole,
         theatreId,
       };
 
+      // persist in state (effects will sync to localStorage & api.setAuthToken)
       setToken(t);
       setRole(derivedRole);
       setUser(finalUser);
@@ -103,9 +135,10 @@ export function AuthProvider({ children }) {
     setToken(null);
     setRole(null);
     setUser(null);
-    localStorage.removeItem("token");
-    localStorage.removeItem("role");
-    localStorage.removeItem("user");
+    try { localStorage.removeItem("token"); } catch {}
+    try { localStorage.removeItem("role"); } catch {}
+    try { localStorage.removeItem("user"); } catch {}
+    api.setAuthToken(null);
   }, []);
 
   /* ---------------- REFRESH PROFILE ---------------- */
@@ -114,7 +147,7 @@ export function AuthProvider({ children }) {
       const res = await api.get("/auth/me");
       if (res?.data?.user) {
         setUser(res.data.user);
-        setRole(String(res.data.user.role).toUpperCase());
+        setRole(normalizeRole(res.data.user.role));
       }
       return res?.data?.user || null;
     } catch (err) {
