@@ -1,11 +1,11 @@
 [build]
-  command = "npm ci && npm run build"
+  command = "npm ci --include=dev && npm run build"
   publish = "dist"
 
 [build.environment]
   NODE_VERSION = "20"
-  # Ensure devDependencies (like Vite) are installed
-  NPM_FLAGS = "--include=dev"
+  # include devDependencies and verbose install logs (helps debug build failures)
+  NPM_FLAGS = "--include=dev --loglevel verbose"
 
 [[redirects]]
   from = "/*"
