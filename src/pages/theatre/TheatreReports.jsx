@@ -1,35 +1,61 @@
+// src/pages/theatre/TheatreReports.jsx
 import React, { useEffect, useState, useMemo, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
-import { format } from "date-fns";
+// removed: import { format } from "date-fns";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
 /**
- * TheatreReports.jsx
+ * TheatreReports.jsx (date-fns removed)
  * - Place at: src/pages/theatre/TheatreReports.jsx
- * - Purpose: admin-facing reports dashboard for a theatre
- * - Features:
- *   • Fetches report data from /api/theatres/:id/reports (adjust endpoint as needed)
- *   • Date range filtering, quick presets (7/30/90 days)
- *   • Summary KPIs (revenue, tickets sold, avg ticket price)
- *   • Sales by day chart (recharts)
- *   • Paginated/filtred table of bookings with CSV export
- *   • Tailwind + District/Walmart-friendly styling
- *
- * Note: If you use an `api` helper in your project, replace fetch calls with your helper.
+ * - Adjust API endpoints: GET /api/theatres/:id/reports
+ * - Requires `recharts` installed for chart
  */
 
+/* Small local date formatters to replace date-fns usages */
+function fmtDateShort(d) {
+  try {
+    const dt = new Date(d);
+    if (Number.isNaN(dt.getTime())) return String(d);
+    // e.g. "04 Apr"
+    return dt.toLocaleDateString(undefined, { day: "2-digit", month: "short" });
+  } catch {
+    return String(d);
+  }
+}
+function fmtDateLong(d) {
+  try {
+    const dt = new Date(d);
+    if (Number.isNaN(dt.getTime())) return String(d);
+    // e.g. "4 Apr 2025"
+    return dt.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  } catch {
+    return String(d);
+  }
+}
+
 export default function TheatreReports() {
-  const { id } = useParams(); // theater id from route /theatre/:id/reports
+  const { id } = useParams();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [reports, setReports] = useState(null);
 
   const [startDate, setStartDate] = useState(() => {
-    const d = new Date(); d.setDate(d.getDate() - 30); return format(d, 'yyyy-MM-dd');
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
   });
-  const [endDate, setEndDate] = useState(() => format(new Date(), 'yyyy-MM-dd'));
-  const [query, setQuery] = useState('');
+  const [endDate, setEndDate] = useState(() => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  });
+  const [query, setQuery] = useState("");
 
   const [page, setPage] = useState(1);
   const pageSize = 12;
@@ -41,15 +67,13 @@ export default function TheatreReports() {
       setLoading(true);
       setError(null);
       try {
-        // Adjust endpoint to match your backend API
         const res = await fetch(`/api/theatres/${id}/reports?start=${startDate}&end=${endDate}`);
         if (!res.ok) throw new Error(`Failed to load reports (${res.status})`);
         const data = await res.json();
-        // expected shape: { summary: {revenue, ticketsSold, avgPrice}, salesByDay: [{date, revenue, tickets}], bookings: [...] }
         setReports(data);
       } catch (err) {
         console.error(err);
-        setError(err.message || 'Failed to load reports');
+        setError(err.message || "Failed to load reports");
       } finally {
         setLoading(false);
       }
@@ -57,20 +81,18 @@ export default function TheatreReports() {
     loadReports();
   }, [id, startDate, endDate]);
 
-  // derived metrics
   const summary = reports?.summary || { revenue: 0, ticketsSold: 0, avgPrice: 0 };
   const salesByDay = reports?.salesByDay || [];
   const bookings = reports?.bookings || [];
 
-  // filtering + pagination
   const filteredBookings = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return bookings;
-    return bookings.filter(b => (
+    return bookings.filter((b) => (
       String(b.id).toLowerCase().includes(q) ||
-      (b.customerName || '').toLowerCase().includes(q) ||
-      (b.seats || '').toLowerCase().includes(q) ||
-      (b.showTitle || '').toLowerCase().includes(q)
+      (b.customerName || "").toLowerCase().includes(q) ||
+      (Array.isArray(b.seats) ? b.seats.join(" ") : (b.seats || "")).toLowerCase().includes(q) ||
+      (b.showTitle || "").toLowerCase().includes(q)
     ));
   }, [bookings, query]);
 
@@ -81,31 +103,37 @@ export default function TheatreReports() {
     const end = new Date();
     const start = new Date();
     start.setDate(end.getDate() - days + 1);
-    setStartDate(format(start, 'yyyy-MM-dd'));
-    setEndDate(format(end, 'yyyy-MM-dd'));
+    const formatYMD = (dt) => {
+      const y = dt.getFullYear();
+      const m = String(dt.getMonth() + 1).padStart(2, "0");
+      const day = String(dt.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    };
+    setStartDate(formatYMD(start));
+    setEndDate(formatYMD(end));
     setPage(1);
   }
 
   function downloadCSV() {
     const rows = [
-      ['Booking ID', 'Customer', 'Show', 'Time', 'Seats', 'Quantity', 'Total (INR)', 'Created At']
+      ["Booking ID", "Customer", "Show", "Time", "Seats", "Quantity", "Total (INR)", "Created At"]
     ];
     for (const b of filteredBookings) {
       rows.push([
         b.id,
-        b.customerName || '',
-        b.showTitle || '',
-        b.showTime || '',
-        Array.isArray(b.seats) ? b.seats.join('|') : (b.seats || ''),
-        b.quantity || '',
-        b.total || '',
-        b.createdAt ? new Date(b.createdAt).toISOString() : ''
+        b.customerName || "",
+        b.showTitle || "",
+        b.showTime || "",
+        Array.isArray(b.seats) ? b.seats.join("|") : (b.seats || ""),
+        b.quantity || "",
+        b.total || "",
+        b.createdAt ? new Date(b.createdAt).toISOString() : ""
       ]);
     }
-    const csv = rows.map(r => r.map(cell => `"${String(cell).replace(/"/g,'""')}"`).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
+    const csv = rows.map(r => r.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    const a = document.createElement("a");
     a.href = url;
     a.download = `theatre_${id}_bookings_${startDate}_to_${endDate}.csv`;
     document.body.appendChild(a);
@@ -149,7 +177,7 @@ export default function TheatreReports() {
         <header className="flex items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-semibold">Theatre Reports</h1>
-            <p className="text-sm text-gray-600 mt-1">{reports?.theatreName || '—'}</p>
+            <p className="text-sm text-gray-600 mt-1">{reports?.theatreName || "—"}</p>
           </div>
           <div className="flex items-center gap-2">
             <button onClick={() => setRangeDays(7)} className="px-3 py-2 rounded-lg bg-white border">Last 7d</button>
@@ -158,7 +186,6 @@ export default function TheatreReports() {
           </div>
         </header>
 
-        {/* KPI cards */}
         <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="bg-white p-4 rounded-2xl shadow">
             <div className="text-xs text-gray-500">Revenue</div>
@@ -176,7 +203,7 @@ export default function TheatreReports() {
             <div className="flex justify-between items-start">
               <div>
                 <div className="text-xs text-gray-500">Conversion</div>
-                <div className="text-2xl font-semibold mt-1">{reports?.conversionRate ? (reports.conversionRate*100).toFixed(1) + '%' : '—'}</div>
+                <div className="text-2xl font-semibold mt-1">{reports?.conversionRate ? (reports.conversionRate * 100).toFixed(1) + "%" : "—"}</div>
               </div>
               <div>
                 <button onClick={downloadCSV} className="px-3 py-2 rounded bg-yellow-400 text-black">Export CSV</button>
@@ -186,7 +213,6 @@ export default function TheatreReports() {
           </div>
         </section>
 
-        {/* Chart + table */}
         <section className="grid md:grid-cols-2 gap-6">
           <div className="bg-white p-4 rounded-2xl shadow">
             <div className="flex items-center justify-between">
@@ -197,9 +223,9 @@ export default function TheatreReports() {
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={salesByDay}>
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="date" tickFormatter={(d) => format(new Date(d), 'dd MMM')} />
+                  <XAxis dataKey="date" tickFormatter={(d) => fmtDateShort(d)} />
                   <YAxis />
-                  <Tooltip labelFormatter={(d) => format(new Date(d), 'PPP')} />
+                  <Tooltip labelFormatter={(d) => fmtDateLong(d)} />
                   <Bar dataKey="tickets" name="Tickets" />
                   <Bar dataKey="revenue" name="Revenue" />
                 </BarChart>
@@ -211,7 +237,7 @@ export default function TheatreReports() {
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-medium">Bookings</h3>
               <div className="flex items-center gap-2">
-                <input value={query} onChange={e=>{setQuery(e.target.value); setPage(1);}} placeholder="Search bookings..." className="px-3 py-2 border rounded-lg text-sm" />
+                <input value={query} onChange={e => { setQuery(e.target.value); setPage(1); }} placeholder="Search bookings..." className="px-3 py-2 border rounded-lg text-sm" />
                 <div className="text-xs text-gray-500">{filteredBookings.length} results</div>
               </div>
             </div>
@@ -234,12 +260,12 @@ export default function TheatreReports() {
                     {pageItems.map(b => (
                       <tr key={b.id} className="border-b">
                         <td className="py-2 text-xs text-gray-700">{b.id}</td>
-                        <td className="py-2">{b.customerName || '—'}</td>
-                        <td className="py-2">{b.showTitle || '—'}</td>
-                        <td className="py-2 text-xs">{Array.isArray(b.seats) ? b.seats.join(', ') : b.seats}</td>
+                        <td className="py-2">{b.customerName || "—"}</td>
+                        <td className="py-2">{b.showTitle || "—"}</td>
+                        <td className="py-2 text-xs">{Array.isArray(b.seats) ? b.seats.join(", ") : b.seats}</td>
                         <td className="py-2">{b.quantity}</td>
                         <td className="py-2">₹{b.total}</td>
-                        <td className="py-2 text-xs text-gray-500">{b.createdAt ? format(new Date(b.createdAt), 'dd MMM yyyy') : '—'}</td>
+                        <td className="py-2 text-xs text-gray-500">{b.createdAt ? fmtDateLong(b.createdAt) : "—"}</td>
                       </tr>
                     ))}
                     {pageItems.length === 0 && (
@@ -251,12 +277,11 @@ export default function TheatreReports() {
                 </table>
               </div>
 
-              {/* Pagination */}
               <div className="mt-4 flex items-center justify-between">
                 <div className="text-sm text-gray-600">Page {page} / {totalPages}</div>
                 <div className="flex items-center gap-2">
-                  <button onClick={()=>setPage(p=>Math.max(1,p-1))} className="px-3 py-1 rounded border">Prev</button>
-                  <button onClick={()=>setPage(p=>Math.min(totalPages,p+1))} className="px-3 py-1 rounded border">Next</button>
+                  <button onClick={() => setPage(p => Math.max(1, p - 1))} className="px-3 py-1 rounded border">Prev</button>
+                  <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} className="px-3 py-1 rounded border">Next</button>
                 </div>
               </div>
 
