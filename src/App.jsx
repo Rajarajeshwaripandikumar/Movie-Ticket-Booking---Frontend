@@ -1,3 +1,4 @@
+// src/App.jsx
 import React, { useEffect } from "react";
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "./context/AuthContext";
@@ -45,6 +46,9 @@ import TheatreScreens from "./pages/theatre/TheatreScreens";
 import TheatreShowtimes from "./pages/theatre/TheatreShowtimes";
 import TheatreProfile from "./pages/theatre/TheatreProfile";
 import TheatreReports from "./pages/theatre/TheatreReports";
+
+// Super-only: Theatre Admins listing page
+import TheatreAdmins from "./pages/super/TheatreAdmins";
 
 // SSE hook
 import useSSE from "./hooks/useSSE";
@@ -385,14 +389,26 @@ export default function App() {
                 </RequireAuth>
               }
             />
+
+            {/* ✅ Correct Theatre Admins route (was pointing to AdminTheaters) */}
             <Route
               path="/super/theatre-admins"
               element={
                 <RequireAuth role={["SUPER_ADMIN"]}>
-                  <AdminTheaters />
+                  <TheatreAdmins />
                 </RequireAuth>
               }
             />
+            {/* Optional admin alias */}
+            <Route
+              path="/admin/theatre-admins"
+              element={
+                <RequireAuth role={["SUPER_ADMIN"]}>
+                  <TheatreAdmins />
+                </RequireAuth>
+              }
+            />
+
             <Route
               path="/super/movies"
               element={
