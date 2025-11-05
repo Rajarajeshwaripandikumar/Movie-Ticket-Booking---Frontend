@@ -1,4 +1,3 @@
-// src/components/Navbar.jsx — Walmart Style (clean, rounded, blue accents)
 import React, { useEffect, useState, useRef } from "react";
 import { Link, NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
@@ -56,26 +55,25 @@ function GhostLink({ active, className = "", ...rest }) {
 
 /* ------------------------------- Constants ------------------------------ */
 const SUPER_ADMIN_LINKS = [
-  { label: "Admin Dashboard", to: "/admin" },
+  { label: "Admin Dashboard", to: "/admin/dashboard" },
   { label: "Manage Theaters", to: "/admin/theaters" },
   { label: "Manage Screens", to: "/admin/screens" },
   { label: "Manage Showtimes", to: "/admin/showtimes" },
   { label: "Update Pricing", to: "/admin/pricing" },
   { label: "Admin Analytics", to: "/admin/analytics" },
   { label: "Manage Movies", to: "/admin/movies" },
-  { label: "Theatre Admins", to: "/super/theatre-admins" }, // super-only
+  { label: "Theatre Admins", to: "/super/theatre-admins" },
 ];
 
 const THEATRE_ADMIN_LINKS = [
   { label: "My Theatre", to: "/theatre/my" },
   { label: "Manage Screens", to: "/theatre/screens" },
   { label: "Manage Showtimes", to: "/theatre/showtimes" },
-  { label: "Update Pricing", to: "/theatre/pricing" },
+  { label: "Update Pricing", to: "/admin/pricing" }, // fixed: this route exists
   { label: "Theatre Reports", to: "/theatre/reports" },
 ];
 
 export default function Navbar() {
-  // 🔧 Pull the canonical role flags from AuthContext (pre-normalized)
   const { token, role, user, logout, isAdmin, isSuperAdmin, isTheatreAdmin, isLoggedIn } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -92,7 +90,7 @@ export default function Navbar() {
 
   const API_BASE = api.defaults.baseURL?.replace(/\/+$/, "") || "";
 
-  // ---------- utils ----------
+  // utils
   const newId = () =>
     (typeof crypto !== "undefined" && crypto.randomUUID)
       ? crypto.randomUUID()
@@ -112,7 +110,6 @@ export default function Navbar() {
     );
   }
 
-  // extract raw JWT string from various shapes (string/object/json-string)
   function extractJwt(value) {
     try {
       if (!value) return "";
@@ -145,32 +142,7 @@ export default function Navbar() {
     return jwt ? `Bearer ${jwt}` : undefined;
   })();
 
-  // ---------- navigation helpers ----------
-  function resolveNotificationPath(n) {
-    const t = String(n?.type || "").toUpperCase();
-    const bookingId = n?.data?.bookingId || n?.bookingId || n?.data?._id || n?.entityId;
-    const showtimeId = n?.data?.showtimeId || n?.showtimeId;
-
-    if (bookingId && (t.includes("BOOKING") || t.includes("TICKET"))) {
-      return isAdmin ? `/admin/bookings/${bookingId}` : `/bookings/${bookingId}`;
-    }
-    if (showtimeId) {
-      return isAdmin ? `/admin/showtimes/${showtimeId}` : `/showtimes/${showtimeId}`;
-    }
-    return isAdmin ? "/admin" : "/bookings";
-  }
-
-  async function markOneRead(id) {
-    if (!authHeader || !id) return;
-    try {
-      await api.patch(`/notifications/${id}/read`, {}, { headers: { Authorization: authHeader } });
-      setNotifications((prev) =>
-        prev.map((n) => (String(n._id) === String(id) ? { ...n, readAt: n.readAt || new Date().toISOString() } : n))
-      );
-    } catch { /* ignore */ }
-  }
-
-  // ---------- initial load ----------
+  // notifications initial fetch
   useEffect(() => {
     if (!authHeader) {
       setNotifications([]);
@@ -187,22 +159,17 @@ export default function Navbar() {
       .catch(() => setNotifications([]));
   }, [authHeader]);
 
-  // ---------- SSE live updates ----------
+  // SSE updates
   const esRef = useRef(null);
   useEffect(() => {
-    // Build a clean JWT for SSE query param (native EventSource can't set headers)
     const jwt =
       extractJwt(token) ||
       extractJwt(localStorage.getItem("token")) ||
       extractJwt(localStorage.getItem("auth"));
 
-    if (!jwt || jwt === "[object Object]") {
-      // silently skip if we don't have a usable token
-      return;
-    }
+    if (!jwt || jwt === "[object Object]") return;
 
     const url = `${API_BASE}/notifications/stream?token=${encodeURIComponent(jwt)}&seed=1`;
-    // console.log("[SSE] Connecting to:", url);
 
     let closed = false;
     let backoff = 1000;
@@ -216,21 +183,18 @@ export default function Navbar() {
         if (!ev.data) return;
         try {
           const msg = JSON.parse(ev.data);
-          if (msg && typeof msg === "object") {
-            const item = {
-              _id: msg._id,
-              clientKey: msg._id ? undefined : newId(),
-              title: msg.title || "Notification",
-              message: msg.message || msg.body || "",
-              createdAt: msg.createdAt || new Date().toISOString(),
-              readAt: msg.readAt,
-              type: msg.type,
-              data: msg.data,
-            };
-            setNotifications((prev) => mergeNotifications(prev, [item]).slice(0, 50));
-          }
+          const item = {
+            _id: msg._id,
+            clientKey: msg._id ? undefined : newId(),
+            title: msg.title || "Notification",
+            message: msg.message || msg.body || "",
+            createdAt: msg.createdAt || new Date().toISOString(),
+            readAt: msg.readAt,
+            type: msg.type,
+            data: msg.data,
+          };
+          setNotifications((prev) => mergeNotifications(prev, [item]).slice(0, 50));
         } catch {
-          // If server sent HTML (401 page), don't crash on JSON.parse
           const item = {
             clientKey: newId(),
             title: "Notification",
@@ -242,7 +206,7 @@ export default function Navbar() {
       };
 
       es.addEventListener("notification", handleNotification);
-      es.addEventListener("message", handleNotification); // fallback if server emits default "message"
+      es.addEventListener("message", handleNotification);
       es.addEventListener("connected", () => { backoff = 1000; });
 
       es.onerror = () => {
@@ -259,7 +223,6 @@ export default function Navbar() {
     };
   }, [token, API_BASE]);
 
-  // ---------- ui helpers ----------
   const handleLogout = async () => {
     try {
       await logout();
@@ -272,9 +235,7 @@ export default function Navbar() {
 
   const handleAdminClick = () => {
     if (!isLoggedIn) navigate("/admin/login");
-    else if (isSuperAdmin) navigate("/admin");
-    else if (isTheatreAdmin) navigate("/theatre/my");
-    else navigate("/admin/login");
+    else navigate("/admin"); // role-aware landing decides the rest
   };
 
   const closeAllMenus = () => {
@@ -288,7 +249,6 @@ export default function Navbar() {
   /* -------------------------------- render -------------------------------- */
   return (
     <header className="w-full sticky top-0 z-50">
-      {/* Soft app bar */}
       <div className="backdrop-blur-md bg-white/85 border-b border-slate-200 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="h-16 flex items-center justify-between">
@@ -337,7 +297,6 @@ export default function Navbar() {
                       role="menu"
                       aria-label="Notifications"
                     >
-                      {/* Mark all as read */}
                       {notifications.length > 0 && (
                         <div className="sticky top-0 bg-white border-b border-slate-200 p-2 text-right">
                           <button
@@ -349,7 +308,7 @@ export default function Navbar() {
                                 setNotifications((prev) =>
                                   prev.map((n) => ({ ...n, readAt: n.readAt || new Date().toISOString() }))
                                 );
-                              } catch { /* ignore */ }
+                              } catch {}
                             }}
                           >
                             Mark all as read
@@ -362,7 +321,13 @@ export default function Navbar() {
                       ) : (
                         <ul>
                           {notifications.map((n) => {
-                            const to = resolveNotificationPath(n);
+                            const bookingId = n?.data?.bookingId || n?.bookingId || n?.data?._id || n?.entityId;
+                            const showtimeId = n?.data?.showtimeId || n?.showtimeId;
+                            const to =
+                              bookingId ? (isAdmin ? `/admin/bookings/${bookingId}` : `/bookings/${bookingId}`) :
+                              showtimeId ? (isAdmin ? `/admin/showtimes/${showtimeId}` : `/showtimes/${showtimeId}`) :
+                              (isAdmin ? "/admin" : "/bookings");
+
                             return (
                               <li key={toKey(n)}>
                                 <button
@@ -370,15 +335,10 @@ export default function Navbar() {
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     setNotifOpen(false);
-                                    if (n._id && !n.readAt) markOneRead(n._id);
-                                    navigate(to || (isAdmin ? "/admin" : "/bookings"));
-                                  }}
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter" || e.key === " ") {
-                                      e.stopPropagation();
-                                      setNotifOpen(false);
-                                      navigate(to || (isAdmin ? "/admin" : "/bookings"));
+                                    if (n._id && !n.readAt) {
+                                      api.patch(`/notifications/${n._id}/read`, {}, { headers: { Authorization: authHeader } }).catch(()=>{});
                                     }
+                                    navigate(to);
                                   }}
                                   className={cn(
                                     "w-full text-left p-3 border-b border-slate-200 last:border-b-0",
@@ -389,9 +349,7 @@ export default function Navbar() {
                                   role="menuitem"
                                 >
                                   <div className="flex items-start gap-2">
-                                    {!n.readAt && (
-                                      <span className="mt-1 inline-block w-2 h-2 rounded-full bg-rose-500" />
-                                    )}
+                                    {!n.readAt && <span className="mt-1 inline-block w-2 h-2 rounded-full bg-rose-500" />}
                                     <div className="flex-1">
                                       <div className="text-sm font-extrabold text-slate-900">
                                         {n.title || "Notification"}
@@ -415,7 +373,7 @@ export default function Navbar() {
                 </div>
               )}
 
-              {/* Admin (outline/gradient style) */}
+              {/* Admin CTA when logged out */}
               {!isLoggedIn && (
                 <button
                   onClick={() => {
@@ -460,7 +418,7 @@ export default function Navbar() {
                       <button
                         onClick={() => {
                           setAdminMenu(false);
-                          navigate(isAdmin ? (isSuperAdmin ? "/admin/profile" : "/theatre/profile") : "/profile");
+                          navigate(isSuperAdmin ? "/admin/profile" : isTheatreAdmin ? "/theatre/profile" : "/profile");
                         }}
                         className="block w-full text-left px-3 py-2 text-sm rounded-xl hover:bg-slate-50 font-semibold"
                       >
@@ -526,32 +484,7 @@ export default function Navbar() {
                     </Card>
                   )}
                 </div>
-              ) : (
-                !isAdminRoute && (
-                  <div className="hidden sm:flex items-center gap-2">
-                    {/* Login (filled primary) */}
-                    <PrimaryBtn
-                      onClick={() => {
-                        closeAllMenus();
-                        navigate("/login");
-                      }}
-                    >
-                      <UserRound className="w-4 h-4" />
-                      Login
-                    </PrimaryBtn>
-
-                    {/* Register (filled primary) */}
-                    <PrimaryBtn
-                      onClick={() => {
-                        closeAllMenus();
-                        navigate("/register");
-                      }}
-                    >
-                      Register
-                    </PrimaryBtn>
-                  </div>
-                )
-              )}
+              ) : null}
 
               {/* Mobile Toggle */}
               <IconBtn
@@ -591,7 +524,6 @@ export default function Navbar() {
 
             {!isLoggedIn && (
               <>
-                {/* Admin (mobile full-width outline) */}
                 <button
                   onClick={() => {
                     closeAllMenus();
@@ -610,7 +542,6 @@ export default function Navbar() {
 
                 <div className="space-y-2" />
 
-                {/* Login & Register — mobile full-width filled primary */}
                 <PrimaryBtn
                   className="w-full justify-center"
                   onClick={() => {
@@ -639,7 +570,7 @@ export default function Navbar() {
                 <button
                   onClick={() => {
                     closeAllMenus();
-                    navigate(isAdmin ? (isSuperAdmin ? "/admin/profile" : "/theatre/profile") : "/profile");
+                    navigate(isSuperAdmin ? "/admin/profile" : isTheatreAdmin ? "/theatre/profile" : "/profile");
                   }}
                   className="block w-full text-left text-sm font-semibold hover:text-[#0654BA]"
                 >
