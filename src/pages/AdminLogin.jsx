@@ -1,7 +1,7 @@
 // src/pages/AdminLogin.jsx — Walmart Style (clean, rounded, blue accents)
 import React, { useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 
 /* --------------------------- Walmart primitives --------------------------- */
 const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
@@ -57,8 +57,10 @@ function SecondaryBtn({ children, className = "", ...props }) {
 
 /* -------------------------------- Component -------------------------------- */
 export default function AdminLogin() {
-  const { login } = useAuth();
+  const { login, isSuperAdmin, isTheatreAdmin } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const from = location.state?.from?.pathname;
 
   const [email, setEmail] = useState("admin@cinema.com");
   const [password, setPassword] = useState("");
@@ -76,9 +78,24 @@ export default function AdminLogin() {
 
     setBusy(true);
     try {
-      // IMPORTANT: pass "ADMIN" so AuthContext uses the admin endpoint
+      // IMPORTANT: pass "ADMIN" so AuthContext uses/derives admin role correctly
       await login(email, password, "ADMIN");
-      navigate("/admin");
+
+      // If user was redirected here from a protected admin path, send them back
+      if (from && from !== "/" && from !== "/login" && from !== "/admin/login") {
+        navigate(from, { replace: true });
+        return;
+      }
+
+      // Role-based landing
+      if (isSuperAdmin) {
+        navigate("/admin", { replace: true });
+      } else if (isTheatreAdmin) {
+        navigate("/theatre/my", { replace: true });
+      } else {
+        // If a non-admin logs in here, send to public home (or change as you prefer)
+        navigate("/", { replace: true });
+      }
     } catch (err) {
       const msg = err?.response?.data?.message || err?.message || "Login failed";
       setError(msg);
@@ -147,7 +164,7 @@ export default function AdminLogin() {
             </SecondaryBtn>
 
             <p className="text-slate-600 italic text-[13px] text-center">
-              Tip: Use <span className="font-semibold">Email(admin@cinema.com)</span> and {""}
+              Tip: Use <span className="font-semibold">Email(admin@cinema.com)</span> and{" "}
               <span className="font-semibold">password(NewPass123!)</span>.
             </p>
           </div>
