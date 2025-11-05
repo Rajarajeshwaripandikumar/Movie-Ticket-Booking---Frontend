@@ -33,12 +33,28 @@ function decodeJwt(token) {
 }
 
 /* ---------------- normalize role helper ---------------- */
-/** Normalizes role casing/spaces and maps THEATRE_ADMIN → THEATER_ADMIN */
+/** Normalizes role casing/spaces; strips ROLE_; maps theatre spellings/aliases. */
 function normalizeRole(raw) {
   if (raw === undefined || raw === null) return null;
   try {
-    const v = String(raw).trim().toUpperCase().replace(/\s+/g, "_");
-    if (v === "THEATRE_ADMIN") return "THEATER_ADMIN"; // map UK → US spelling
+    // Accept objects like { authority: 'ROLE_ADMIN' } or { name: 'ADMIN' }
+    const val =
+      typeof raw === "object" && raw !== null
+        ? raw.authority ?? raw.value ?? raw.name
+        : raw;
+
+    let v = String(val).trim().toUpperCase().replace(/\s+/g, "_");
+
+    // Strip common prefix
+    if (v.startsWith("ROLE_")) v = v.slice(5);
+
+    // Unify theatre/theater spellings & aliases
+    if (v === "THEATRE_ADMIN" || v === "THEATRE_OWNER" || v === "THEATER_OWNER")
+      v = "THEATER_ADMIN";
+
+    // Allow SUPERADMIN spelling
+    if (v === "SUPERADMIN") v = "SUPER_ADMIN";
+
     return v;
   } catch {
     return null;
@@ -129,12 +145,21 @@ export function AuthProvider({ children }) {
       // decode claims from JWT (if present)
       const claims = decodeJwt(t) || {};
 
-      // Role can come from many places: jwt.role, jwt.roles[0], body.role, body.user.role, or the optional roleHint
-      const rawRoleFromJwt = claims.role || (Array.isArray(claims.roles) ? claims.roles[0] : null);
+      // Role can come from many places
+      const rawRoleFromJwt =
+        claims.role ||
+        (Array.isArray(claims.roles) ? claims.roles[0] : null) ||
+        (Array.isArray(claims.authorities) ? claims.authorities[0] : null);
+
       const rawRoleFromBody =
         res?.data?.role ||
         res?.data?.user?.role ||
-        (Array.isArray(res?.data?.user?.roles) ? res.data.user.roles[0] : null);
+        (Array.isArray(res?.data?.user?.roles)
+          ? res.data.user.roles[0]
+          : null) ||
+        (Array.isArray(res?.data?.user?.authorities)
+          ? res.data.user.authorities[0]
+          : null);
 
       const chosenRawRole = rawRoleFromJwt || rawRoleFromBody || roleHint || "USER";
       const derivedRole = normalizeRole(chosenRawRole);
@@ -185,8 +210,12 @@ export function AuthProvider({ children }) {
       const res = await api.get("/auth/me");
       if (res?.data?.user) {
         const u = res.data.user;
-        const nextRole =
-          normalizeRole(u.role || (Array.isArray(u.roles) ? u.roles[0] : role));
+        const nextRole = normalizeRole(
+          u.role ||
+            (Array.isArray(u.roles) ? u.roles[0] : null) ||
+            (Array.isArray(u.authorities) ? u.authorities[0] : null) ||
+            role
+        );
 
         setUser({
           ...u,
@@ -205,7 +234,8 @@ export function AuthProvider({ children }) {
   /* ---------------- Derived flags ---------------- */
   const isLoggedIn = !!token;
   const isSuperAdmin = role === "SUPER_ADMIN";
-  const isTheatreAdmin = role === "THEATER_ADMIN"; // already normalized in normalizeRole
+  const isAdmin = role === "ADMIN" || isSuperAdmin; // generic Admin flag
+  const isTheatreAdmin = role === "THEATER_ADMIN"; // normalized
   const isUser = role === "USER";
 
   const value = useMemo(
@@ -219,6 +249,7 @@ export function AuthProvider({ children }) {
       refreshProfile,
       isLoggedIn,
       isSuperAdmin,
+      isAdmin,
       isTheatreAdmin,
       isUser,
     }),
@@ -231,6 +262,7 @@ export function AuthProvider({ children }) {
       refreshProfile,
       isLoggedIn,
       isSuperAdmin,
+      isAdmin,
       isTheatreAdmin,
       isUser,
     ]
