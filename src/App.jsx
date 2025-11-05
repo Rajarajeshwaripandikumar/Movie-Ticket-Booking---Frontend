@@ -52,35 +52,38 @@ import useSSE from "./hooks/useSSE";
 
 /* ----------------------------- Helpers & Guards ----------------------------- */
 
-/** NotFound fallback */
 function NotFound() {
   return <p className="p-6 text-center text-gray-500">404 — Page not found</p>;
 }
 
-/** Canonicalize a role string: strip ROLE_, map THEATRE→THEATER, SUPERADMIN→SUPER_ADMIN, accept objects */
+/** Canonicalize a role string (handles PVR Manager and other aliases) */
 function canonRole(r) {
   if (!r && r !== "") return "";
   const raw =
-    typeof r === "object" && r !== null
-      ? r.authority ?? r.value ?? r.name ?? ""
-      : r;
+    typeof r === "object" && r !== null ? r.authority ?? r.value ?? r.name ?? "" : r;
+
   let v = String(raw).toUpperCase().trim().replace(/\s+/g, "_");
   if (v.startsWith("ROLE_")) v = v.slice(5);
-  if (v === "THEATRE_ADMIN") v = "THEATER_ADMIN";
-  if (v === "SUPERADMIN") v = "SUPER_ADMIN";
+
+  // ✅ Canonicalization map
+  const map = {
+    THEATRE_ADMIN: "THEATER_ADMIN", // UK → US
+    THEATRE_MANAGER: "THEATER_ADMIN",
+    THEATER_MANAGER: "THEATER_ADMIN",
+    PVR_MANAGER: "THEATER_ADMIN",
+    PVR_ADMIN: "THEATER_ADMIN",
+    MANAGER: "THEATER_ADMIN",
+    SUPERADMIN: "SUPER_ADMIN",
+  };
+  v = map[v] ?? v;
+
   return v;
 }
 
 /**
  * RequireAuth guard
  * - children: element to render
- * - role: undefined | "USER" | "THEATRE_ADMIN" | "THEATER_ADMIN" | "SUPER_ADMIN" | array of roles
- *
- * Notes:
- * - reads token from useAuth() but also falls back to localStorage token to avoid brief missing-token issues.
- * - normalizes role strings to uppercase and maps THEATRE_ADMIN → THEATER_ADMIN.
- * - preserves return path (state.from) so login can bounce users back.
- * - optional debug bypass via REACT_APP_DEBUG_BYPASS_AUTH=1 (use only for local debugging)
+ * - role: undefined | "USER" | "THEATER_ADMIN" | "SUPER_ADMIN" | array of roles
  */
 function RequireAuth({ children, role }) {
   // Debug bypass (use only locally)
@@ -89,12 +92,12 @@ function RequireAuth({ children, role }) {
   const auth = useAuth() || {};
   const location = useLocation();
 
-  // prefer provider token, fallback to localStorage (helps SSR/rehydration timing)
+  // prefer provider token, fallback to localStorage
   const token =
     auth.token ||
     (typeof window !== "undefined" && window.localStorage?.getItem("token"));
 
-  // future-proof: accept array roles in context/localStorage if you add them later
+  // future-proof: accept roles array
   const userRoleRaw =
     auth.role ??
     (Array.isArray(auth.roles) && auth.roles.length ? auth.roles[0] : undefined) ??
@@ -111,7 +114,7 @@ function RequireAuth({ children, role }) {
   const urlToken = new URLSearchParams(search).get("token");
   if (!token && urlToken) return children;
 
-  // not logged in -> redirect to login; if admin route requested, go to admin login (preserve "from")
+  // not logged in -> redirect to appropriate login
   if (!token) {
     const wantsAdmin = need.some((r) => r.includes("ADMIN"));
     return (
@@ -159,7 +162,6 @@ export default function App() {
       <Navbar />
 
       <main className="relative flex-grow">
-        {/* Backdrop should not block pointer events */}
         <div className="absolute inset-0 -z-10 pointer-events-none">
           <GlobalBackdrop />
         </div>
