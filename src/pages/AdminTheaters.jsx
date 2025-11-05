@@ -291,7 +291,6 @@ export default function AdminTheaters() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
-  $1
   /* Reset Theatre Admin Password */
   async function resetAdminPassword(adminId) {
     const newPassword = window.prompt("Enter a new password for this admin:");
@@ -315,6 +314,14 @@ export default function AdminTheaters() {
       setMsgType("error");
     }
   }
+
+  /* Create Theatre Admin (FIXED: async + proper validation) */
+  async function createTheatreAdmin() {
+    if (!selectedId) {
+      setMsg("⚠️ Select a theatre first.");
+      setMsgType("error");
+      return;
+    }
     if (!adminName || !adminEmail || !adminPassword) {
       setMsg("⚠️ Name, Email, Password required");
       setMsgType("error");
@@ -383,7 +390,7 @@ export default function AdminTheaters() {
                   {theaters.map((t) => (
                     <li key={t._id} className="flex justify-between items-center border rounded-2xl p-3 shadow-sm">
                       <div className="flex gap-3">
-                        <img src={t.imageUrl || DEFAULT_IMG} className="w-14 h-14 rounded-xl object-cover border" />
+                        <img src={t.imageUrl || DEFAULT_IMG} className="w-14 h-14 rounded-xl object-cover border" alt="" />
                         <div>
                           <div className="font-bold">{t.name}</div>
                           <div className="text-sm text-slate-600">{t.city}</div>
@@ -420,7 +427,11 @@ export default function AdminTheaters() {
                           <div className="text-xs text-slate-500">Theatre: {a?.theatreId?.name} {a?.theatreId?.city ? `• ${a.theatreId.city}` : ""}</div>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">\n                      <SecondaryBtn onClick={() => resetAdminPassword(a._id)} className="px-3 py-1 text-xs">\n                        <Lock className="h-3 w-3" /> Reset Password\n                      </SecondaryBtn>\n                    </div>
+                      <div className="flex items-center gap-2">
+                        <SecondaryBtn onClick={() => resetAdminPassword(a._id)} className="px-3 py-1 text-xs">
+                          <Lock className="h-3 w-3" /> Reset Password
+                        </SecondaryBtn>
+                      </div>
                     </li>
                   ))}
                 </ul>
@@ -436,8 +447,8 @@ export default function AdminTheaters() {
               <div>
                 <label className="text-[12px] font-semibold mb-1 block">Poster</label>
                 <div className="flex gap-3 items-center">
-                  <img key={previewKey} src={preview || DEFAULT_IMG} className="w-20 h-20 rounded-xl object-cover border" />
-                  <button onClick={() => fileInputRef.current?.click()} className="px-3 py-1 border rounded-full text-sm">
+                  <img key={previewKey} src={preview || DEFAULT_IMG} className="w-20 h-20 rounded-xl object-cover border" alt="" />
+                  <button type="button" onClick={() => fileInputRef.current?.click()} className="px-3 py-1 border rounded-full text-sm">
                     <ImageIcon className="h-4 w-4" /> Choose
                   </button>
                   <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={onPickFile} />
