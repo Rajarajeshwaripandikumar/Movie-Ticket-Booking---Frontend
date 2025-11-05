@@ -5,7 +5,7 @@ import axios from "axios";
 /*                                 BASE URL                                   */
 /* -------------------------------------------------------------------------- */
 // Correct fallback: 0 (zero) + l (ell)
-const FALLBACK_BASE = "https://movie-ticket-booking-backend-0lm2.onrender.com";
+const FALLBACK_BASE = "https://movie-ticket-booking-backend-o1m2.onrender.com";
 export const BASE_URL = (import.meta.env.VITE_API_BASE || FALLBACK_BASE).replace(/\/+$/, "");
 const API_PREFIX = "/api";
 export const AXIOS_BASE = `${BASE_URL}${API_PREFIX}`.replace(/\/+$/, "");
