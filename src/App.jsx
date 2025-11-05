@@ -1,4 +1,3 @@
-// src/App.jsx
 import React, { useEffect } from "react";
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "./context/AuthContext";
@@ -65,13 +64,9 @@ function canonRole(r) {
   let v = String(raw).toUpperCase().trim().replace(/\s+/g, "_");
   if (v.startsWith("ROLE_")) v = v.slice(5);
 
-  // ✅ Map all common variants to a small set we enforce in routes
   const map = {
-    // Super admin aliases
     ADMIN: "SUPER_ADMIN",
     SUPERADMIN: "SUPER_ADMIN",
-
-    // Theater admin aliases
     THEATRE_ADMIN: "THEATER_ADMIN",
     THEATRE_MANAGER: "THEATER_ADMIN",
     THEATER_MANAGER: "THEATER_ADMIN",
@@ -84,11 +79,7 @@ function canonRole(r) {
   return v;
 }
 
-/**
- * RequireAuth guard
- * - children: element to render
- * - role: undefined | "USER" | "THEATER_ADMIN" | "SUPER_ADMIN" | array of roles
- */
+/** RequireAuth guard */
 function RequireAuth({ children, role }) {
   if (process.env.REACT_APP_DEBUG_BYPASS_AUTH === "1") return children;
 
@@ -129,7 +120,6 @@ function RequireAuth({ children, role }) {
 
   if (need.includes(have)) return children;
 
-  // SUPER_ADMIN can access theater-admin scoped areas
   if (have === "SUPER_ADMIN" && need.includes("THEATER_ADMIN")) return children;
 
   if (have.includes("ADMIN")) return <Navigate to="/admin" replace />;
@@ -144,6 +134,20 @@ function ScrollToTop() {
     window.scrollTo(0, 0);
   }, [pathname, search]);
   return null;
+}
+
+/** Role-aware base routes */
+function AdminIndex() {
+  const auth = useAuth() || {};
+  const r = canonRole(
+    auth.role ?? (Array.isArray(auth.roles) ? auth.roles[0] : undefined)
+  );
+  if (r === "SUPER_ADMIN") return <Navigate to="/admin/theaters" replace />;
+  if (r === "THEATER_ADMIN") return <Navigate to="/theatre/my" replace />;
+  return <Navigate to="/" replace />;
+}
+function TheatreIndex() {
+  return <Navigate to="/theatre/my" replace />;
 }
 
 /* ---------------------------------- App ---------------------------------- */
@@ -236,15 +240,27 @@ export default function App() {
               }
             />
 
-            {/* SUPER_ADMIN protected routes */}
+            {/* ===== ROLE-AWARE ADMIN LANDING ===== */}
             <Route
               path="/admin"
+              element={
+                <RequireAuth role={["SUPER_ADMIN", "THEATER_ADMIN"]}>
+                  <AdminIndex />
+                </RequireAuth>
+              }
+            />
+
+            {/* SUPER_ADMIN actual dashboard (optional) */}
+            <Route
+              path="/admin/dashboard"
               element={
                 <RequireAuth role={["SUPER_ADMIN"]}>
                   <AdminDashboard />
                 </RequireAuth>
               }
             />
+
+            {/* SUPER_ADMIN protected routes */}
             <Route
               path="/admin/profile"
               element={
@@ -310,7 +326,15 @@ export default function App() {
               }
             />
 
-            {/* THEATER_ADMIN scoped routes */}
+            {/* ===== THEATRE ADMIN ===== */}
+            <Route
+              path="/theatre"
+              element={
+                <RequireAuth role={["THEATER_ADMIN"]}>
+                  <TheatreIndex />
+                </RequireAuth>
+              }
+            />
             <Route
               path="/theatre/my"
               element={
