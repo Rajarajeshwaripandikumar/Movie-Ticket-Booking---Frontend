@@ -1,13 +1,10 @@
 // src/pages/AdminPricing.jsx — Walmart Style (clean, rounded, blue accents)
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import api from "../api/api";
 import { useAuth } from "../context/AuthContext";
 import { CalendarClock, CircleDollarSign, RefreshCcw } from "lucide-react";
 
 /* --------------------------- Walmart primitives --------------------------- */
-const BLUE = "#0071DC";
-const BLUE_DARK = "#0654BA";
-
 const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
   <Tag className={`bg-white border border-slate-200 rounded-2xl shadow-sm ${className}`} {...rest}>
     {children}
@@ -26,7 +23,7 @@ function Field({ as = "input", className = "", ...props }) {
 function PrimaryBtn({ children, className = "", ...props }) {
   return (
     <button
-      className={`inline-flex items-center justify-center gap-2 rounded-full px-5 py-2 font-semibold text-white bg-[${BLUE}] hover:bg-[${BLUE_DARK}] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[${BLUE}] disabled:opacity-60 ${className}`}
+      className={`inline-flex items-center justify-center gap-2 rounded-full px-5 py-2 font-semibold text-white bg-[#0071DC] hover:bg-[#0654BA] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071DC] disabled:opacity-60 ${className}`}
       {...props}
     >
       {children}
@@ -37,7 +34,7 @@ function PrimaryBtn({ children, className = "", ...props }) {
 function SecondaryBtn({ children, className = "", ...props }) {
   return (
     <button
-      className={`inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 font-semibold border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[${BLUE}] ${className}`}
+      className={`inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 font-semibold border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071DC] ${className}`}
       {...props}
     >
       {children}
@@ -45,26 +42,123 @@ function SecondaryBtn({ children, className = "", ...props }) {
   );
 }
 
+/* ------------------------------- Small utils ------------------------------ */
+const fmtINR = (n) =>
+  typeof n === "number" && !isNaN(n)
+    ? new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n)
+    : "";
+
+function dateTime(s) {
+  try {
+    return new Date(s).toLocaleString("en-IN");
+  } catch {
+    return s ?? "";
+  }
+}
+
+/* ------------------------------ API helpers ------------------------------- */
+/** Try multiple URL shapes for pricing-by-showtime */
+async function getPricingByShowtime(showtimeId) {
+  const urls = [
+    `/admin/pricing/${showtimeId}`,          // path param style
+    `/admin/pricing?showtimeId=${showtimeId}`// query style
+  ];
+  for (const u of urls) {
+    try {
+      const { data } = await api.get(u);
+      if (data) return data;
+    } catch (e) {
+      if (e?.response?.status !== 404) throw e; // tolerate only 404
+    }
+  }
+  return null;
+}
+
+/** Create default pricing for a given showtime */
+async function createDefaultPricing(showtimeId, seed = {}) {
+  const payload = {
+    showtimeId,
+    basePrice: 200,
+    weekendMultiplier: 1.2,
+    premiumSeatAddon: 80,
+    taxPct: 18,
+    feesPct: 5,
+    currency: "INR",
+    ...seed,
+  };
+  const { data } = await api.post(`/admin/pricing`, payload);
+  return data;
+}
+
+/** Update pricing; if API uses showtimeId as identifier, PATCH it; fallback to POST-on-miss */
+async function patchPricingForShowtime(showtimeId, patchBody) {
+  try {
+    const { data } = await api.patch(`/admin/pricing/${showtimeId}`, patchBody);
+    return data;
+  } catch (e) {
+    if (e?.response?.status !== 404) throw e;
+    // Not found → create instead
+    const created = await createDefaultPricing(showtimeId, patchBody);
+    return created;
+  }
+}
+
 /* -------------------------------- Component -------------------------------- */
 export default function AdminPricing() {
-  const { token, role } = useAuth() || {};
+  const { token } = useAuth() || {};
   const [showtimes, setShowtimes] = useState([]);
   const [selectedId, setSelectedId] = useState("");
+  const [currentPricing, setCurrentPricing] = useState(null);
+
   const [basePrice, setBasePrice] = useState("");
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
   const [msgType, setMsgType] = useState("info");
 
+  const selectedShow = useMemo(
+    () => showtimes.find((s) => s._id === selectedId),
+    [showtimes, selectedId]
+  );
+
   useEffect(() => {
-    if (token && role?.toLowerCase() === "admin") loadShowtimes();
+    // Route guards already enforce role; just ensure we have a token
+    if (token) loadShowtimes();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, role]);
+  }, [token]);
+
+  useEffect(() => {
+    if (!selectedId) {
+      setCurrentPricing(null);
+      return;
+    }
+    // Load pricing for selected showtime; create defaults if absent
+    (async () => {
+      try {
+        setMsg("");
+        let pricing = await getPricingByShowtime(selectedId);
+        if (!pricing) {
+          pricing = await createDefaultPricing(selectedId);
+        }
+        setCurrentPricing(pricing);
+        // Prefill editor with current basePrice
+        if (typeof pricing?.basePrice === "number") {
+          setBasePrice(String(pricing.basePrice));
+        }
+      } catch (err) {
+        console.error("[AdminPricing] load pricing failed:", err);
+        setMsgType("error");
+        setMsg(err?.response?.data?.message || "Failed to load pricing for this showtime.");
+      }
+    })();
+  }, [selectedId]);
 
   async function loadShowtimes() {
     try {
       const { data } = await api.get("/admin/showtimes");
-      setShowtimes(data || []);
-      if (data?.length) setSelectedId(data[0]._id);
+      const list = Array.isArray(data) ? data : [];
+      setShowtimes(list);
+      // set default selection
+      if (list.length) setSelectedId(list[0]._id);
       setMsg("");
     } catch (err) {
       console.error("loadShowtimes error:", err);
@@ -80,22 +174,27 @@ export default function AdminPricing() {
       setMsg("Please select a showtime first.");
       return;
     }
+    const val = Number(basePrice);
+    if (Number.isNaN(val) || val < 0) {
+      setMsgType("error");
+      setMsg("Enter a valid non-negative price.");
+      return;
+    }
+
     setLoading(true);
     setMsg("");
 
     try {
-      await api.patch(`/admin/pricing/${selectedId}`, {
-        basePrice: Number(basePrice),
-      });
-
+      const saved = await patchPricingForShowtime(selectedId, { basePrice: val });
+      setCurrentPricing(saved);
       setMsgType("success");
-      setMsg("Pricing updated successfully!");
-      setBasePrice("");
+      setMsg("Pricing saved.");
+      // reflect new price in dropdown label if your backend hydrates basePrice on showtime
       await loadShowtimes();
     } catch (err) {
       console.error("updatePricing error:", err);
       setMsgType("error");
-      setMsg(err?.response?.data?.message || "Failed to update pricing. Check console for details.");
+      setMsg(err?.response?.data?.message || "Failed to update pricing.");
     } finally {
       setLoading(false);
     }
@@ -108,7 +207,7 @@ export default function AdminPricing() {
         <Card className="p-5 md:p-6">
           <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">Update Pricing</h1>
           <p className="text-sm text-slate-600 mt-1">
-            Adjust base ticket price for an existing showtime.
+            Adjust the base ticket price for a specific showtime. If pricing doesn’t exist yet, we’ll create it automatically.
           </p>
         </Card>
 
@@ -130,8 +229,8 @@ export default function AdminPricing() {
                   <option value="">-- Select showtime --</option>
                   {showtimes.map((s) => (
                     <option key={s._id} value={s._id}>
-                      {(s.movie?.title || "Unknown Movie")} — {s.city} —{" "}
-                      {new Date(s.startTime).toLocaleString("en-IN")} — ₹{s.basePrice}
+                      {(s.movie?.title || "Unknown Movie")} — {s.city || s.theatre?.city || "—"} —{" "}
+                      {dateTime(s.startTime)} — {typeof s.basePrice === "number" ? fmtINR(s.basePrice) : ""}
                     </option>
                   ))}
                 </Field>
@@ -139,6 +238,14 @@ export default function AdminPricing() {
                   <RefreshCcw className="h-4 w-4" /> Refresh
                 </SecondaryBtn>
               </div>
+              {selectedShow && (
+                <p className="mt-2 text-xs text-slate-600 flex items-center gap-2">
+                  <CalendarClock className="h-4 w-4" />
+                  <span>
+                    {selectedShow.movie?.title || "Movie"} • {dateTime(selectedShow.startTime)}
+                  </span>
+                </p>
+              )}
             </div>
 
             {/* Base price input */}
@@ -160,6 +267,11 @@ export default function AdminPricing() {
                   step="1"
                 />
               </div>
+              {!!currentPricing && (
+                <p className="mt-2 text-xs text-slate-600">
+                  Current saved price: {fmtINR(currentPricing.basePrice)}
+                </p>
+              )}
             </div>
 
             {/* Message banner */}
@@ -179,15 +291,15 @@ export default function AdminPricing() {
 
             {/* Buttons */}
             <div className="flex gap-2">
-              <PrimaryBtn type="submit" disabled={loading} className="flex-1">
-                {loading ? "Updating…" : "Update Pricing"}
+              <PrimaryBtn type="submit" disabled={loading || !selectedId} className="flex-1">
+                {loading ? "Updating…" : "Save Pricing"}
               </PrimaryBtn>
               <SecondaryBtn
                 type="button"
                 onClick={() => {
-                  setBasePrice("");
-                  setSelectedId(showtimes?.[0]?._id || "");
+                  setBasePrice(currentPricing?.basePrice != null ? String(currentPricing.basePrice) : "");
                   setMsg("");
+                  setMsgType("info");
                 }}
               >
                 Reset
@@ -195,9 +307,6 @@ export default function AdminPricing() {
             </div>
           </form>
         </Card>
-
-        {/* Inline tip */}
-        
       </div>
     </main>
   );
