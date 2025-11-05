@@ -4,18 +4,27 @@ import axios from "axios";
 /* -------------------------------------------------------------------------- */
 /*                                 BASE URL                                   */
 /* -------------------------------------------------------------------------- */
-// Correct fallback: 0 (zero) + l (ell)
-const FALLBACK_BASE = "https://movie-ticket-booking-backend-o1m2.onrender.com";
-export const BASE_URL = (import.meta.env.VITE_API_BASE || FALLBACK_BASE).replace(/\/+$/, "");
-const API_PREFIX = "/api";
-export const AXIOS_BASE = `${BASE_URL}${API_PREFIX}`.replace(/\/+$/, "");
+// Your backend is o1m2 (letter o + one)
+const RAW_BASE =
+  (import.meta.env.VITE_API_BASE && import.meta.env.VITE_API_BASE.trim()) ||
+  "https://movie-ticket-booking-backend-o1m2.onrender.com";
 
-// Loud warning if someone accidentally uses the wrong service (o1m2)
-if (BASE_URL.includes("-o1m2.")) {
+// Just lowercase + trim + strip trailing slashes (no automatic replacement)
+function normalizeHost(h) {
+  if (!h) return "";
+  return h.toLowerCase().trim().replace(/\/+$/, "");
+}
+
+export const BASE_URL = normalizeHost(RAW_BASE);
+const API_PREFIX = "/api";
+export const AXIOS_BASE = `${BASE_URL}${API_PREFIX}`;
+
+// Optional: warn if someone accidentally points to 0lm2
+if (RAW_BASE.toLowerCase().includes("-0lm2.")) {
   console.warn(
-    "[api] WARNING: BASE_URL seems to be 'o1m2' (letter-o + one). " +
-      "If your backend is '0lm2' (zero + ell), update VITE_API_BASE immediately:",
-    BASE_URL
+    "[api] WARNING: VITE_API_BASE looks like '0lm2' (zero + ell). " +
+      "Your deployment is 'o1m2' (letter-o + one):",
+    RAW_BASE
   );
 }
 
@@ -30,10 +39,8 @@ function canonRole(r) {
   if (v.startsWith("ROLE_")) v = v.slice(5);
 
   const map = {
-    // super admin aliases
     ADMIN: "SUPER_ADMIN",
     SUPERADMIN: "SUPER_ADMIN",
-    // theater admin aliases
     THEATRE_ADMIN: "THEATER_ADMIN",
     THEATRE_MANAGER: "THEATER_ADMIN",
     THEATER_MANAGER: "THEATER_ADMIN",
@@ -45,7 +52,7 @@ function canonRole(r) {
 }
 
 /* -------------------------------------------------------------------------- */
-/*                      Token retrieval + small cookie helper                 */
+/*                      Token retrieval + cookie helper                       */
 /* -------------------------------------------------------------------------- */
 function readCookie(name) {
   try {
@@ -62,7 +69,6 @@ function readCookie(name) {
 
 function getAuthFromStorage() {
   try {
-    // 1) structured auth object
     const raw = localStorage.getItem("auth") || sessionStorage.getItem("auth");
     if (raw) {
       try {
@@ -79,21 +85,14 @@ function getAuthFromStorage() {
         if (token) return { token, role };
       } catch {}
     }
-
-    // 2) flat keys
-    const flatKeys = ["token", "jwt", "accessToken", "authToken"];
-    for (const k of flatKeys) {
+    for (const k of ["token", "jwt", "accessToken", "authToken"]) {
       const v = localStorage.getItem(k) || sessionStorage.getItem(k);
       if (v) return { token: v, role: undefined };
     }
-
-    // 3) cookies
     const cookieToken =
       readCookie("token") || readCookie("jwt") || readCookie("accessToken");
     if (cookieToken) return { token: cookieToken, role: undefined };
-  } catch {
-    // ignore
-  }
+  } catch {}
   return { token: null, role: undefined };
 }
 
@@ -101,20 +100,16 @@ function getAuthFromStorage() {
 /*                              Axios instance                                */
 /* -------------------------------------------------------------------------- */
 const api = axios.create({
-  baseURL: AXIOS_BASE, // every request now goes to /api/*
+  baseURL: AXIOS_BASE,
   timeout: 60000,
   withCredentials: false,
   headers: { Accept: "application/json" },
 });
 
-/* -------------------------------------------------------------------------- */
-/*            Ensure axios doesn't override FormData content-type             */
-/* -------------------------------------------------------------------------- */
+// keep FormData content-type dynamic
 if (api.defaults && api.defaults.headers) {
-  ["post", "put", "patch"].forEach((method) => {
-    if (api.defaults.headers[method]) {
-      delete api.defaults.headers[method]["Content-Type"];
-    }
+  ["post", "put", "patch"].forEach((m) => {
+    if (api.defaults.headers[m]) delete api.defaults.headers[m]["Content-Type"];
   });
 }
 
@@ -135,26 +130,18 @@ api.interceptors.request.use((config) => {
       if (normalizedRole && !config.headers["X-Role"]) {
         config.headers["X-Role"] = normalizedRole;
       }
-
       if (API_DEBUG) {
-        console.debug(
-          "[api] attaching auth header, tokenPresent=true, headerPreviewLen=",
-          (token || "").length,
-          "role=",
-          normalizedRole
-        );
+        console.debug("[api] auth attached; role=", normalizedRole);
       }
     } else if (API_DEBUG) {
-      console.debug("[api] no token found, Authorization header not attached");
+      console.debug("[api] no token found");
     }
-  } catch {
-    // ignore
-  }
+  } catch {}
   return config;
 });
 
 /* -------------------------------------------------------------------------- */
-/*                         Response interceptor (401 handler)                 */
+/*                         Response interceptor (401)                         */
 /* -------------------------------------------------------------------------- */
 api.interceptors.response.use(
   (res) => res,
@@ -167,10 +154,9 @@ api.interceptors.response.use(
 );
 
 /* -------------------------------------------------------------------------- */
-/*                          Helper / programmatic setter                      */
+/*                     Programmatic token setter (optional)                   */
 /* -------------------------------------------------------------------------- */
 let _manualToken = null;
-
 api.setAuthToken = (token) => {
   _manualToken = token;
   if (token) {
@@ -180,12 +166,10 @@ api.setAuthToken = (token) => {
     delete api.defaults.headers.common.Authorization;
   }
 };
-
 api.interceptors.request.use((config) => {
-  if (_manualToken) {
+  if (_manualToken && !config.headers?.Authorization) {
     config.headers = config.headers || {};
-    if (!config.headers.Authorization)
-      config.headers.Authorization = `Bearer ${_manualToken}`;
+    config.headers.Authorization = `Bearer ${_manualToken}`;
   }
   return config;
 });
@@ -214,7 +198,7 @@ api.safeDelete = async (url, cfg) => {
 };
 
 /* -------------------------------------------------------------------------- */
-/*                          Error extraction helper                           */
+/*                              Helper utils                                  */
 /* -------------------------------------------------------------------------- */
 export function extractApiError(err) {
   const server = err?.response?.data;
@@ -225,9 +209,6 @@ export function extractApiError(err) {
   );
 }
 
-/* -------------------------------------------------------------------------- */
-/*                             Helper utilities                               */
-/* -------------------------------------------------------------------------- */
 export function apiUrl(path = "") {
   const clean = path.startsWith("/") ? path : `/${path}`;
   return `${BASE_URL}${API_PREFIX}${clean}`;
@@ -242,7 +223,5 @@ export function makeAbsoluteImageUrl(url) {
   return url;
 }
 
-/* -------------------------------------------------------------------------- */
-/*                                 Exports                                    */
 /* -------------------------------------------------------------------------- */
 export default api;
