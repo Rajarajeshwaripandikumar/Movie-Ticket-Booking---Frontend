@@ -40,7 +40,7 @@
   },
 
   "engines": {
-    "node": "20.x"
+    "node": "20.x",
     /* If you want to keep npm pinned, use a range instead:
        "npm": ">=9 <11"
     */
