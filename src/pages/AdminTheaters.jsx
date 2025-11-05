@@ -18,14 +18,24 @@ import {
 /* -------------------------------------------------------------------------- */
 /* Constants                                                                  */
 /* -------------------------------------------------------------------------- */
+// ✅ Default fallback now points to **0lm2** (zero + ell), not o1m2
 const API_BASE = (
   api?.defaults?.baseURL ||
   import.meta.env.VITE_API_BASE ||
-  "https://movie-ticket-booking-backend-o1m2.onrender.com/api"
-).replace(/\/+$/, "");
+  "https://movie-ticket-booking-backend-0lm2.onrender.com/api"
+).replace(/\/+$", "");
 
 const FILES_BASE = API_BASE.replace(/\/api$/, "");
 const UPLOAD_WITH_CREDENTIALS = false;
+
+/* Warn loudly if someone accidentally pointed to the o1m2 host */
+if (typeof window !== "undefined" && /-o1m2\./i.test(API_BASE)) {
+  // eslint-disable-next-line no-console
+  console.warn(
+    "[api] WARNING: BASE_URL seems to be 'o1m2' (letter-o + one). If your backend is '0lm2' (zero + ell), update VITE_API_BASE immediately:",
+    API_BASE
+  );
+}
 
 /* -------------------------------------------------------------------------- */
 /* Fallback image                                                             */
@@ -143,6 +153,7 @@ export default function AdminTheaters() {
   async function loadTheaters() {
     try {
       const headers = authHeaders();
+      // keep spelling consistent with your backend. If your server uses /theatres, change below.
       const path = token && role?.toLowerCase() === "admin" ? "/theaters/admin/list" : "/theaters";
       const res = await api.get(path, { headers, withCredentials: UPLOAD_WITH_CREDENTIALS });
       const body = res?.data ?? res;
@@ -165,6 +176,16 @@ export default function AdminTheaters() {
     loadTheaters();
   }, []);
 
+  // Show a UI hint if BASE_URL looks wrong
+  useEffect(() => {
+    if (/-o1m2\./i.test(API_BASE)) {
+      setMsg(
+        "⚠️ Your VITE_API_BASE looks like 'o1m2'. If your backend is '0lm2', fix the env and rebuild."
+      );
+      setMsgType("error");
+    }
+  }, []);
+
   /* ------------------- File Picker & Preview ------------------- */
   const onPickFile = (e) => {
     const file = e.target.files?.[0];
@@ -183,14 +204,6 @@ export default function AdminTheaters() {
     setSelectedFile(file);
     setMsg("Image selected (will upload on save).");
     setMsgType("info");
-
-    // cleanup after some time (we keep preview until cleared)
-    setTimeout(() => {
-      try {
-        // don't revoke right away so preview remains until reset
-        // URL.revokeObjectURL(localUrl);
-      } catch {}
-    }, 10000);
   };
 
   /* ------------------- CRUD ------------------- */
@@ -226,7 +239,8 @@ export default function AdminTheaters() {
       resetForm();
     } catch (err) {
       console.error("Create failed:", err);
-      setMsg("❌ Create failed: " + (err?.response?.data?.message || err.message));
+      const msg = err?.response?.data?.message || err?.response?.data?.error || err.message;
+      setMsg("❌ Create failed: " + msg);
       setMsgType("error");
     } finally {
       submittingRef.current = false;
@@ -261,7 +275,8 @@ export default function AdminTheaters() {
       resetForm();
     } catch (err) {
       console.error("Update failed:", err);
-      setMsg("❌ Update failed: " + (err?.response?.data?.message || err.message));
+      const msg = err?.response?.data?.message || err?.response?.data?.error || err.message;
+      setMsg("❌ Update failed: " + msg);
       setMsgType("error");
     } finally {
       setLoading(false);
@@ -276,7 +291,8 @@ export default function AdminTheaters() {
       setMsg("🗑️ Deleted");
       setMsgType("info");
     } catch (err) {
-      setMsg("❌ Delete failed: " + (err?.response?.data?.message || err.message));
+      const msg = err?.response?.data?.message || err?.response?.data?.error || err.message;
+      setMsg("❌ Delete failed: " + msg);
       setMsgType("error");
     }
   }
