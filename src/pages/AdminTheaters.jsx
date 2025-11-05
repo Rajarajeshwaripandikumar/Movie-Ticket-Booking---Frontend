@@ -116,6 +116,7 @@ export default function AdminTheaters() {
 
   const [theaters, setTheaters] = useState([]);
   const [admins, setAdmins] = useState([]);
+  const [adminsEnabled, setAdminsEnabled] = useState(true);
 
   const [selectedId, setSelectedId] = useState(null);
   const [name, setName] = useState("");
@@ -152,15 +153,47 @@ export default function AdminTheaters() {
     }
   }
 
-  /* Load admins */
+  /* Load admins (super-only; fallback route + graceful hide) */
   async function loadAdmins() {
     try {
+      // primary path
       const res = await api.get("/superadmin/theatre-admins", { headers: authHeaders });
       const arr = res?.data?.data || [];
       setAdmins(arr);
-    } catch (err) {
-      console.error(err);
-      // silent; it's an auxiliary list
+      setAdminsEnabled(true);
+    } catch (err1) {
+      const status1 = err1?.response?.status;
+
+      if (status1 === 404) {
+        // try alternate route naming
+        try {
+          const res2 = await api.get("/super/theatre-admins", { headers: authHeaders });
+          const arr2 = res2?.data?.data || [];
+          setAdmins(arr2);
+          setAdminsEnabled(true);
+          return;
+        } catch (err2) {
+          const status2 = err2?.response?.status;
+          if ([401, 403].includes(status2)) {
+            setAdmins([]);
+            setAdminsEnabled(false);
+            return;
+          }
+          setAdmins([]);
+          setAdminsEnabled(false);
+          return;
+        }
+      }
+
+      if ([401, 403].includes(status1)) {
+        setAdmins([]);
+        setAdminsEnabled(false);
+        return;
+      }
+
+      // unknown server error — hide panel to avoid breaking UI
+      setAdmins([]);
+      setAdminsEnabled(false);
     }
   }
 
@@ -233,7 +266,7 @@ export default function AdminTheaters() {
         if (address) body.append("address", address);
         body.append("amenities", JSON.stringify(amenitiesList));
       } else {
-        body = { name, city, address, amenities: amenitiesList }; // omit imageUrl to avoid backend validation issues
+        body = { name, city, address, amenities: amenitiesList };
       }
       await api.put(`/theaters/admin/${selectedId}`, body, { headers: authHeaders });
       resetForm();
@@ -315,7 +348,7 @@ export default function AdminTheaters() {
     }
   }
 
-  /* Create Theatre Admin (FIXED: async + proper validation) */
+  /* Create Theatre Admin (async + validation) */
   async function createTheatreAdmin() {
     if (!selectedId) {
       setMsg("⚠️ Select a theatre first.");
@@ -383,7 +416,9 @@ export default function AdminTheaters() {
           {/* List */}
           <div className="lg:col-span-2 space-y-6">
             <Card className="p-5">
-              <h2 className="font-extrabold mb-4 flex items-center gap-2 border-b pb-2"><ImageIcon className="h-5 w-5" /> Theaters</h2>
+              <h2 className="font-extrabold mb-4 flex items-center gap-2 border-b pb-2">
+                <ImageIcon className="h-5 w-5" /> Theaters
+              </h2>
 
               {theaters.length === 0 ? <p>No theaters yet.</p> : (
                 <ul className="space-y-3 max-h-[60vh] overflow-y-auto">
@@ -408,41 +443,51 @@ export default function AdminTheaters() {
               )}
             </Card>
 
-            {/* Admins list */}
-            <Card className="p-5">
-              <h2 className="font-extrabold mb-4 flex items-center gap-2 border-b pb-2"><UserRound className="h-5 w-5" /> Theatre Admins</h2>
-              {admins.length === 0 ? (
-                <p>No theatre admins yet.</p>
-              ) : (
-                <ul className="space-y-3 max-h-[40vh] overflow-y-auto">
-                  {admins.map((a) => (
-                    <li key={a._id} className="flex justify-between items-center border rounded-2xl p-3 shadow-sm">
-                      <div className="flex items-center gap-3">
-                        <div className="h-10 w-10 rounded-full bg-slate-200 grid place-items-center font-bold text-slate-600">
-                          {String(a?.name || a?.email || "A").slice(0,1).toUpperCase()}
+            {/* Admins list (only show if super route works) */}
+            {adminsEnabled && (
+              <Card className="p-5">
+                <h2 className="font-extrabold mb-4 flex items-center gap-2 border-b pb-2">
+                  <UserRound className="h-5 w-5" /> Theatre Admins
+                </h2>
+                {admins.length === 0 ? (
+                  <p>No theatre admins yet.</p>
+                ) : (
+                  <ul className="space-y-3 max-h-[40vh] overflow-y-auto">
+                    {admins.map((a) => (
+                      <li key={a._id} className="flex justify-between items-center border rounded-2xl p-3 shadow-sm">
+                        <div className="flex items-center gap-3">
+                          <div className="h-10 w-10 rounded-full bg-slate-200 grid place-items-center font-bold text-slate-600">
+                            {String(a?.name || a?.email || "A").slice(0,1).toUpperCase()}
+                          </div>
+                          <div>
+                            <div className="font-bold">{a.name}</div>
+                            <div className="text-sm text-slate-600 flex items-center gap-2">
+                              <Mail className="h-3 w-3" /> {a.email}
+                            </div>
+                            <div className="text-xs text-slate-500">
+                              Theatre: {a?.theatreId?.name} {a?.theatreId?.city ? `• ${a.theatreId.city}` : ""}
+                            </div>
+                          </div>
                         </div>
-                        <div>
-                          <div className="font-bold">{a.name}</div>
-                          <div className="text-sm text-slate-600 flex items-center gap-2"><Mail className="h-3 w-3" /> {a.email}</div>
-                          <div className="text-xs text-slate-500">Theatre: {a?.theatreId?.name} {a?.theatreId?.city ? `• ${a.theatreId.city}` : ""}</div>
+                        <div className="flex items-center gap-2">
+                          <SecondaryBtn onClick={() => resetAdminPassword(a._id)} className="px-3 py-1 text-xs">
+                            <Lock className="h-3 w-3" /> Reset Password
+                          </SecondaryBtn>
                         </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <SecondaryBtn onClick={() => resetAdminPassword(a._id)} className="px-3 py-1 text-xs">
-                          <Lock className="h-3 w-3" /> Reset Password
-                        </SecondaryBtn>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </Card>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </Card>
+            )}
           </div>
 
           {/* Add/Edit Form */}
           <div>
             <Card className="p-5 sticky top-6 space-y-4">
-              <h2 className="font-extrabold text-lg flex items-center gap-2 border-b pb-2"><PlusCircle className="h-5 w-5" /> Add / Edit</h2>
+              <h2 className="font-extrabold text-lg flex items-center gap-2 border-b pb-2">
+                <PlusCircle className="h-5 w-5" /> Add / Edit
+              </h2>
 
               <div>
                 <label className="text-[12px] font-semibold mb-1 block">Poster</label>
@@ -498,22 +543,24 @@ export default function AdminTheaters() {
           </div>
         </div>
 
-        {/* Create Theatre Admin */}
-        <Card className="p-5 mt-6">
-          <h2 className="font-extrabold text-lg mb-4 flex items-center gap-2 border-b pb-2">
-            <UserRound className="h-5 w-5" /> Create Theatre Admin
-          </h2>
+        {/* Create Theatre Admin (show only if super route works) */}
+        {adminsEnabled && (
+          <Card className="p-5 mt-6">
+            <h2 className="font-extrabold text-lg mb-4 flex items-center gap-2 border-b pb-2">
+              <UserRound className="h-5 w-5" /> Create Theatre Admin
+            </h2>
 
-          <div className="grid md:grid-cols-3 gap-4">
-            <Field label="Full Name" value={adminName} onChange={(e) => setAdminName(e.target.value)} icon={UserRound} />
-            <Field label="Email" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} icon={Mail} />
-            <Field label="Password" type="password" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} icon={Lock} />
-          </div>
+            <div className="grid md:grid-cols-3 gap-4">
+              <Field label="Full Name" value={adminName} onChange={(e) => setAdminName(e.target.value)} icon={UserRound} />
+              <Field label="Email" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} icon={Mail} />
+              <Field label="Password" type="password" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} icon={Lock} />
+            </div>
 
-          <PrimaryBtn className="mt-4" onClick={createTheatreAdmin} disabled={!selectedId}>
-            Create Theatre Admin (Select a theatre first)
-          </PrimaryBtn>
-        </Card>
+            <PrimaryBtn className="mt-4" onClick={createTheatreAdmin} disabled={!selectedId}>
+              Create Theatre Admin (Select a theatre first)
+            </PrimaryBtn>
+          </Card>
+        )}
       </div>
     </main>
   );
