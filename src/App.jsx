@@ -57,11 +57,18 @@ function NotFound() {
   return <p className="p-6 text-center text-gray-500">404 — Page not found</p>;
 }
 
-/** Canonicalize a role string and map THEATRE → THEATER */
+/** Canonicalize a role string: strip ROLE_, map THEATRE→THEATER, SUPERADMIN→SUPER_ADMIN, accept objects */
 function canonRole(r) {
   if (!r && r !== "") return "";
-  const v = String(r).toUpperCase().trim().replace(/\s+/g, "_");
-  return v === "THEATRE_ADMIN" ? "THEATER_ADMIN" : v;
+  const raw =
+    typeof r === "object" && r !== null
+      ? r.authority ?? r.value ?? r.name ?? ""
+      : r;
+  let v = String(raw).toUpperCase().trim().replace(/\s+/g, "_");
+  if (v.startsWith("ROLE_")) v = v.slice(5);
+  if (v === "THEATRE_ADMIN") v = "THEATER_ADMIN";
+  if (v === "SUPERADMIN") v = "SUPER_ADMIN";
+  return v;
 }
 
 /**
@@ -72,6 +79,7 @@ function canonRole(r) {
  * Notes:
  * - reads token from useAuth() but also falls back to localStorage token to avoid brief missing-token issues.
  * - normalizes role strings to uppercase and maps THEATRE_ADMIN → THEATER_ADMIN.
+ * - preserves return path (state.from) so login can bounce users back.
  * - optional debug bypass via REACT_APP_DEBUG_BYPASS_AUTH=1 (use only for local debugging)
  */
 function RequireAuth({ children, role }) {
@@ -79,27 +87,40 @@ function RequireAuth({ children, role }) {
   if (process.env.REACT_APP_DEBUG_BYPASS_AUTH === "1") return children;
 
   const auth = useAuth() || {};
+  const location = useLocation();
+
   // prefer provider token, fallback to localStorage (helps SSR/rehydration timing)
   const token =
     auth.token ||
     (typeof window !== "undefined" && window.localStorage?.getItem("token"));
+
+  // future-proof: accept array roles in context/localStorage if you add them later
   const userRoleRaw =
-    auth.role ||
-    (typeof window !== "undefined" && window.localStorage?.getItem("role"));
+    auth.role ??
+    (Array.isArray(auth.roles) && auth.roles.length ? auth.roles[0] : undefined) ??
+    (typeof window !== "undefined" &&
+      (JSON.parse(localStorage.getItem("roles") || "[]")[0] ||
+        localStorage.getItem("role")));
 
   const needList = Array.isArray(role) ? role : role ? [role] : [];
   const need = needList.map(canonRole);
   const have = canonRole(userRoleRaw);
 
   // allow token via query param for special endpoints (streams / email links)
-  const { search } = useLocation();
+  const { search } = location;
   const urlToken = new URLSearchParams(search).get("token");
   if (!token && urlToken) return children;
 
-  // not logged in -> redirect to login; if admin route requested, go to admin login
+  // not logged in -> redirect to login; if admin route requested, go to admin login (preserve "from")
   if (!token) {
     const wantsAdmin = need.some((r) => r.includes("ADMIN"));
-    return <Navigate to={wantsAdmin ? "/admin/login" : "/login"} replace />;
+    return (
+      <Navigate
+        to={wantsAdmin ? "/admin/login" : "/login"}
+        replace
+        state={{ from: location }}
+      />
+    );
   }
 
   // no specific role required -> allow
@@ -108,8 +129,8 @@ function RequireAuth({ children, role }) {
   // exact role allowed (after canonicalization)
   if (need.includes(have)) return children;
 
-  // super admin access to theatre/theater admin? (enable if you want)
-  // if (have === "SUPER_ADMIN" && need.includes("THEATER_ADMIN")) return children;
+  // SUPER_ADMIN may access theatre admin areas
+  if (have === "SUPER_ADMIN" && need.includes("THEATER_ADMIN")) return children;
 
   // if user has any admin but not matching required -> send to admin index
   if (have.includes("ADMIN")) return <Navigate to="/admin" replace />;
