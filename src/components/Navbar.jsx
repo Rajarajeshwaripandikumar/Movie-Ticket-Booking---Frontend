@@ -112,6 +112,39 @@ export default function Navbar() {
     );
   }
 
+  // extract raw JWT string from various shapes (string/object/json-string)
+  function extractJwt(value) {
+    try {
+      if (!value) return "";
+      if (typeof value === "string") {
+        const s = value.trim();
+        if (s.startsWith("{")) return extractJwt(JSON.parse(s));
+        if (/^Bearer\s+/i.test(s)) return s.replace(/^Bearer\s+/i, "");
+        return s;
+      }
+      if (typeof value === "object") {
+        return (
+          value.token ||
+          value.jwt ||
+          value.access_token ||
+          (typeof value.Authorization === "string" && value.Authorization.replace(/^Bearer\s+/i, "")) ||
+          ""
+        );
+      }
+      return "";
+    } catch {
+      return "";
+    }
+  }
+
+  const authHeader = (() => {
+    const jwt =
+      extractJwt(token) ||
+      extractJwt(localStorage.getItem("token")) ||
+      extractJwt(localStorage.getItem("auth"));
+    return jwt ? `Bearer ${jwt}` : undefined;
+  })();
+
   // ---------- navigation helpers ----------
   function resolveNotificationPath(n) {
     const t = String(n?.type || "").toUpperCase();
@@ -128,9 +161,9 @@ export default function Navbar() {
   }
 
   async function markOneRead(id) {
-    if (!token || !id) return;
+    if (!authHeader || !id) return;
     try {
-      await api.patch(`/notifications/${id}/read`, {}, { headers: { Authorization: `Bearer ${token}` } });
+      await api.patch(`/notifications/${id}/read`, {}, { headers: { Authorization: authHeader } });
       setNotifications((prev) =>
         prev.map((n) => (String(n._id) === String(id) ? { ...n, readAt: n.readAt || new Date().toISOString() } : n))
       );
@@ -139,12 +172,12 @@ export default function Navbar() {
 
   // ---------- initial load ----------
   useEffect(() => {
-    if (!token) {
+    if (!authHeader) {
       setNotifications([]);
       return;
     }
     api
-      .get("/notifications/mine?limit=40", { headers: { Authorization: `Bearer ${token}` } })
+      .get("/notifications/mine?limit=40", { headers: { Authorization: authHeader } })
       .then((res) => {
         const raw = res?.data;
         const list = Array.isArray(raw) ? raw : Array.isArray(raw?.data) ? raw.data : [];
@@ -152,13 +185,25 @@ export default function Navbar() {
         setNotifications((prev) => mergeNotifications(prev, normalized).slice(0, 50));
       })
       .catch(() => setNotifications([]));
-  }, [token]);
+  }, [authHeader]);
 
   // ---------- SSE live updates ----------
   const esRef = useRef(null);
   useEffect(() => {
-    if (!token) return;
-    const url = `${API_BASE}/notifications/stream?token=${encodeURIComponent(token)}&seed=1`;
+    // Build a clean JWT for SSE query param (native EventSource can't set headers)
+    const jwt =
+      extractJwt(token) ||
+      extractJwt(localStorage.getItem("token")) ||
+      extractJwt(localStorage.getItem("auth"));
+
+    if (!jwt || jwt === "[object Object]") {
+      // silently skip if we don't have a usable token
+      return;
+    }
+
+    const url = `${API_BASE}/notifications/stream?token=${encodeURIComponent(jwt)}&seed=1`;
+    // console.log("[SSE] Connecting to:", url);
+
     let closed = false;
     let backoff = 1000;
 
@@ -185,10 +230,11 @@ export default function Navbar() {
             setNotifications((prev) => mergeNotifications(prev, [item]).slice(0, 50));
           }
         } catch {
+          // If server sent HTML (401 page), don't crash on JSON.parse
           const item = {
             clientKey: newId(),
             title: "Notification",
-            message: ev.data,
+            message: String(ev.data).slice(0, 140),
             createdAt: new Date().toISOString(),
           };
           setNotifications((prev) => mergeNotifications(prev, [item]).slice(0, 50));
@@ -196,7 +242,9 @@ export default function Navbar() {
       };
 
       es.addEventListener("notification", handleNotification);
+      es.addEventListener("message", handleNotification); // fallback if server emits default "message"
       es.addEventListener("connected", () => { backoff = 1000; });
+
       es.onerror = () => {
         es.close();
         if (closed) return;
@@ -296,7 +344,8 @@ export default function Navbar() {
                             className="text-[11px] px-2 py-1 rounded-full border border-slate-300 bg-white hover:bg-slate-50 font-semibold"
                             onClick={async () => {
                               try {
-                                await api.post("/notifications/read-all", {}, { headers: { Authorization: `Bearer ${token}` } });
+                                if (!authHeader) return;
+                                await api.post("/notifications/read-all", {}, { headers: { Authorization: authHeader } });
                                 setNotifications((prev) =>
                                   prev.map((n) => ({ ...n, readAt: n.readAt || new Date().toISOString() }))
                                 );
