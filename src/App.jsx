@@ -6,7 +6,7 @@ import { useAuth } from "./context/AuthContext";
 // Layout
 import Navbar from "./components/Navbar";
 import Footer from "./components/Footer";
-import GlobalBackdrop from "./components/GlobalBackdrop"; // background component
+import GlobalBackdrop from "./components/GlobalBackdrop";
 
 // Public pages
 import Home from "./pages/Home";
@@ -40,7 +40,7 @@ import AdminProfile from "./pages/AdminProfile";
 import AdminAnalytics from "./pages/AdminAnalytics";
 import AdminBookingDetails from "./pages/AdminBookingDetails";
 
-// Theatre-admin pages (THEATRE_ADMIN area)
+// Theatre-admin pages (THEATER_ADMIN area)
 import TheatreDashboard from "./pages/theatre/TheatreDashboard";
 import TheatreScreens from "./pages/theatre/TheatreScreens";
 import TheatreShowtimes from "./pages/theatre/TheatreShowtimes";
@@ -56,7 +56,7 @@ function NotFound() {
   return <p className="p-6 text-center text-gray-500">404 — Page not found</p>;
 }
 
-/** Canonicalize a role string (handles PVR Manager and other aliases) */
+/** Canonicalize a role string (handles aliases from backend & UI) */
 function canonRole(r) {
   if (!r && r !== "") return "";
   const raw =
@@ -65,15 +65,19 @@ function canonRole(r) {
   let v = String(raw).toUpperCase().trim().replace(/\s+/g, "_");
   if (v.startsWith("ROLE_")) v = v.slice(5);
 
-  // ✅ Canonicalization map
+  // ✅ Map all common variants to a small set we enforce in routes
   const map = {
-    THEATRE_ADMIN: "THEATER_ADMIN", // UK → US
+    // Super admin aliases
+    ADMIN: "SUPER_ADMIN",
+    SUPERADMIN: "SUPER_ADMIN",
+
+    // Theater admin aliases
+    THEATRE_ADMIN: "THEATER_ADMIN",
     THEATRE_MANAGER: "THEATER_ADMIN",
     THEATER_MANAGER: "THEATER_ADMIN",
     PVR_MANAGER: "THEATER_ADMIN",
     PVR_ADMIN: "THEATER_ADMIN",
     MANAGER: "THEATER_ADMIN",
-    SUPERADMIN: "SUPER_ADMIN",
   };
   v = map[v] ?? v;
 
@@ -86,18 +90,15 @@ function canonRole(r) {
  * - role: undefined | "USER" | "THEATER_ADMIN" | "SUPER_ADMIN" | array of roles
  */
 function RequireAuth({ children, role }) {
-  // Debug bypass (use only locally)
   if (process.env.REACT_APP_DEBUG_BYPASS_AUTH === "1") return children;
 
   const auth = useAuth() || {};
   const location = useLocation();
 
-  // prefer provider token, fallback to localStorage
   const token =
     auth.token ||
     (typeof window !== "undefined" && window.localStorage?.getItem("token"));
 
-  // future-proof: accept roles array
   const userRoleRaw =
     auth.role ??
     (Array.isArray(auth.roles) && auth.roles.length ? auth.roles[0] : undefined) ??
@@ -109,12 +110,10 @@ function RequireAuth({ children, role }) {
   const need = needList.map(canonRole);
   const have = canonRole(userRoleRaw);
 
-  // allow token via query param for special endpoints (streams / email links)
   const { search } = location;
   const urlToken = new URLSearchParams(search).get("token");
   if (!token && urlToken) return children;
 
-  // not logged in -> redirect to appropriate login
   if (!token) {
     const wantsAdmin = need.some((r) => r.includes("ADMIN"));
     return (
@@ -126,19 +125,15 @@ function RequireAuth({ children, role }) {
     );
   }
 
-  // no specific role required -> allow
   if (!need.length) return children;
 
-  // exact role allowed (after canonicalization)
   if (need.includes(have)) return children;
 
-  // SUPER_ADMIN may access theatre admin areas
+  // SUPER_ADMIN can access theater-admin scoped areas
   if (have === "SUPER_ADMIN" && need.includes("THEATER_ADMIN")) return children;
 
-  // if user has any admin but not matching required -> send to admin index
   if (have.includes("ADMIN")) return <Navigate to="/admin" replace />;
 
-  // otherwise not allowed -> home
   return <Navigate to="/" replace />;
 }
 
@@ -154,7 +149,6 @@ function ScrollToTop() {
 /* ---------------------------------- App ---------------------------------- */
 
 export default function App() {
-  // initialize SSE hook (no-op if not used)
   useSSE();
 
   return (
@@ -254,7 +248,7 @@ export default function App() {
             <Route
               path="/admin/profile"
               element={
-                <RequireAuth role={["SUPER_ADMIN", "THEATRE_ADMIN"]}>
+                <RequireAuth role={["SUPER_ADMIN", "THEATER_ADMIN"]}>
                   <AdminProfile />
                 </RequireAuth>
               }
@@ -294,7 +288,7 @@ export default function App() {
             <Route
               path="/admin/pricing"
               element={
-                <RequireAuth role={["SUPER_ADMIN", "THEATRE_ADMIN"]}>
+                <RequireAuth role={["SUPER_ADMIN", "THEATER_ADMIN"]}>
                   <AdminPricing />
                 </RequireAuth>
               }
@@ -310,17 +304,17 @@ export default function App() {
             <Route
               path="/admin/bookings/:id"
               element={
-                <RequireAuth role={["SUPER_ADMIN", "THEATRE_ADMIN"]}>
+                <RequireAuth role={["SUPER_ADMIN", "THEATER_ADMIN"]}>
                   <AdminBookingDetails />
                 </RequireAuth>
               }
             />
 
-            {/* THEATRE_ADMIN scoped routes */}
+            {/* THEATER_ADMIN scoped routes */}
             <Route
               path="/theatre/my"
               element={
-                <RequireAuth role={["THEATRE_ADMIN"]}>
+                <RequireAuth role={["THEATER_ADMIN"]}>
                   <TheatreDashboard />
                 </RequireAuth>
               }
@@ -328,7 +322,7 @@ export default function App() {
             <Route
               path="/theatre/screens"
               element={
-                <RequireAuth role={["THEATRE_ADMIN"]}>
+                <RequireAuth role={["THEATER_ADMIN"]}>
                   <TheatreScreens />
                 </RequireAuth>
               }
@@ -336,7 +330,7 @@ export default function App() {
             <Route
               path="/theatre/showtimes"
               element={
-                <RequireAuth role={["THEATRE_ADMIN"]}>
+                <RequireAuth role={["THEATER_ADMIN"]}>
                   <TheatreShowtimes />
                 </RequireAuth>
               }
@@ -344,7 +338,7 @@ export default function App() {
             <Route
               path="/theatre/profile"
               element={
-                <RequireAuth role={["THEATRE_ADMIN"]}>
+                <RequireAuth role={["THEATER_ADMIN"]}>
                   <TheatreProfile />
                 </RequireAuth>
               }
@@ -352,8 +346,82 @@ export default function App() {
             <Route
               path="/theatre/reports"
               element={
-                <RequireAuth role={["THEATRE_ADMIN"]}>
+                <RequireAuth role={["THEATER_ADMIN"]}>
                   <TheatreReports />
+                </RequireAuth>
+              }
+            />
+
+            {/* ---- SUPER namespace aliases (deep-link friendly) ---- */}
+            <Route
+              path="/super"
+              element={
+                <RequireAuth role={["SUPER_ADMIN"]}>
+                  <AdminDashboard />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/super/theatre-admins"
+              element={
+                <RequireAuth role={["SUPER_ADMIN"]}>
+                  <AdminTheaters />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/super/movies"
+              element={
+                <RequireAuth role={["SUPER_ADMIN"]}>
+                  <AdminMoviesPage />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/super/screens"
+              element={
+                <RequireAuth role={["SUPER_ADMIN"]}>
+                  <AdminScreens />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/super/showtimes"
+              element={
+                <RequireAuth role={["SUPER_ADMIN"]}>
+                  <AdminShowtimes />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/super/pricing"
+              element={
+                <RequireAuth role={["SUPER_ADMIN"]}>
+                  <AdminPricing />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/super/analytics"
+              element={
+                <RequireAuth role={["SUPER_ADMIN"]}>
+                  <AdminAnalytics />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/super/bookings/:id"
+              element={
+                <RequireAuth role={["SUPER_ADMIN"]}>
+                  <AdminBookingDetails />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/super/profile"
+              element={
+                <RequireAuth role={["SUPER_ADMIN"]}>
+                  <AdminProfile />
                 </RequireAuth>
               }
             />
