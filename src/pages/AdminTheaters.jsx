@@ -15,6 +15,8 @@ import {
   X,
   Check,
   UserRound,
+  Mail,
+  Lock,
 } from "lucide-react";
 
 /* -------------------------------------------------------------------------- */
@@ -27,9 +29,6 @@ const API_BASE = (
 ).replace(/\/+$/, "");
 
 const FILES_BASE = API_BASE.replace(/\/api$/, "");
-const UPLOAD_WITH_CREDENTIALS = false;
-
-/* Placeholder Image */
 const DEFAULT_IMG =
   "data:image/svg+xml;utf8," +
   encodeURIComponent(`
@@ -116,6 +115,7 @@ export default function AdminTheaters() {
   const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
 
   const [theaters, setTheaters] = useState([]);
+  const [admins, setAdmins] = useState([]);
 
   const [selectedId, setSelectedId] = useState(null);
   const [name, setName] = useState("");
@@ -152,7 +152,23 @@ export default function AdminTheaters() {
     }
   }
 
-  useEffect(() => { loadTheaters(); }, []);
+  /* Load admins */
+  async function loadAdmins() {
+    try {
+      const res = await api.get("/superadmin/theatre-admins", { headers: authHeaders });
+      const arr = res?.data?.data || [];
+      setAdmins(arr);
+    } catch (err) {
+      console.error(err);
+      // silent; it's an auxiliary list
+    }
+  }
+
+  useEffect(() => {
+    loadTheaters();
+    loadAdmins();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /* Select file */
   const onPickFile = (e) => {
@@ -175,6 +191,7 @@ export default function AdminTheaters() {
       let body;
       if (selectedFile) {
         body = new FormData();
+        // NOTE: ensure backend expects field name 'image'. If it's 'poster', change here.
         body.append("image", selectedFile);
         body.append("name", name);
         body.append("city", city);
@@ -185,11 +202,17 @@ export default function AdminTheaters() {
       }
       await api.post("/theaters/admin", body, { headers: authHeaders });
       resetForm();
-      loadTheaters();
+      await loadTheaters();
       setMsg("✅ Theater created!");
       setMsgType("success");
     } catch (err) {
-      setMsg("❌ Failed to create theater");
+      const status = err?.response?.status;
+      const m = err?.response?.data?.message || "Failed to create theater";
+      if (status === 401) {
+        setMsg("🔑 Session expired. Please log in again.");
+      } else {
+        setMsg(`❌ ${m}`);
+      }
       setMsgType("error");
     } finally {
       setLoading(false);
@@ -207,18 +230,24 @@ export default function AdminTheaters() {
         body.append("image", selectedFile);
         body.append("name", name);
         body.append("city", city);
-        body.append("address", address);
+        if (address) body.append("address", address);
         body.append("amenities", JSON.stringify(amenitiesList));
       } else {
-        body = { name, city, address, amenities: amenitiesList, imageUrl: preview };
+        body = { name, city, address, amenities: amenitiesList }; // omit imageUrl to avoid backend validation issues
       }
       await api.put(`/theaters/admin/${selectedId}`, body, { headers: authHeaders });
       resetForm();
-      loadTheaters();
+      await loadTheaters();
       setMsg("✅ Updated successfully!");
       setMsgType("success");
     } catch (err) {
-      setMsg("❌ Update failed");
+      const status = err?.response?.status;
+      const m = err?.response?.data?.message || "Update failed";
+      if (status === 401) {
+        setMsg("🔑 Session expired. Please log in again.");
+      } else {
+        setMsg(`❌ ${m}`);
+      }
       setMsgType("error");
     } finally {
       setLoading(false);
@@ -228,8 +257,14 @@ export default function AdminTheaters() {
   /* Delete */
   async function deleteTheater(id) {
     if (!window.confirm("Delete this theater?")) return;
-    await api.delete(`/theaters/admin/${id}`, { headers: authHeaders });
-    loadTheaters();
+    try {
+      await api.delete(`/theaters/admin/${id}`, { headers: authHeaders });
+      await loadTheaters();
+    } catch (err) {
+      const m = err?.response?.data?.message || "Delete failed";
+      setMsg(`❌ ${m}`);
+      setMsgType("error");
+    }
   }
 
   /* Reset Form */
@@ -258,24 +293,39 @@ export default function AdminTheaters() {
 
   /* Create Theatre Admin */
   async function createTheatreAdmin() {
-    if (!selectedId) return setMsg("⚠️ Select a theatre first"), setMsgType("error");
+    if (!selectedId) {
+      setMsg("⚠️ Select a theatre first");
+      setMsgType("error");
+      return;
+    }
     if (!adminName || !adminEmail || !adminPassword) {
       setMsg("⚠️ Name, Email, Password required");
       setMsgType("error");
       return;
     }
     try {
-      await api.post("/superadmin/create-theatre-admin",
+      await api.post(
+        "/superadmin/create-theatre-admin",
         { name: adminName, email: adminEmail, password: adminPassword, theatreId: selectedId },
         { headers: authHeaders }
       );
-      setAdminName(""); setAdminEmail(""); setAdminPassword("");
+      setAdminName("");
+      setAdminEmail("");
+      setAdminPassword("");
+      await loadAdmins();
       setMsg("✅ Theatre Admin Created");
       setMsgType("success");
     } catch (err) {
-      if (err?.response?.status === 409) setMsg("❌ Email already exists");
-      else setMsg("❌ Failed to create theatre admin");
+      const status = err?.response?.status;
+      const serverMsg = err?.response?.data?.message || err?.response?.data?.error;
+      const fallback = status === 409 ? "Email already exists" : "Failed to create theatre admin";
+      if (status === 401) {
+        setMsg("🔑 Session expired. Please log in again.");
+      } else {
+        setMsg(`❌ ${serverMsg || fallback}`);
+      }
       setMsgType("error");
+      console.error("[createTheatreAdmin]", { status, data: err?.response?.data });
     }
   }
 
@@ -286,7 +336,7 @@ export default function AdminTheaters() {
           <h1 className="text-2xl font-extrabold flex gap-2">
             <Building2 className="h-6 w-6" /> Manage Theaters
           </h1>
-          <SecondaryBtn onClick={loadTheaters}>
+          <SecondaryBtn onClick={() => { loadTheaters(); loadAdmins(); }}>
             <RefreshCcw className="h-4 w-4" /> Refresh
           </SecondaryBtn>
         </Card>
@@ -307,7 +357,7 @@ export default function AdminTheaters() {
 
         <div className="grid lg:grid-cols-3 gap-6">
           {/* List */}
-          <div className="lg:col-span-2">
+          <div className="lg:col-span-2 space-y-6">
             <Card className="p-5">
               <h2 className="font-extrabold mb-4 flex items-center gap-2 border-b pb-2"><ImageIcon className="h-5 w-5" /> Theaters</h2>
 
@@ -328,6 +378,32 @@ export default function AdminTheaters() {
                           <Trash2 className="h-4 w-4" /> Delete
                         </SecondaryBtn>
                       </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Card>
+
+            {/* Admins list */}
+            <Card className="p-5">
+              <h2 className="font-extrabold mb-4 flex items-center gap-2 border-b pb-2"><UserRound className="h-5 w-5" /> Theatre Admins</h2>
+              {admins.length === 0 ? (
+                <p>No theatre admins yet.</p>
+              ) : (
+                <ul className="space-y-3 max-h-[40vh] overflow-y-auto">
+                  {admins.map((a) => (
+                    <li key={a._id} className="flex justify-between items-center border rounded-2xl p-3 shadow-sm">
+                      <div className="flex items-center gap-3">
+                        <div className="h-10 w-10 rounded-full bg-slate-200 grid place-items-center font-bold text-slate-600">
+                          {String(a?.name || a?.email || "A").slice(0,1).toUpperCase()}
+                        </div>
+                        <div>
+                          <div className="font-bold">{a.name}</div>
+                          <div className="text-sm text-slate-600 flex items-center gap-2"><Mail className="h-3 w-3" /> {a.email}</div>
+                          <div className="text-xs text-slate-500">Theatre: {a?.theatreId?.name} {a?.theatreId?.city ? `• ${a.theatreId.city}` : ""}</div>
+                        </div>
+                      </div>
+                      {/* Future: add actions like reset password / disable */}
                     </li>
                   ))}
                 </ul>
@@ -401,13 +477,13 @@ export default function AdminTheaters() {
           </h2>
 
           <div className="grid md:grid-cols-3 gap-4">
-            <Field label="Full Name" value={adminName} onChange={(e) => setAdminName(e.target.value)} />
-            <Field label="Email" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} />
-            <Field label="Password" type="password" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} />
+            <Field label="Full Name" value={adminName} onChange={(e) => setAdminName(e.target.value)} icon={UserRound} />
+            <Field label="Email" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} icon={Mail} />
+            <Field label="Password" type="password" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} icon={Lock} />
           </div>
 
-          <PrimaryBtn className="mt-4" onClick={createTheatreAdmin}>
-            Create Theatre Admin
+          <PrimaryBtn className="mt-4" onClick={createTheatreAdmin} disabled={!selectedId}>
+            Create Theatre Admin (Select a theatre first)
           </PrimaryBtn>
         </Card>
       </div>
