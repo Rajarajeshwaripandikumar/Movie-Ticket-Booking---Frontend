@@ -75,7 +75,8 @@ const THEATRE_ADMIN_LINKS = [
 ];
 
 export default function Navbar() {
-  const { token, role, user, logout } = useAuth();
+  // 🔧 Pull the canonical role flags from AuthContext (pre-normalized)
+  const { token, role, user, logout, isAdmin, isSuperAdmin, isTheatreAdmin, isLoggedIn } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -84,13 +85,11 @@ export default function Navbar() {
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
 
-  // new role flags — support multi-admin roles
-  const normalizedRole = String(role || (user?.role || "USER")).toUpperCase();
-  const isSuperAdmin = normalizedRole === "SUPER_ADMIN";
-  const isTheatreAdmin = normalizedRole === "THEATRE_ADMIN";
-  const isAdmin = isSuperAdmin || isTheatreAdmin;
-  const isLoggedIn = !!token;
-  const isAdminRoute = location.pathname.startsWith("/admin") || location.pathname.startsWith("/super") || location.pathname.startsWith("/theatre");
+  const isAdminRoute =
+    location.pathname.startsWith("/admin") ||
+    location.pathname.startsWith("/super") ||
+    location.pathname.startsWith("/theatre");
+
   const API_BASE = api.defaults.baseURL?.replace(/\/+$/, "") || "";
 
   // ---------- utils ----------
