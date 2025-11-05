@@ -4,10 +4,35 @@ import axios from "axios";
 /* -------------------------------------------------------------------------- */
 /*                                 BASE URL                                   */
 /* -------------------------------------------------------------------------- */
-const BASE_URL = (import.meta.env.VITE_API_BASE || "https://movie-ticket-booking-backend-o1m2.onrender.com")
+export const BASE_URL = (import.meta.env.VITE_API_BASE || "https://movie-ticket-booking-backend-o1m2.onrender.com")
   .replace(/\/+$/, "");
 const API_PREFIX = "/api";
-const AXIOS_BASE = `${BASE_URL}${API_PREFIX}`.replace(/\/+$/, "");
+export const AXIOS_BASE = `${BASE_URL}${API_PREFIX}`.replace(/\/+$/, "");
+
+/* -------------------------------------------------------------------------- */
+/*                            Role canonicalization                           */
+/* -------------------------------------------------------------------------- */
+function canonRole(r) {
+  if (!r && r !== "") return "";
+  const raw =
+    typeof r === "object" && r !== null ? r.authority ?? r.value ?? r.name ?? "" : r;
+  let v = String(raw).toUpperCase().trim().replace(/\s+/g, "_");
+  if (v.startsWith("ROLE_")) v = v.slice(5);
+
+  const map = {
+    // super admin aliases
+    ADMIN: "SUPER_ADMIN",
+    SUPERADMIN: "SUPER_ADMIN",
+    // theater admin aliases
+    THEATRE_ADMIN: "THEATER_ADMIN",
+    THEATRE_MANAGER: "THEATER_ADMIN",
+    THEATER_MANAGER: "THEATER_ADMIN",
+    PVR_MANAGER: "THEATER_ADMIN",
+    PVR_ADMIN: "THEATER_ADMIN",
+    MANAGER: "THEATER_ADMIN",
+  };
+  return map[v] ?? v;
+}
 
 /* -------------------------------------------------------------------------- */
 /*                      Token retrieval + small cookie helper                 */
@@ -66,7 +91,7 @@ function getAuthFromStorage() {
 /*                              Axios instance                                */
 /* -------------------------------------------------------------------------- */
 const api = axios.create({
-  baseURL: AXIOS_BASE, // <-- every request now goes to /api/*
+  baseURL: AXIOS_BASE, // every request now goes to /api/*
   timeout: 60000,
   withCredentials: false,
   headers: { Accept: "application/json" },
@@ -95,11 +120,18 @@ api.interceptors.request.use((config) => {
       config.headers = config.headers || {};
       if (!config.headers.Authorization)
         config.headers.Authorization = `Bearer ${token}`;
-      if (role && !config.headers["X-Role"]) config.headers["X-Role"] = role;
+
+      const normalizedRole = canonRole(role);
+      if (normalizedRole && !config.headers["X-Role"]) {
+        config.headers["X-Role"] = normalizedRole;
+      }
+
       if (API_DEBUG) {
         console.debug(
           "[api] attaching auth header, tokenPresent=true, headerPreviewLen=",
-          (token || "").length
+          (token || "").length,
+          "role=",
+          normalizedRole
         );
       }
     } else if (API_DEBUG) {
@@ -132,8 +164,7 @@ let _manualToken = null;
 api.setAuthToken = (token) => {
   _manualToken = token;
   if (token) {
-    api.defaults.headers.common =
-      api.defaults.headers.common || {};
+    api.defaults.headers.common = api.defaults.headers.common || {};
     api.defaults.headers.common.Authorization = `Bearer ${token}`;
   } else if (api.defaults.headers.common) {
     delete api.defaults.headers.common.Authorization;
@@ -150,7 +181,30 @@ api.interceptors.request.use((config) => {
 });
 
 /* -------------------------------------------------------------------------- */
-/*                             Helper utilities                                */
+/*                         Convenience helpers (404→null)                     */
+/* -------------------------------------------------------------------------- */
+api.safeGet = async (url, cfg) => {
+  try {
+    const res = await api.get(url, cfg);
+    return res.data;
+  } catch (e) {
+    if (e?.response?.status === 404) return null;
+    throw e;
+  }
+};
+
+api.safeDelete = async (url, cfg) => {
+  try {
+    const res = await api.delete(url, cfg);
+    return res.data;
+  } catch (e) {
+    if (e?.response?.status === 404) return null;
+    throw e;
+  }
+};
+
+/* -------------------------------------------------------------------------- */
+/*                             Helper utilities                               */
 /* -------------------------------------------------------------------------- */
 export function apiUrl(path = "") {
   const clean = path.startsWith("/") ? path : `/${path}`;
