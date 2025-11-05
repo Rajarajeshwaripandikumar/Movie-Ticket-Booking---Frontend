@@ -1,6 +1,6 @@
 // src/components/ProtectedRoute.jsx
 import React from "react";
-import { Navigate } from "react-router-dom";
+import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
 /** Normalize a single role string (handles THEATRE → THEATER) */
@@ -23,13 +23,27 @@ function normWanted(roles) {
 
 /**
  * ProtectedRoute
- * Usage:
+ * Usage examples:
+ *   // As a wrapper
  *   <ProtectedRoute roles="SUPER_ADMIN"><Page/></ProtectedRoute>
  *   <ProtectedRoute roles={["THEATER_ADMIN"]}><Page/></ProtectedRoute>
- *   <ProtectedRoute roles={["SUPER_ADMIN", "THEATER_ADMIN"]}><Page/></ProtectedRoute>
+ *
+ *   // As a route guard (preferred with React Router v6+)
+ *   <Route element={<ProtectedRoute roles={["ADMIN","SUPER_ADMIN"]} />}>
+ *     <Route path="/admin/dashboard" element={<Dashboard/>} />
+ *   </Route>
  */
-export default function ProtectedRoute({ children, roles }) {
+export default function ProtectedRoute({
+  children,
+  roles,                       // string | string[]
+  superOverrides = true,       // allow SUPER_ADMIN to enter any admin-only route
+  loginPath = "/login",
+  adminLoginPath = "/admin/login",
+  adminHome = "/admin",
+  publicHome = "/",
+}) {
   const { token, role, roles: userRoles } = useAuth();
+  const location = useLocation();
 
   // Build the caller's required roles
   const wanted = normWanted(roles);
@@ -40,9 +54,15 @@ export default function ProtectedRoute({ children, roles }) {
       ? Array.from(wanted).some((r) => r?.includes("ADMIN"))
       : false;
 
-  // If not logged in → send to the correct login
+  // If not logged in → send to the correct login, preserving where user came from
   if (!token) {
-    return <Navigate to={wantsAdmin ? "/admin/login" : "/login"} replace />;
+    return (
+      <Navigate
+        to={wantsAdmin ? adminLoginPath : loginPath}
+        replace
+        state={{ from: location }}
+      />
+    );
   }
 
   // Gather the user's roles (prefer roles[], fallback to single role)
@@ -55,24 +75,22 @@ export default function ProtectedRoute({ children, roles }) {
   const have = new Set(haveList.map(normRole).filter(Boolean));
 
   // If no explicit roles required, just allow
-  if (wanted.size === 0) return children;
+  if (wanted.size === 0) return children ?? <Outlet />;
 
-  // SUPER_ADMIN override (enable/disable as you like)
-  const SUPER_OVERRIDES = true;
-  if (SUPER_OVERRIDES && have.has("SUPER_ADMIN")) {
-    // allow SUPER_ADMIN into any admin-required route
-    if (wantsAdmin) return children;
+  // SUPER_ADMIN override (optional)
+  if (superOverrides && have.has("SUPER_ADMIN")) {
+    if (wantsAdmin) return children ?? <Outlet />;
   }
 
   // Pass if intersection of wanted ∩ have is not empty
   const canAccess = Array.from(wanted).some((w) => have.has(w));
-  if (canAccess) return children;
+  if (canAccess) return children ?? <Outlet />;
 
   // If user is an admin but not the right one, push to admin home
   if (Array.from(have).some((r) => r.includes("ADMIN"))) {
-    return <Navigate to="/admin" replace />;
+    return <Navigate to={adminHome} replace />;
   }
 
   // Otherwise back to public home
-  return <Navigate to="/" replace />;
+  return <Navigate to={publicHome} replace />;
 }
