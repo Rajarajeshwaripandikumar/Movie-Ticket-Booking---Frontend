@@ -4,10 +4,20 @@ import axios from "axios";
 /* -------------------------------------------------------------------------- */
 /*                                 BASE URL                                   */
 /* -------------------------------------------------------------------------- */
-export const BASE_URL = (import.meta.env.VITE_API_BASE || "https://movie-ticket-booking-backend-o1m2.onrender.com")
-  .replace(/\/+$/, "");
+// Correct fallback: 0 (zero) + l (ell)
+const FALLBACK_BASE = "https://movie-ticket-booking-backend-0lm2.onrender.com";
+export const BASE_URL = (import.meta.env.VITE_API_BASE || FALLBACK_BASE).replace(/\/+$/, "");
 const API_PREFIX = "/api";
 export const AXIOS_BASE = `${BASE_URL}${API_PREFIX}`.replace(/\/+$/, "");
+
+// Loud warning if someone accidentally uses the wrong service (o1m2)
+if (BASE_URL.includes("-o1m2.")) {
+  console.warn(
+    "[api] WARNING: BASE_URL seems to be 'o1m2' (letter-o + one). " +
+      "If your backend is '0lm2' (zero + ell), update VITE_API_BASE immediately:",
+    BASE_URL
+  );
+}
 
 /* -------------------------------------------------------------------------- */
 /*                            Role canonicalization                           */
@@ -204,6 +214,18 @@ api.safeDelete = async (url, cfg) => {
 };
 
 /* -------------------------------------------------------------------------- */
+/*                          Error extraction helper                           */
+/* -------------------------------------------------------------------------- */
+export function extractApiError(err) {
+  const server = err?.response?.data;
+  return (
+    (server && (server.message || server.error || server.details)) ||
+    (server && typeof server === "string" ? server : null) ||
+    `HTTP ${err?.response?.status ?? ""} ${err?.message ?? "Request failed"}`
+  );
+}
+
+/* -------------------------------------------------------------------------- */
 /*                             Helper utilities                               */
 /* -------------------------------------------------------------------------- */
 export function apiUrl(path = "") {
@@ -221,6 +243,6 @@ export function makeAbsoluteImageUrl(url) {
 }
 
 /* -------------------------------------------------------------------------- */
-/*                                 Exports                                     */
+/*                                 Exports                                    */
 /* -------------------------------------------------------------------------- */
 export default api;
