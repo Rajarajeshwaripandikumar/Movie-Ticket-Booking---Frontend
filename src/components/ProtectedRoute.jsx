@@ -3,12 +3,20 @@ import React from "react";
 import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
-/** Normalize a single role string (handles THEATRE → THEATER) */
+/** Map role aliases to canonical values */
+const ROLE_ALIASES = {
+  THEATRE_ADMIN: "THEATER_ADMIN", // spelling fix
+  MANAGER: "THEATER_ADMIN",       // generic manager
+  PVR_MANAGER: "THEATER_ADMIN",   // your case
+  PVR_ADMIN: "THEATER_ADMIN",
+};
+
+/** Normalize a single role string */
 function normRole(r) {
-  if (!r && r !== "") return null;
+  if (r == null) return null;
   try {
     const v = String(r).trim().toUpperCase().replace(/\s+/g, "_");
-    return v === "THEATRE_ADMIN" ? "THEATER_ADMIN" : v;
+    return ROLE_ALIASES[v] || v;
   } catch {
     return null;
   }
@@ -21,18 +29,6 @@ function normWanted(roles) {
   return new Set([normRole(roles)].filter(Boolean));
 }
 
-/**
- * ProtectedRoute
- * Usage examples:
- *   // As a wrapper
- *   <ProtectedRoute roles="SUPER_ADMIN"><Page/></ProtectedRoute>
- *   <ProtectedRoute roles={["THEATER_ADMIN"]}><Page/></ProtectedRoute>
- *
- *   // As a route guard (preferred with React Router v6+)
- *   <Route element={<ProtectedRoute roles={["ADMIN","SUPER_ADMIN"]} />}>
- *     <Route path="/admin/dashboard" element={<Dashboard/>} />
- *   </Route>
- */
 export default function ProtectedRoute({
   children,
   roles,                       // string | string[]
@@ -45,16 +41,15 @@ export default function ProtectedRoute({
   const { token, role, roles: userRoles } = useAuth();
   const location = useLocation();
 
-  // Build the caller's required roles
   const wanted = normWanted(roles);
 
-  // Figure out if the route is "admin-ish" based on required roles
+  // Treat anything with ADMIN/MANAGER/THEATER in it as an admin area
+  const ADMIN_HINTS = ["ADMIN", "MANAGER", "THEATER"];
   const wantsAdmin =
     wanted.size > 0
-      ? Array.from(wanted).some((r) => r?.includes("ADMIN"))
+      ? Array.from(wanted).some((r) => ADMIN_HINTS.some((h) => r?.includes(h)))
       : false;
 
-  // If not logged in → send to the correct login, preserving where user came from
   if (!token) {
     return (
       <Navigate
@@ -65,16 +60,14 @@ export default function ProtectedRoute({
     );
   }
 
-  // Gather the user's roles (prefer roles[], fallback to single role)
-  const haveList = Array.isArray(userRoles) && userRoles.length > 0
-    ? userRoles
-    : role
+  const haveList =
+    Array.isArray(userRoles) && userRoles.length > 0
+      ? userRoles
+      : role
       ? [role]
       : [];
-
   const have = new Set(haveList.map(normRole).filter(Boolean));
 
-  // If no explicit roles required, just allow
   if (wanted.size === 0) return children ?? <Outlet />;
 
   // SUPER_ADMIN override (optional)
@@ -82,15 +75,12 @@ export default function ProtectedRoute({
     if (wantsAdmin) return children ?? <Outlet />;
   }
 
-  // Pass if intersection of wanted ∩ have is not empty
   const canAccess = Array.from(wanted).some((w) => have.has(w));
   if (canAccess) return children ?? <Outlet />;
 
-  // If user is an admin but not the right one, push to admin home
-  if (Array.from(have).some((r) => r.includes("ADMIN"))) {
+  if (Array.from(have).some((r) => r.includes("ADMIN") || r.includes("THEATER"))) {
     return <Navigate to={adminHome} replace />;
   }
 
-  // Otherwise back to public home
   return <Navigate to={publicHome} replace />;
 }
