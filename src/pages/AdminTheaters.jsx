@@ -23,7 +23,7 @@ const API_BASE = (
   api?.defaults?.baseURL ||
   import.meta.env.VITE_API_BASE ||
   "https://movie-ticket-booking-backend-0lm2.onrender.com/api"
-).replace(/\/+$", "");
+).replace(/\/+$/, "");
 
 const FILES_BASE = API_BASE.replace(/\/api$/, "");
 const UPLOAD_WITH_CREDENTIALS = false;
