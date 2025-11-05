@@ -291,13 +291,30 @@ export default function AdminTheaters() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
-  /* Create Theatre Admin */
-  async function createTheatreAdmin() {
-    if (!selectedId) {
-      setMsg("⚠️ Select a theatre first");
+  $1
+  /* Reset Theatre Admin Password */
+  async function resetAdminPassword(adminId) {
+    const newPassword = window.prompt("Enter a new password for this admin:");
+    if (!newPassword) return;
+    try {
+      const res = await api.post(
+        "/superadmin/admin/reset-password",
+        { adminId, newPassword },
+        { headers: authHeaders }
+      );
+      setMsg("✅ " + (res?.data?.message || "Password reset"));
+      setMsgType("success");
+    } catch (err) {
+      const status = err?.response?.status;
+      const serverMsg = err?.response?.data?.message || err?.response?.data?.error || "Failed to reset password";
+      if (status === 401) {
+        setMsg("🔑 Session expired. Please log in again.");
+      } else {
+        setMsg(`❌ ${serverMsg}`);
+      }
       setMsgType("error");
-      return;
     }
+  }
     if (!adminName || !adminEmail || !adminPassword) {
       setMsg("⚠️ Name, Email, Password required");
       setMsgType("error");
@@ -403,7 +420,7 @@ export default function AdminTheaters() {
                           <div className="text-xs text-slate-500">Theatre: {a?.theatreId?.name} {a?.theatreId?.city ? `• ${a.theatreId.city}` : ""}</div>
                         </div>
                       </div>
-                      {/* Future: add actions like reset password / disable */}
+                      <div className="flex items-center gap-2">\n                      <SecondaryBtn onClick={() => resetAdminPassword(a._id)} className="px-3 py-1 text-xs">\n                        <Lock className="h-3 w-3" /> Reset Password\n                      </SecondaryBtn>\n                    </div>
                     </li>
                   ))}
                 </ul>
