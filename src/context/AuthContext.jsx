@@ -48,6 +48,9 @@ function normalizeRole(raw) {
     // Strip common prefix
     if (v.startsWith("ROLE_")) v = v.slice(5);
 
+    // Treat any brand manager as theater admin (PVR_MANAGER, INOX_MANAGER, ...)
+    if (/_MANAGER$/.test(v)) v = "THEATER_ADMIN";
+
     // Unify theatre/theater spellings & aliases
     if (v === "THEATRE_ADMIN" || v === "THEATRE_OWNER" || v === "THEATER_OWNER")
       v = "THEATER_ADMIN";
@@ -65,7 +68,8 @@ function normalizeRole(raw) {
 export function AuthProvider({ children }) {
   const [token, setToken] = useState(() => {
     try {
-      return localStorage.getItem("token") || null;
+      const t = localStorage.getItem("token");
+      return typeof t === "string" && t ? t : null;
     } catch {
       return null;
     }
@@ -77,6 +81,26 @@ export function AuthProvider({ children }) {
       return stored ? normalizeRole(stored) : null;
     } catch {
       return null;
+    }
+  });
+
+  const [roles, setRoles] = useState(() => {
+    try {
+      const raw = localStorage.getItem("roles");
+      const arr = raw ? JSON.parse(raw) : null;
+      return Array.isArray(arr) ? arr.map(normalizeRole).filter(Boolean) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [perms, setPerms] = useState(() => {
+    try {
+      const raw = localStorage.getItem("perms");
+      const arr = raw ? JSON.parse(raw) : null;
+      return Array.isArray(arr) ? arr.map(String) : [];
+    } catch {
+      return [];
     }
   });
 
@@ -95,12 +119,12 @@ export function AuthProvider({ children }) {
       try {
         localStorage.setItem("token", token);
       } catch {}
-      api.setAuthToken(token);
+      api.setAuthToken?.(token);
     } else {
       try {
         localStorage.removeItem("token");
       } catch {}
-      api.setAuthToken(null);
+      api.setAuthToken?.(null);
     }
   }, [token]);
 
@@ -115,6 +139,20 @@ export function AuthProvider({ children }) {
       } catch {}
     }
   }, [role]);
+
+  useEffect(() => {
+    try {
+      if (roles?.length) localStorage.setItem("roles", JSON.stringify(roles));
+      else localStorage.removeItem("roles");
+    } catch {}
+  }, [roles]);
+
+  useEffect(() => {
+    try {
+      if (perms?.length) localStorage.setItem("perms", JSON.stringify(perms));
+      else localStorage.removeItem("perms");
+    } catch {}
+  }, [perms]);
 
   useEffect(() => {
     if (user) {
@@ -137,56 +175,69 @@ export function AuthProvider({ children }) {
     if (!email || !password) throw new Error("Missing credentials");
 
     try {
-      // Adjust path to match your backend
       const res = await api.post("/auth/login", { email, password, roleHint });
-      const t = res?.data?.token;
-      if (!t) throw new Error("No token returned from server");
+      // Support axios-like { data } or bare response
+      const data = res?.data ?? res;
+      const t = data?.token;
+      if (!t || typeof t !== "string") throw new Error("No token returned from server");
 
-      // decode claims from JWT (if present)
+      // Decode claims from JWT (if present)
       const claims = decodeJwt(t) || {};
 
-      // Role can come from many places
-      const rawRoleFromJwt =
-        claims.role ||
-        (Array.isArray(claims.roles) ? claims.roles[0] : null) ||
-        (Array.isArray(claims.authorities) ? claims.authorities[0] : null);
+      // Role(s) from claims or body
+      const roleCandidates = [
+        claims.role,
+        ...(Array.isArray(claims.roles) ? claims.roles : []),
+        data?.role,
+        data?.user?.role,
+        ...(Array.isArray(data?.user?.roles) ? data.user.roles : []),
+        ...(Array.isArray(data?.authorities) ? data.authorities : []),
+        ...(Array.isArray(data?.user?.authorities) ? data.user.authorities : []),
+        roleHint,
+        "USER",
+      ].filter(Boolean);
 
-      const rawRoleFromBody =
-        res?.data?.role ||
-        res?.data?.user?.role ||
-        (Array.isArray(res?.data?.user?.roles)
-          ? res.data.user.roles[0]
-          : null) ||
-        (Array.isArray(res?.data?.user?.authorities)
-          ? res.data.user.authorities[0]
-          : null);
+      const normalizedRoles = roleCandidates.map(normalizeRole).filter(Boolean);
+      const derivedRole = normalizedRoles[0] || "USER";
 
-      const chosenRawRole = rawRoleFromJwt || rawRoleFromBody || roleHint || "USER";
-      const derivedRole = normalizeRole(chosenRawRole);
+      // Permissions (optional)
+      const permsArr =
+        (Array.isArray(claims.perms) && claims.perms) ||
+        (Array.isArray(data?.perms) && data.perms) ||
+        (Array.isArray(data?.user?.perms) && data.user.perms) ||
+        [];
 
-      // theaterId / theatreId can also be in JWT or response
+      // theaterId / theatreId from JWT or response
       const theaterId =
-        claims.theaterId ||
-        claims.theatreId ||
-        res?.data?.user?.theaterId ||
-        res?.data?.user?.theatreId ||
+        claims.theaterId ??
+        claims.theatreId ??
+        data?.user?.theaterId ??
+        data?.user?.theatreId ??
         null;
 
       const finalUser = {
-        ...(res?.data?.user || {}),
-        email: res?.data?.user?.email || claims.email || email,
+        ...(data?.user || {}),
+        email: data?.user?.email || claims.email || email,
         role: derivedRole,
+        roles: normalizedRoles,
+        perms: permsArr,
         theaterId, // prefer US spelling in app state
       };
 
       setToken(t);
       setRole(derivedRole);
+      setRoles(normalizedRoles);
+      setPerms(permsArr);
       setUser(finalUser);
 
-      return { token: t, role: derivedRole, user: finalUser };
+      return { token: t, role: derivedRole, roles: normalizedRoles, perms: permsArr, user: finalUser };
     } catch (err) {
       console.error("[Auth] login failed:", err);
-      const msg = err?.response?.data?.message || err.message || "Login failed";
+      const msg =
+        err?.response?.data?.message ||
+        err?.payload?.message ||
+        err?.message ||
+        "Login failed";
       throw new Error(msg);
     }
   }, []);
@@ -195,41 +246,60 @@ export function AuthProvider({ children }) {
   const logout = useCallback(() => {
     setToken(null);
     setRole(null);
+    setRoles([]);
+    setPerms([]);
     setUser(null);
     try {
       localStorage.removeItem("token");
       localStorage.removeItem("role");
+      localStorage.removeItem("roles");
+      localStorage.removeItem("perms");
       localStorage.removeItem("user");
     } catch {}
-    api.setAuthToken(null);
+    api.setAuthToken?.(null);
   }, []);
 
   /* ---------------- REFRESH PROFILE ---------------- */
   const refreshProfile = useCallback(async () => {
     try {
       const res = await api.get("/auth/me");
-      if (res?.data?.user) {
-        const u = res.data.user;
-        const nextRole = normalizeRole(
-          u.role ||
-            (Array.isArray(u.roles) ? u.roles[0] : null) ||
-            (Array.isArray(u.authorities) ? u.authorities[0] : null) ||
-            role
-        );
+      const data = res?.data ?? res;
+
+      if (data?.user) {
+        const u = data.user;
+
+        const roleCandidates = [
+          u.role,
+          ...(Array.isArray(u.roles) ? u.roles : []),
+          ...(Array.isArray(u.authorities) ? u.authorities : []),
+          role,
+        ].filter(Boolean);
+
+        const normalizedRoles = roleCandidates.map(normalizeRole).filter(Boolean);
+        const nextRole = normalizedRoles[0] || role || "USER";
+
+        const nextPerms =
+          (Array.isArray(u.perms) && u.perms) ||
+          (Array.isArray(data?.perms) && data.perms) ||
+          perms;
 
         setUser({
           ...u,
           role: nextRole,
+          roles: normalizedRoles,
+          perms: nextPerms,
           theaterId: u.theaterId || u.theatreId || user?.theaterId || null,
         });
         setRole(nextRole);
+        setRoles(normalizedRoles);
+        setPerms(nextPerms);
       }
-      return res?.data?.user || null;
+      return data?.user || null;
     } catch (err) {
       if (err?.response?.status === 401) logout();
       return null;
     }
-  }, [logout, role, user?.theaterId]);
+  }, [logout, role, perms, user?.theaterId]);
 
   /* ---------------- Derived flags ---------------- */
   const isLoggedIn = !!token;
@@ -242,6 +312,8 @@ export function AuthProvider({ children }) {
     () => ({
       token,
       role,
+      roles,
+      perms,
       user,
       setUser,
       login,
@@ -256,6 +328,8 @@ export function AuthProvider({ children }) {
     [
       token,
       role,
+      roles,
+      perms,
       user,
       login,
       logout,
