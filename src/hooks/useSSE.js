@@ -1,67 +1,94 @@
+// src/hooks/useSSE.js
 import { useEffect, useRef } from "react";
 import { connectSSE } from "../utils/sseClient";
 import { useAuth } from "../context/AuthContext";
 
+/* ---------- helpers ---------- */
+// normalize anything (Bearer token, object, JSON string) → bare JWT
+function toJwtString(input) {
+  try {
+    if (!input) return "";
+    if (typeof input === "string") {
+      const s = input.trim();
+      if (s.startsWith("{")) return toJwtString(JSON.parse(s));           // JSON string → object
+      if (/^Bearer\s+/i.test(s)) return s.replace(/^Bearer\s+/i, "").trim(); // strip "Bearer "
+      return s;
+    }
+    if (typeof input === "object") {
+      const v =
+        input.token ||
+        input.jwt ||
+        input.access_token ||
+        (typeof input.Authorization === "string"
+          ? input.Authorization.replace(/^Bearer\s+/i, "").trim()
+          : "") ||
+        "";
+      return toJwtString(v);
+    }
+    return "";
+  } catch {
+    return "";
+  }
+}
+
 export default function useSSE() {
   const { token: ctxToken, role } = useAuth();
 
-  // Keep current connection + the token we used to open it
-  const esRef = useRef(null);
-  const tokenRef = useRef(null);
+  // store current connection & the exact jwt used to open it
+  const connRef = useRef(null);
+  const jwtRef = useRef("");
 
   useEffect(() => {
-    // Prefer context token; avoid racing on localStorage during login
-    const token = ctxToken || null;
+    const jwt = toJwtString(ctxToken);
+    const scope = String(role || "").toUpperCase().includes("ADMIN") ? "admin" : "user";
 
-    // Quietly wait until we have a token
-    if (!token) {
-      // If a connection exists but token disappeared (logout), close it
-      if (esRef.current) {
-        try {
-          esRef.current.close();
-        } catch {}
-        esRef.current = null;
-        tokenRef.current = null;
+    // if no usable token → close any existing stream and exit
+    if (!jwt) {
+      if (connRef.current) {
+        try { connRef.current.close(); } catch {}
+        connRef.current = null;
+        jwtRef.current = "";
         console.debug("[SSE] Closed stream (no token)");
       }
       return;
     }
 
-    // If we already have a live connection for the same token, do nothing
-    if (tokenRef.current === token && esRef.current) {
-      return;
-    }
+    // if same jwt already connected → do nothing
+    if (connRef.current && jwtRef.current === jwt) return;
 
-    // If token changed, close previous connection first
-    if (esRef.current) {
-      try {
-        esRef.current.close();
-      } catch {}
-      esRef.current = null;
+    // token changed → close previous before opening a new one
+    if (connRef.current) {
+      try { connRef.current.close(); } catch {}
+      connRef.current = null;
       console.debug("[SSE] Reconnecting with new token…");
     }
 
-    // Establish SSE connection
     const { eventSource, cancel } = connectSSE({
-      token,
-      onOpen: () => console.log("[SSE] ✅ Stream opened for role:", role || "USER"),
-      onMessage: (data) => console.log("[SSE] 🔔 Event:", data),
-      onError: (err, attempt) =>
-        console.warn(`[SSE] ⚠️ Error (attempt ${attempt}). Will retry…`, err),
+      token: jwt,           // ← always a clean JWT string
+      scope,                // "admin" for admin roles, else "user"
+      onOpen: () => console.log("[SSE] ✅ Stream opened (scope:", scope, ")"),
+      onMessage: (data) => {
+        // handle both custom and default events (init/notification/etc.)
+        console.log("[SSE] 🔔 Event:", data);
+      },
+      onError: (err, attempt) => {
+        console.warn(`[SSE] ⚠️ Error (attempt ${attempt}). Will retry…`, err);
+      },
     });
 
-    esRef.current = { close: cancel }; // expose a uniform .close()
-    tokenRef.current = token;
+    // keep a uniform .close() interface
+    connRef.current = { close: cancel, es: eventSource };
+    jwtRef.current = jwt;
 
-    // Cleanup when token/role changes or component unmounts
+    // cleanup on unmount or when jwt/role changes
     return () => {
-      if (esRef.current) {
+      if (connRef.current) {
         try {
-          esRef.current.close();
+          connRef.current.close();
           console.debug("[SSE] 🔌 Closed stream");
         } catch {}
-        esRef.current = null;
-        tokenRef.current = null;
+        connRef.current = null;
+        jwtRef.current = "";
       }
     };
   }, [ctxToken, role]);
