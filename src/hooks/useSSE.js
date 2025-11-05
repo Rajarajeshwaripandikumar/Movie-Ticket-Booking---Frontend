@@ -1,6 +1,6 @@
 // src/hooks/useSSE.js
 import { useEffect, useRef } from "react";
-import { connectSSE } from "../utils/sseClient";
+import { connectSSE } from "../sseClient";
 import { useAuth } from "../context/AuthContext";
 
 /* ---------- helpers ---------- */
