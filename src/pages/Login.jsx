@@ -1,6 +1,6 @@
 // src/pages/LoginPage.jsx — Walmart Style (clean, rounded, blue accents)
 import React, { useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, useLocation, Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import api from "../api/api";
 
@@ -71,8 +71,10 @@ const LinkBtn = ({ children, className = "", ...props }) => (
 
 /* -------------------------------- Component ------------------------------- */
 export default function LoginPage() {
-  const { login } = useAuth();
+  const { login, isAdmin, isSuperAdmin, isTheatreAdmin } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const from = location.state?.from?.pathname;
 
   const [form, setForm] = useState({ email: "", password: "" });
   const [forgotEmail, setForgotEmail] = useState("");
@@ -88,10 +90,25 @@ export default function LoginPage() {
     setMsg("");
     setLoading(true);
     try {
-      await login(form.email, form.password);
-      navigate("/profile");
+      // hint "USER" so context has a fallback if backend/JWT omits a role
+      await login(form.email, form.password, "USER");
+
+      // If user was blocked by a guard, return them to that page
+      if (from && from !== "/login" && from !== "/admin/login") {
+        navigate(from, { replace: true });
+        return;
+      }
+
+      // Otherwise role-based landing
+      if (isSuperAdmin || isAdmin) {
+        navigate("/admin", { replace: true });
+      } else if (isTheatreAdmin) {
+        navigate("/theatre/my", { replace: true });
+      } else {
+        navigate("/bookings", { replace: true });
+      }
     } catch (error) {
-      setErr(error?.response?.data?.message || "Invalid credentials");
+      setErr(error?.response?.data?.message || error?.message || "Invalid credentials");
     } finally {
       setLoading(false);
     }
