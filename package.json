@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "lint": "echo \"No lint configured\""
+    "lint": "echo \"No lint configured\"",
+    "postinstall": "npm rebuild esbuild --update-binary || true"
   },
 
   "dependencies": {
@@ -38,13 +39,10 @@
     "vite": "^5.4.10"
   },
 
-  "optionalDependencies": {
-    "@rollup/rollup-linux-x64-gnu": "^4.52.4"
-  },
-
   "engines": {
-    "node": "20.x",
-    "npm": "10.8.2"
-
+    "node": "20.x"
+    /* If you want to keep npm pinned, use a range instead:
+       "npm": ">=9 <11"
+    */
   }
 }
