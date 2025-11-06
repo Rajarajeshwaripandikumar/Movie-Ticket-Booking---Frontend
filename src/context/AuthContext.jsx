@@ -1,3 +1,4 @@
+// src/context/AuthContext.jsx
 import React, {
   createContext,
   useContext,
@@ -42,10 +43,16 @@ function normalizeRole(raw) {
 
     let v = String(val).trim().toUpperCase().replace(/\s+/g, "_");
 
+    // strip Spring prefix
     if (v.startsWith("ROLE_")) v = v.slice(5);
+
+    // map managers to theatre admin
     if (/_MANAGER$/.test(v)) v = "THEATER_ADMIN";
+
+    // British/American + owner variants
     if (["THEATRE_ADMIN", "THEATRE_OWNER", "THEATER_OWNER"].includes(v))
       v = "THEATER_ADMIN";
+
     if (v === "SUPERADMIN") v = "SUPER_ADMIN";
 
     return v;
@@ -56,53 +63,85 @@ function normalizeRole(raw) {
 
 function defaultLandingFor(role) {
   const r = normalizeRole(role);
-
   if (r === "SUPER_ADMIN" || r === "ADMIN") return "/admin/dashboard";
-  if (r === "THEATER_ADMIN") return "/theatre/my";
+  if (r === "THEATER_ADMIN") return "/theatre";
   return "/";
 }
 
+/* small storage helpers */
+const LS_KEYS = {
+  token: "token",
+  role: "role",
+  roles: "roles",
+  perms: "perms",
+  user: "user",
+};
+
+function writeJSON(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {}
+}
+
+function readJSON(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 /* ---------------- AuthProvider ---------------- */
 export function AuthProvider({ children }) {
-  const [token, setToken] = useState(() => localStorage.getItem("token") || null);
-  const [role, setRole] = useState(() => normalizeRole(localStorage.getItem("role")));
+  const [token, setToken] = useState(() => localStorage.getItem(LS_KEYS.token) || null);
+  const [role, setRole] = useState(() => normalizeRole(localStorage.getItem(LS_KEYS.role)));
   const [roles, setRoles] = useState(() => {
-    try {
-      const raw = JSON.parse(localStorage.getItem("roles"));
-      return Array.isArray(raw) ? raw.map(normalizeRole).filter(Boolean) : [];
-    } catch {
-      return [];
-    }
+    const raw = readJSON(LS_KEYS.roles, []);
+    return Array.isArray(raw) ? raw.map(normalizeRole).filter(Boolean) : [];
   });
 
   const [perms, setPerms] = useState(() => {
-    try {
-      const raw = JSON.parse(localStorage.getItem("perms"));
-      return Array.isArray(raw) ? raw.map(String) : [];
-    } catch {
-      return [];
-    }
+    const raw = readJSON(LS_KEYS.perms, []);
+    return Array.isArray(raw) ? raw.map(String) : [];
   });
 
-  const [user, setUser] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem("user"));
-    } catch {
-      return null;
-    }
-  });
+  const [user, setUser] = useState(() => readJSON(LS_KEYS.user, null));
 
-  /* Sync localStorage + token header */
+  /* Sync token -> localStorage + axios header */
   useEffect(() => {
     if (token) {
-      localStorage.setItem("token", token);
+      localStorage.setItem(LS_KEYS.token, token);
       api.setAuthToken?.(token);
+      // best-effort header if helper not present
+      if (api.defaults) api.defaults.headers.common.Authorization = `Bearer ${token}`;
     } else {
-      localStorage.removeItem("token");
+      localStorage.removeItem(LS_KEYS.token);
       api.setAuthToken?.(null);
+      if (api.defaults) delete api.defaults.headers.common.Authorization;
     }
   }, [token]);
+
+  /* Persist role/roles/perms/user whenever they change */
+  useEffect(() => {
+    if (role) localStorage.setItem(LS_KEYS.role, role);
+    else localStorage.removeItem(LS_KEYS.role);
+  }, [role]);
+
+  useEffect(() => {
+    if (roles?.length) writeJSON(LS_KEYS.roles, roles);
+    else localStorage.removeItem(LS_KEYS.roles);
+  }, [roles]);
+
+  useEffect(() => {
+    if (perms?.length) writeJSON(LS_KEYS.perms, perms);
+    else localStorage.removeItem(LS_KEYS.perms);
+  }, [perms]);
+
+  useEffect(() => {
+    if (user) writeJSON(LS_KEYS.user, user);
+    else localStorage.removeItem(LS_KEYS.user);
+  }, [user]);
 
   /* LOGIN */
   const login = useCallback(async (email, password, roleHint) => {
@@ -140,12 +179,25 @@ export function AuthProvider({ children }) {
       theaterId: claims.theatreId || claims.theaterId || data?.user?.theaterId || null,
     };
 
+    // set state
     setToken(t);
     setRole(finalRole);
     setRoles(normalizedRoles);
     setPerms(permsArr);
     setUser(finalUser);
 
+    // immediate storage for robustness
+    localStorage.setItem(LS_KEYS.token, t);
+    localStorage.setItem(LS_KEYS.role, finalRole);
+    writeJSON(LS_KEYS.roles, normalizedRoles);
+    writeJSON(LS_KEYS.perms, permsArr);
+    writeJSON(LS_KEYS.user, finalUser);
+
+    // set axios header right away
+    api.setAuthToken?.(t);
+    if (api.defaults) api.defaults.headers.common.Authorization = `Bearer ${t}`;
+
+    // land them by role
     setTimeout(() => window.location.replace(defaultLandingFor(finalRole)), 0);
   }, []);
 
@@ -156,12 +208,17 @@ export function AuthProvider({ children }) {
     setRoles([]);
     setPerms([]);
     setUser(null);
-    localStorage.clear();
+
+    // remove only our keys
+    Object.values(LS_KEYS).forEach((k) => localStorage.removeItem(k));
+
     api.setAuthToken?.(null);
+    if (api.defaults) delete api.defaults.headers.common.Authorization;
+
     setTimeout(() => window.location.replace("/"), 0);
   }, []);
 
-  /* REFRESH PROFILE — ✅ STABILIZED */
+  /* REFRESH PROFILE — stabilized deps */
   const refreshProfile = useCallback(async () => {
     try {
       const res = await api.get("/auth/me");
@@ -183,24 +240,25 @@ export function AuthProvider({ children }) {
         (Array.isArray(res?.data?.perms) && res.data.perms) ||
         perms;
 
-      setUser({
+      const nextUser = {
         ...u,
         role: nextRole,
         roles: normalizedRoles,
         perms: nextPerms,
         theaterId: u.theaterId || u.theatreId || user?.theaterId || null,
-      });
+      };
 
+      setUser(nextUser);
       setRole(nextRole);
       setRoles(normalizedRoles);
       setPerms(nextPerms);
 
-      return u;
+      return nextUser;
     } catch (err) {
       if (err?.response?.status === 401) logout();
       return null;
     }
-  }, [logout]); // ✅ only depends on logout now
+  }, [logout, role, perms, user]);
 
   /* Derived flags */
   const isLoggedIn = !!token;
@@ -220,7 +278,7 @@ export function AuthProvider({ children }) {
     }
   }, [isLoggedIn, role]);
 
-  /* ✅ Context value stable now */
+  /* Context value */
   const value = useMemo(
     () => ({
       token,
