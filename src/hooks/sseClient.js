@@ -1,3 +1,12 @@
+// src/hooks/sseClient.js
+
+/**
+ * Stable SSE Client
+ * - No forced reconnect loops (browser auto-reconnect only)
+ * - Ignores heartbeat pings
+ * - Clean JSON parse fallback
+ * - cancel() stops stream cleanly
+ */
 export function connectSSE({
   token,
   scope = "user",
@@ -21,17 +30,17 @@ export function connectSSE({
 
   es.onmessage = (evt) => {
     if (!evt?.data) return;
-    if (evt.data === "ping" || evt.data === ":keep-alive" || evt.data === "💓") return; // ignore heartbeats
+    if (evt.data === "ping" || evt.data === ":keep-alive" || evt.data === "💓") return;
+
     let parsed = evt.data;
     try { parsed = JSON.parse(parsed); } catch {}
-    onMessage?.(parsed);
+    onMessage?.(parsed, evt.type);
   };
 
-  // ✅ Never close or recreate — let browser do automatic reconnect
+  // ✅ Do not close stream inside onerror — allow native autoretry
   es.onerror = (err) => {
-    console.debug("[SSE] ⚠️ transient network issue — browser will auto-retry");
+    console.debug("[SSE] ⚠️ transient issue — browser will auto-retry");
     onError?.(err);
-    // do nothing
   };
 
   const cancel = () => {
@@ -39,11 +48,10 @@ export function connectSSE({
     console.debug("[SSE] 🔌 closed manually");
   };
 
-  // Optional: pause reconnects when hidden
   if (pauseWhenHidden && typeof document !== "undefined") {
     document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") {
-        console.debug("[SSE] ▶️ tab visible — keep active connection");
+      if (document.visibilityState === "visible" && es.readyState === EventSource.CLOSED) {
+        es = new EventSource(url, { withCredentials });
       }
     });
   }
@@ -51,11 +59,13 @@ export function connectSSE({
   return { eventSource: es, cancel };
 }
 
-/* utilities */
-function toJwtString(input) {
+function toJwtString(v) {
   try {
-    if (typeof input === "string") return input.replace(/^Bearer\s+/i, "").trim();
-    if (typeof input === "object") return toJwtString(input.token || input.jwt || input.access_token);
+    if (!v) return "";
+    if (typeof v === "string") return v.replace(/^Bearer\s+/i, "").trim();
+    if (typeof v === "object") return toJwtString(v.token || v.jwt || v.access_token);
     return "";
-  } catch { return ""; }
+  } catch {
+    return "";
+  }
 }
