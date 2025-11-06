@@ -16,6 +16,14 @@ const first = (x) => (x && typeof x === "object" ? x : null);
 const idOf = (x) => x?.id ?? x?._id ?? x?.uuid ?? "";
 const titleOf = (x) => x?.title ?? x?.name ?? x?.movieTitle ?? "Untitled";
 
+function decodeJwt(t) {
+  try {
+    return JSON.parse(atob(String(t ?? "").split(".")[1])) || {};
+  } catch {
+    return {};
+  }
+}
+
 async function getFirst(cands) {
   for (const ep of cands.filter(Boolean)) {
     try {
@@ -27,14 +35,27 @@ async function getFirst(cands) {
 }
 
 /* -------------------------------- Page -------------------------------- */
-export default function TheatreProfile() {
-  const { id: idFromParams } = useParams(); // not required by your current route, but supported if added later
+export default function TheatreView() {
+  const { id: idFromParams } = useParams(); // optional support for /theatre/:id
   const navigate = useNavigate();
-  const { token, user, isTheatreAdmin } = useAuth() || {};
+  const { token, adminToken, user, isTheatreAdmin } = useAuth() || {};
 
-  // Prefer user.theatreId for theatre admins; fall back to URL param if present
+  // ✅ use active token (admin preferred)
+  const activeToken = adminToken || token || null;
+  const payload = decodeJwt(activeToken);
+
+  // ✅ robust theatreId resolution (user object → URL param → JWT)
   const theatreId =
-    user?.theatreId || user?.theaterId || idFromParams || user?.theatre?._id || user?.theater?._id || "";
+    user?.theatreId ||
+    user?.theaterId ||
+    idFromParams ||
+    user?.theatre?._id ||
+    user?.theatre?.id ||
+    user?.theater?._id ||
+    user?.theater?.id ||
+    payload?.theatreId ||
+    payload?.theaterId ||
+    "";
 
   const [theatre, setTheatre] = useState(null);
   const [shows, setShows] = useState([]);
@@ -63,7 +84,8 @@ export default function TheatreProfile() {
         // 1) Load theatre details
         const tData =
           (await getFirst([
-            `/theatre/me`, // for theatre admin dashboards
+            `/theatre/my`,
+            `/theatre/me`,
             `/theaters/${theatreId}`,
             `/admin/theaters/${theatreId}`,
           ])) || {};
@@ -106,7 +128,7 @@ export default function TheatreProfile() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [theatreId]);
 
-  async function loadSeatLayout(theatreId, showId, showObj) {
+  async function loadSeatLayout(tid, showId, showObj) {
     setSelectedSeats(new Set());
     // Prefer layout on show object; else try dedicated endpoints
     const inlineLayout =
@@ -152,7 +174,6 @@ export default function TheatreProfile() {
   }
 
   function toggleSeat(seatId) {
-    // prevent toggling if booked
     const bookedSet = new Set((seatLayout.booked || []).map(String));
     if (bookedSet.has(String(seatId))) return;
     setSelectedSeats((prev) => {
@@ -169,7 +190,6 @@ export default function TheatreProfile() {
   function goToBooking() {
     if (!selectedShow) return;
     const sid = idOf(selectedShow);
-    // Hand off to your existing flow
     navigate(`/seats/${sid}?seats=${seatsToQuery()}`);
   }
 
@@ -192,9 +212,10 @@ export default function TheatreProfile() {
     return out;
   }, [seatLayout]);
 
-  /* --------------------------------- Render -------------------------------- */
-  if (!token && isTheatreAdmin) return <Navigate to="/admin/login" replace />;
+  /* --------------------------------- Guards -------------------------------- */
+  if (!activeToken && isTheatreAdmin) return <Navigate to="/admin/login" replace />;
 
+  /* --------------------------------- Render -------------------------------- */
   if (loading) {
     return (
       <div className="p-8">
@@ -241,8 +262,7 @@ export default function TheatreProfile() {
                   {shows.map((show) => {
                     const sid = idOf(show);
                     const active = idOf(selectedShow) === sid;
-                    const when =
-                      show.startTime || show.startAt || show.time || show.datetime || "";
+                    const when = show.startTime || show.startAt || show.time || show.datetime || "";
                     const price = show.basePrice ?? show.price ?? show.amount ?? "";
                     return (
                       <button
@@ -255,9 +275,7 @@ export default function TheatreProfile() {
                           active ? "bg-[#0071DC] text-white border-[#0071DC]" : "bg-white hover:bg-slate-50"
                         }`}
                       >
-                        <div className="text-sm font-semibold">
-                          {titleOf(show.movie || {})}
-                        </div>
+                        <div className="text-sm font-semibold">{titleOf(show.movie || {})}</div>
                         <div className="text-[11px] text-slate-600">
                           {when ? new Date(when).toLocaleString() : "—"} {price ? ` · ₹${price}` : ""}
                         </div>
