@@ -1,3 +1,4 @@
+// src/components/Navbar.jsx
 import React, { useState } from "react";
 import { Link, NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
@@ -94,9 +95,10 @@ export default function Navbar() {
     <header className="w-full sticky top-0 z-50">
       <div className="backdrop-blur-md bg-white/85 border-b border-slate-200 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="h-16 flex items-center justify-between">
-            {/* Brand */}
-            <Link to="/" className="flex items-center gap-3">
+          {/* ROW: logo | middle nav | right controls */}
+          <div className="h-16 flex items-center gap-6">
+            {/* Brand (left) */}
+            <Link to="/" className="flex items-center gap-3 shrink-0">
               <Card className="p-1.5">
                 <Logo size={36} />
               </Card>
@@ -105,8 +107,8 @@ export default function Navbar() {
               </div>
             </Link>
 
-            {/* Main Links */}
-            <nav className="hidden md:flex items-center gap-5">
+            {/* Main Links (middle) */}
+            <nav className="hidden md:flex items-center gap-5 ml-8">
               <NavLink to="/movies">
                 {({ isActive }) => <GhostLink active={isActive}>Movies</GhostLink>}
               </NavLink>
@@ -116,7 +118,6 @@ export default function Navbar() {
               <NavLink to="/showtimes">
                 {({ isActive }) => <GhostLink active={isActive}>Showtimes</GhostLink>}
               </NavLink>
-
               {isLoggedIn && !isAdmin && (
                 <NavLink to="/bookings">
                   {({ isActive }) => <GhostLink active={isActive}>My Bookings</GhostLink>}
@@ -124,8 +125,8 @@ export default function Navbar() {
               )}
             </nav>
 
-            {/* Right Controls */}
-            <div className="flex items-center gap-3 relative">
+            {/* Right Controls (pushed right) */}
+            <div className="ml-auto flex items-center gap-3 relative">
               {/* Admin access / login */}
               {!isLoggedIn ? (
                 <button
@@ -151,7 +152,7 @@ export default function Navbar() {
                     className="flex items-center gap-2 px-3 py-2 rounded-full border border-slate-300 bg-white"
                   >
                     <UserRound className="w-5 h-5 text-[#0071DC]" />
-                    {user?.name || user?.email}
+                    <span className="max-w-[160px] truncate">{user?.name || user?.email}</span>
                     <ChevronDown className="w-4 h-4 text-slate-600" />
                   </button>
 
