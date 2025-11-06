@@ -38,8 +38,9 @@ async function tryFetch(candidates = [], signal) {
 }
 
 export default function TheatreDashboard() {
-  const { token, user, isTheatreAdmin } = useAuth() || {};
-  const payload = token ? decodeJwt(token) : {};
+  const { token, adminToken, user, isTheatreAdmin } = useAuth() || {};
+  const activeToken = adminToken || token || null;           // ✅ use admin token if present
+  const payload = activeToken ? decodeJwt(activeToken) : {};
   const theatreIdFromUser =
     user?.theatreId ||
     user?.theaterId ||
@@ -74,7 +75,7 @@ export default function TheatreDashboard() {
           [
             theatreIdFromUser ? `/theaters/${theatreIdFromUser}` : "",
             theatreIdFromUser ? `/admin/theaters/${theatreIdFromUser}` : "",
-            "/theatre/my", // last fallback (often 404 for you)
+            "/theatre/my", // fallback if backend supports "my theatre"
           ].filter(Boolean),
           signal
         )) || {};
@@ -148,7 +149,7 @@ export default function TheatreDashboard() {
   );
 
   useEffect(() => {
-    if (!token || !isTheatreAdmin) return;
+    if (!activeToken || !isTheatreAdmin) return;
     if (tried404Ref.current) return; // don’t keep retrying after first 404
 
     mountedRef.current = true;
@@ -179,10 +180,10 @@ export default function TheatreDashboard() {
       mountedRef.current = false;
       controller.abort();
     };
-  }, [token, isTheatreAdmin, loadDashboard]);
+  }, [activeToken, isTheatreAdmin, loadDashboard]);
 
-  // 🔒 Guard using context boolean to avoid role string mismatch
-  if (!token) return <Navigate to="/admin/login" replace />;
+  // 🔒 Guard using active token (admin or user)
+  if (!activeToken) return <Navigate to="/admin/login" replace />;
   if (!isTheatreAdmin) {
     return <div className="p-8 text-center text-rose-600 font-semibold">Access Denied</div>;
   }
