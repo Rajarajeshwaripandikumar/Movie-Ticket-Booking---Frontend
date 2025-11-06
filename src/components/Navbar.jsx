@@ -83,14 +83,21 @@ const normalizeNotifications = (raw) => {
     Array.isArray(raw?.content) ? raw.content :
     Array.isArray(raw?.notifications) ? raw.notifications : [];
 
-  return arr.map((n, i) => ({
-    id: n._id ?? n.id ?? `n-${i}`,
-    type: n.type ?? n.kind ?? "",
-    title: n.title ?? n.subject ?? "Notification",
-    message: n.message ?? n.body ?? n.text ?? "",
-    createdAt: n.createdAt ?? n.timestamp ?? n.time ?? new Date().toISOString(),
-    readAt: n.readAt ?? (n.read === true ? new Date().toISOString() : null),
-  }));
+  const unreadFallback = Number(
+    raw?.unread ?? raw?.unreadCount ?? raw?.meta?.unread ?? 0
+  );
+
+  return {
+    items: arr.map((n, i) => ({
+      id: n._id ?? n.id ?? `n-${i}`,
+      type: n.type ?? n.kind ?? "",
+      title: n.title ?? n.subject ?? "Notification",
+      message: n.message ?? n.body ?? n.text ?? "",
+      createdAt: n.createdAt ?? n.timestamp ?? n.time ?? new Date().toISOString(),
+      readAt: n.readAt ?? (n.read === true ? new Date().toISOString() : null),
+    })),
+    unreadFallback,
+  };
 };
 
 /* -------------------------------------------------------------------------- */
@@ -105,6 +112,7 @@ export default function Navbar() {
     isLoggedIn,
     token: ctxToken,
   } = useAuth();
+
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -116,7 +124,13 @@ export default function Navbar() {
   const [notifications, setNotifications] = useState([]);
   const notifRef = useRef(null);
 
-  const token = ctxToken || localStorage.getItem("token") || "";
+  // Prefer context token; otherwise try common localStorage keys
+  const token =
+    ctxToken ||
+    localStorage.getItem("adminToken") ||
+    localStorage.getItem("theatreToken") ||
+    localStorage.getItem("token") ||
+    "";
 
   const unread = useMemo(() => notifications.filter((n) => !n.readAt).length, [notifications]);
 
@@ -124,20 +138,36 @@ export default function Navbar() {
     if (!isLoggedIn || !token) return;
     let alive = true;
 
+    // Try multiple endpoints; stop on first non-empty response
+    const candidates =
+      (isSuperAdmin || isAdmin || isTheatreAdmin)
+        ? ["/admin/notifications", "/notifications", "/user/notifications"]
+        : ["/notifications", "/user/notifications"];
+
     const load = async () => {
-      try {
-        const res = await api.get("/notifications", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const items = normalizeNotifications(res.data);
-        if (alive) setNotifications(items);
-      } catch {/* ignore */}
+      for (const path of candidates) {
+        try {
+          const res = await api.get(path, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          const { items, unreadFallback } = normalizeNotifications(res.data);
+          console.debug("[notifications] via", path, { itemsLen: items.length, unreadFallback });
+          if (!alive) return;
+          if (items.length > 0 || unreadFallback > 0) {
+            setNotifications(items);
+            return;
+          }
+        } catch {
+          // try next
+        }
+      }
+      if (alive) setNotifications([]);
     };
 
     load();
     const t = setInterval(load, 30000); // optional polling
     return () => { alive = false; clearInterval(t); };
-  }, [isLoggedIn, token]);
+  }, [isLoggedIn, token, isSuperAdmin, isAdmin, isTheatreAdmin]);
 
   useEffect(() => {
     const onDocClick = (e) => {
@@ -157,12 +187,17 @@ export default function Navbar() {
   const resolveNotificationPath = (n) => {
     const t = (n.type || "").toLowerCase();
     if (t.includes("booking")) return "/bookings";
-    if (t.includes("showtime")) return (isSuperAdmin || isAdmin || isTheatreAdmin) ? "/admin/showtimes" : "/showtimes";
+    if (t.includes("showtime"))
+      return (isSuperAdmin || isAdmin || isTheatreAdmin) ? "/admin/showtimes" : "/showtimes";
     return (isSuperAdmin || isAdmin || isTheatreAdmin) ? "/admin" : "/bookings";
   };
+
   const markOneRead = async (id) => {
     try {
-      await api.post(`/notifications/${id}/read`, {}, { headers: { Authorization: `Bearer ${token}` } });
+      const path = (isSuperAdmin || isAdmin || isTheatreAdmin)
+        ? `/admin/notifications/${id}/read`
+        : `/notifications/${id}/read`;
+      await api.post(path, {}, { headers: { Authorization: `Bearer ${token}` } });
       setNotifications((prev) =>
         prev.map((n) => (n.id === id ? { ...n, readAt: n.readAt || new Date().toISOString() } : n))
       );
@@ -239,11 +274,14 @@ export default function Navbar() {
                             className="text-[11px] px-2 py-1 rounded-full border border-slate-300 bg-white hover:bg-slate-50 font-semibold"
                             onClick={async () => {
                               try {
-                                await api.post("/notifications/read-all", {}, { headers: { Authorization: `Bearer ${token}` } });
+                                const path = (isSuperAdmin || isAdmin || isTheatreAdmin)
+                                  ? "/admin/notifications/read-all"
+                                  : "/notifications/read-all";
+                                await api.post(path, {}, { headers: { Authorization: `Bearer ${token}` } });
                                 setNotifications((prev) =>
                                   prev.map((n) => ({ ...n, readAt: n.readAt || new Date().toISOString() }))
                                 );
-                              } catch {/* ignore */}
+                              } catch { /* ignore */ }
                             }}
                           >
                             Mark all as read
@@ -382,7 +420,9 @@ export default function Navbar() {
       </div>
 
       {/* Spacer in case sticky header overlaps admin pages */}
-      {path.startsWith("/admin") || path.startsWith("/theatre") ? <div className="h-0 md:h-0" /> : null}
+      {(location.pathname || "").startsWith("/admin") || (location.pathname || "").startsWith("/theatre")
+        ? <div className="h-0 md:h-0" />
+        : null}
     </header>
   );
 }
