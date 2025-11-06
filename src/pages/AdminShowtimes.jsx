@@ -53,7 +53,8 @@ function SecondaryBtn({ children, className = "", ...props }) {
 
 /* --------------------------------- Logic ---------------------------------- */
 export default function AdminShowtimes() {
-  const { token, role } = useAuth() || {};
+  // ✅ Use isSuperAdmin instead of role === 'admin'
+  const { token, isSuperAdmin } = useAuth() || {};
   const [movies, setMovies] = useState([]);
   const [theaters, setTheaters] = useState([]);
   const [screens, setScreens] = useState([]);
@@ -93,7 +94,7 @@ export default function AdminShowtimes() {
   }
 
   useEffect(() => {
-    if (token && role?.toLowerCase() === "admin") {
+    if (token && isSuperAdmin) {
       loadMovies();
       loadTheaters();
       loadShowtimes();
@@ -101,11 +102,12 @@ export default function AdminShowtimes() {
       setMovies([]); setTheaters([]); setShowtimes([]); setScreens([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, role]);
+  }, [token, isSuperAdmin]);
 
   async function loadMovies() {
     try {
-      const candidates = ["/movies", "/admin/movies", "/api/movies", "/movies/admin/list"];
+      const ts = Date.now();
+      const candidates = [`/admin/movies?ts=${ts}`, `/movies?ts=${ts}`, `/api/movies?ts=${ts}`, `/movies/admin/list?ts=${ts}`];
       const list = await tryFetchCandidates(candidates);
       setMovies(list);
       if (list?.length) setMovieId((p) => p || list[0]._id || list[0].id || "");
@@ -117,7 +119,8 @@ export default function AdminShowtimes() {
 
   async function loadTheaters() {
     try {
-      const candidates = ["/admin/theaters", "/theaters", "/api/theaters", "/theaters/admin/list"];
+      const ts = Date.now();
+      const candidates = [`/admin/theaters?ts=${ts}`, `/theaters?ts=${ts}`, `/api/theaters?ts=${ts}`, `/theaters/admin/list?ts=${ts}`];
       const list = await tryFetchCandidates(candidates);
       setTheaters(list);
       if (list?.length) {
@@ -137,11 +140,12 @@ export default function AdminShowtimes() {
     setScreens([]); setScreenId(""); setRows(null); setCols(null);
     if (!id) return;
     try {
+      const ts = Date.now();
       const candidates = [
-        `/admin/theaters/${id}/screens`,
-        `/theaters/${id}/screens`,
-        `/api/theaters/${id}/screens`,
-        `/screens?theaterId=${id}`,
+        `/admin/theaters/${id}/screens?ts=${ts}`,
+        `/theaters/${id}/screens?ts=${ts}`,
+        `/api/theaters/${id}/screens?ts=${ts}`,
+        `/screens?theaterId=${id}&ts=${ts}`,
       ];
       const list = await tryFetchCandidates(candidates);
       setScreens(list);
@@ -165,12 +169,13 @@ export default function AdminShowtimes() {
 
   async function loadShowtimes() {
     try {
-      const candidates = ["/admin/showtimes", "/showtimes", "/api/showtimes", "/showtimes/admin/list"];
+      const ts = Date.now();
+      const candidates = [`/admin/showtimes?ts=${ts}`, `/showtimes?ts=${ts}`, `/api/showtimes?ts=${ts}`, `/showtimes/admin/list?ts=${ts}`];
       const list = await tryFetchCandidates(candidates);
       setShowtimes(list);
       if (list?.length) {
         setShowtimeId((p) => p || list[0]._id || list[0].id || "");
-        const st = list[0].startTime || list[0].date || list[0].datetime || null;
+        const st = list[0].startTime || list[0].startAt || list[0].date || list[0].datetime || null;
         if (st) setStartTime(toLocalDatetimeInputValue(st));
       }
     } catch (err) {
@@ -190,8 +195,8 @@ export default function AdminShowtimes() {
     setShowtimeId(id);
     const st = showtimes.find((s) => s._id === id || s.id === id);
     if (st) {
-      setStartTime(toLocalDatetimeInputValue(st.startTime ?? st.date ?? st.datetime));
-      setBasePrice(st.basePrice ?? st.amount ?? 200);
+      setStartTime(toLocalDatetimeInputValue(st.startTime ?? st.startAt ?? st.date ?? st.datetime));
+      setBasePrice(st.basePrice ?? st.price ?? st.amount ?? 200);
       setCity(st.theater?.city ?? st.city ?? "");
       if (st.screen) setScreenId(st.screen._id ?? st.screen);
       if (st.theater) setTheaterId(st.theater._id ?? st.theater);
@@ -201,19 +206,28 @@ export default function AdminShowtimes() {
 
   async function createShowtime(e) {
     e.preventDefault();
-    if (!movieId || !screenId || !city || !startTime) {
-      setMsg("Movie, screen, city, and start time are required.");
+    if (!movieId || !theaterId || !screenId || !city || !startTime) {
+      setMsg("Movie, theater, screen, city, and start time are required.");
       setMsgType("error");
       return;
     }
     setLoading(true);
     try {
+      const iso = new Date(startTime).toISOString();
+      // ✅ Send multiple field aliases for compatibility
       const payload = {
-        movie: movieId,
+        movieId,                // common
+        theaterId,
+        screenId,
+        movie: movieId,         // alias
+        theater: theaterId,
         screen: screenId,
         city,
-        startTime: new Date(startTime).toISOString(),
-        basePrice: Number(basePrice),
+        startAt: iso,           // alias 1
+        startTime: iso,         // alias 2
+        price: Number(basePrice),
+        basePrice: Number(basePrice), // alias
+        amount: Number(basePrice),    // alias
         rows: rows ?? undefined,
         cols: cols ?? undefined,
       };
@@ -230,6 +244,7 @@ export default function AdminShowtimes() {
       if (!created) throw new Error("Create endpoint not found");
 
       setMsg("Showtime created successfully!"); setMsgType("success");
+      setStartTime("");
       await loadShowtimes();
     } catch (err) {
       console.error("createShowtime error", err);
@@ -245,6 +260,7 @@ export default function AdminShowtimes() {
     setLoading(true);
     try {
       const iso = new Date(startTime).toISOString();
+      const body = { startAt: iso, startTime: iso }; // send both
       const candidates = [
         `/admin/showtimes/${showtimeId}`,
         `/showtimes/${showtimeId}`,
@@ -253,7 +269,7 @@ export default function AdminShowtimes() {
       let patched = false;
       for (const ep of candidates) {
         try {
-          await api.patch(ep, { startTime: iso });
+          await api.patch(ep, body);
           patched = true;
           break;
         } catch (_) {}
@@ -286,8 +302,7 @@ export default function AdminShowtimes() {
   /* -------------------------------- Render -------------------------------- */
   return (
     <main className="admin-showtimes-root min-h-screen bg-slate-50 text-slate-900 py-8 px-4 md:px-6">
-      {/* Local CSS override to force vertical stacking & full width of cards.
-          We keep this small and scoped to .admin-showtimes-root so it won't leak. */}
+      {/* Local CSS override to force vertical stacking & full width of cards. */}
       <style>{`
         .admin-showtimes-root .stack { display: flex !important; flex-direction: column !important; gap: 1.5rem !important; }
         .admin-showtimes-root .admin-card { display: block !important; width: 100% !important; }
@@ -420,7 +435,14 @@ export default function AdminShowtimes() {
                 showtimes.map((s) => (
                   <option key={s._id || s.id} value={s._id || s.id}>
                     {(s.movie?.title || s.movie?.name || (s.movie && String(s.movie)) || "Movie")} — {s.city || ""} —{" "}
-                    {s.startTime ? new Date(s.startTime).toLocaleString() : s.date ? new Date(s.date).toLocaleString() : "—"} — ₹{s.basePrice ?? s.amount ?? ""}
+                    {s.startTime
+                      ? new Date(s.startTime).toLocaleString()
+                      : s.startAt
+                      ? new Date(s.startAt).toLocaleString()
+                      : s.date
+                      ? new Date(s.date).toLocaleString()
+                      : "—"}{" "}
+                    — ₹{s.basePrice ?? s.price ?? s.amount ?? ""}
                   </option>
                 ))}
             </Field>
@@ -452,7 +474,7 @@ export default function AdminShowtimes() {
                   (s.movie && (s.movie.title || s.movie.name)) ||
                   (typeof s.movie === "string" ? s.movie : "Unknown movie");
                 const theaterName = (s.theater && (s.theater.name || s.theater.title)) || s.city || "";
-                const start = s.startTime || s.date || s.datetime || "";
+                const start = s.startTime || s.startAt || s.date || s.datetime || "";
                 return (
                   <div key={s._id || s.id} className="flex items-center justify-between border border-slate-100 rounded-lg p-3">
                     <div>
