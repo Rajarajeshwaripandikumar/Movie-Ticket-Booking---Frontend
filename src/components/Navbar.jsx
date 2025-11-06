@@ -1,3 +1,4 @@
+// src/components/Navbar.jsx
 import React, { useEffect, useState, useRef } from "react";
 import { Link, NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
@@ -54,23 +55,28 @@ function GhostLink({ active, className = "", ...rest }) {
 }
 
 /* ------------------------------- Menu Link ------------------------------- */
+/* Programmatic navigation so clicks work even if the menu re-renders that tick */
 function MenuItemLink({ to, children, onClick }) {
+  const navigate = useNavigate();
   return (
-    <Link
-      to={to}
-      onClick={(e) => onClick?.(e)}
+    <button
+      type="button"
+      onClick={(e) => {
+        onClick?.(e);
+        navigate(to);
+      })}
       className="block w-full text-left px-3 py-2 text-sm rounded-xl hover:bg-slate-50 font-semibold"
       role="menuitem"
     >
       {children}
-    </Link>
+    </button>
   );
 }
 
 /* ------------------------------- Constants ------------------------------ */
 const SUPER_ADMIN_LINKS = [
   { label: "Manage Theaters", to: "/admin/theaters" },
-   { label: "Manage Movies", to: "/admin/movies" },
+  { label: "Manage Movies", to: "/admin/movies" },
   { label: "Manage Screens", to: "/admin/screens" },
   { label: "Manage Showtimes", to: "/admin/showtimes" },
   { label: "Update Pricing", to: "/admin/pricing" },
