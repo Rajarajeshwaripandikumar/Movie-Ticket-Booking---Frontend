@@ -48,6 +48,7 @@ import TheatreShowtimes from "./pages/theatre/TheatreShowtimes";
 import TheatreProfile from "./pages/theatre/TheatreProfile";
 import TheatreReports from "./pages/theatre/TheatreReports";
 import TheatrePricing from "./pages/theatre/TheatrePricing";
+import TheatreView from "./pages/theatre/TheatreView"; // ← unified profile + seat picker
 
 // Super-only
 import TheatreAdmins from "./pages/super/TheatreAdmins";
@@ -70,8 +71,8 @@ function RequireAuth({ children, role }) {
   // No token → send correctly
   if (!userToken && !adminToken) {
     const needsAdmin = Array.isArray(role)
-      ? role.includes("SUPER_ADMIN") || role.includes("THEATER_ADMIN")
-      : role === "SUPER_ADMIN" || role === "THEATER_ADMIN";
+      ? role.map(norm).some((r) => r === "SUPER_ADMIN" || r === "THEATER_ADMIN")
+      : norm(role) === "SUPER_ADMIN" || norm(role) === "THEATER_ADMIN";
 
     return (
       <Navigate
@@ -174,7 +175,14 @@ export default function App() {
             <Route path="/profile/me" element={<RequireAuth role={["USER","SUPER_ADMIN","THEATER_ADMIN"]}><RoleProfileRouter /></RequireAuth>} />
 
             {/* ========== SUPER ADMIN & THEATRE ADMIN Landing ========== */}
-            <Route path="/admin" element={<RequireAuth role={["SUPER_ADMIN","THEATER_ADMIN"]}><AdminShell><AdminIndex /></AdminShell></RequireAuth>} />
+            <Route
+              path="/admin"
+              element={
+                <RequireAuth role={["SUPER_ADMIN","THEATER_ADMIN"]}>
+                  <AdminShell><AdminIndex /></AdminShell>
+                </RequireAuth>
+              }
+            />
 
             {/* SUPER_ADMIN ONLY */}
             <Route path="/admin/dashboard" element={<RequireAuth role="SUPER_ADMIN"><AdminShell><AdminDashboard /></AdminShell></RequireAuth>} />
@@ -192,11 +200,16 @@ export default function App() {
             {/* ========== THEATRE ADMIN ONLY ========== */}
             <Route path="/theatre" element={<RequireAuth role="THEATER_ADMIN"><AdminShell><TheatreIndex /></AdminShell></RequireAuth>} />
             <Route path="/theatre/my" element={<RequireAuth role="THEATER_ADMIN"><AdminShell><TheatreDashboard /></AdminShell></RequireAuth>} />
+            {/* Optional alias to support /theatre/dashboard in the sidebar */}
+            <Route path="/theatre/dashboard" element={<RequireAuth role="THEATER_ADMIN"><AdminShell><Navigate to="/theatre/my" replace /></AdminShell></RequireAuth>} />
             <Route path="/theatre/screens" element={<RequireAuth role="THEATER_ADMIN"><AdminShell><TheatreScreens /></AdminShell></RequireAuth>} />
             <Route path="/theatre/showtimes" element={<RequireAuth role="THEATER_ADMIN"><AdminShell><TheatreShowtimes /></AdminShell></RequireAuth>} />
             <Route path="/theatre/profile" element={<RequireAuth role="THEATER_ADMIN"><AdminShell><TheatreProfile /></AdminShell></RequireAuth>} />
             <Route path="/theatre/reports" element={<RequireAuth role="THEATER_ADMIN"><AdminShell><TheatreReports /></AdminShell></RequireAuth>} />
             <Route path="/theatre/pricing" element={<RequireAuth role="THEATER_ADMIN"><AdminShell><TheatrePricing /></AdminShell></RequireAuth>} />
+            {/* TheatreView (unified profile + seat picker) */}
+            <Route path="/theatre/view" element={<RequireAuth role="THEATER_ADMIN"><AdminShell><TheatreView /></AdminShell></RequireAuth>} />
+            <Route path="/theatre/view/:id" element={<RequireAuth role="THEATER_ADMIN"><AdminShell><TheatreView /></AdminShell></RequireAuth>} />
 
             {/* SUPER_ADMIN only — manage theatre admins */}
             <Route path="/super/theatre-admins" element={<RequireAuth role="SUPER_ADMIN"><AdminShell><TheatreAdmins /></AdminShell></RequireAuth>} />
