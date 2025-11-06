@@ -63,8 +63,9 @@ function normalizeRole(raw) {
 
 function defaultLandingFor(role) {
   const r = normalizeRole(role);
-  if (r === "SUPER_ADMIN" || r === "ADMIN") return "/admin/dashboard";
-  if (r === "THEATER_ADMIN") return "/theatre";
+  if (r === "SUPER_ADMIN") return "/admin/dashboard";
+  if (r === "THEATER_ADMIN") return "/admin/my-theatre";
+  if (r === "ADMIN") return "/admin/dashboard"; // only if you actually use ADMIN
   return "/";
 }
 
@@ -368,9 +369,16 @@ export function AuthProvider({ children }) {
   /* Derived flags */
   const isLoggedIn = !!activeToken;
   const isSuperAdmin = role === "SUPER_ADMIN";
-  const isAdmin = role === "ADMIN" || isSuperAdmin;
+  const isAdmin = role === "ADMIN";                 // keep ADMIN literal only
   const isTheatreAdmin = role === "THEATER_ADMIN";
   const isUser = role === "USER";
+
+  /* RBAC helpers */
+  const hasRole = useCallback((r) => role === r, [role]);
+  const hasAnyRole = useCallback((...rs) => rs.some((r) => r && r === role), [role]);
+
+  /* Who can open the admin shell (panel) */
+  const canOpenAdminPanel = isSuperAdmin || isTheatreAdmin;
 
   /* Redirect on load (only when logged in) */
   useEffect(() => {
@@ -406,9 +414,14 @@ export function AuthProvider({ children }) {
       // flags
       isLoggedIn,
       isSuperAdmin,
-      isAdmin,
+      isAdmin,            // literal ADMIN
       isTheatreAdmin,
       isUser,
+      canOpenAdminPanel,
+
+      // rbac helpers
+      hasRole,
+      hasAnyRole,
     }),
     [
       token,
@@ -426,6 +439,9 @@ export function AuthProvider({ children }) {
       isAdmin,
       isTheatreAdmin,
       isUser,
+      canOpenAdminPanel,
+      hasRole,
+      hasAnyRole,
     ]
   );
 
