@@ -52,24 +52,48 @@ import TheatrePricing from "./pages/theatre/TheatrePricing";
 // Super-only: Theatre Admins list
 import TheatreAdmins from "./pages/super/TheatreAdmins";
 
-// import useSSE from "./hooks/useSSE"; // optional live notifications
-
 /* ---------------- Helpers & Guards ---------------- */
 
 function NotFound() {
   return <p className="p-6 text-center text-gray-500">404 — Page not found</p>;
 }
 
-/** Auth guard with SUPER_ADMIN → allowed on THEATER_ADMIN routes */
+const norm = (r) => (r ? String(r).trim().toUpperCase().replace(/\s+/g, "_") : null);
+const isAdminRoleName = (r) => {
+  const x = norm(r);
+  return x === "SUPER_ADMIN" || x === "ADMIN" || x === "THEATER_ADMIN";
+};
+
+/**
+ * RequireAuth
+ * - Prefers adminToken when the route requires an admin role
+ * - Redirects to /admin/login for admin routes without admin token
+ * - Redirects to /login for user routes without any token
+ * - SUPER_ADMIN can access THEATER_ADMIN routes
+ */
 function RequireAuth({ children, role }) {
   const auth = useAuth();
   const location = useLocation();
 
-  const token = auth?.token || localStorage.getItem("token");
-  const userRole = auth?.role;
+  // Pull tokens from context first; fall back to localStorage
+  const adminToken =
+    auth?.adminToken || localStorage.getItem("adminToken") || null;
+  const userToken =
+    auth?.token || localStorage.getItem("token") || null;
 
-  if (!token) {
-    const isAdminRoute = Array.isArray(role) && role.some((r) => r.includes("ADMIN"));
+  const currentRole = norm(auth?.role);
+
+  // Which roles are required for this route?
+  const required = Array.isArray(role) ? role.map(norm) : role ? [norm(role)] : [];
+
+  // Is this an admin route? (any required role contains ADMIN)
+  const isAdminRoute =
+    required.length > 0 ? required.some(isAdminRoleName) : false;
+
+  // Determine if we have a token that is acceptable for the route
+  const hasToken = isAdminRoute ? !!adminToken : !!(adminToken || userToken);
+
+  if (!hasToken) {
     return (
       <Navigate
         to={isAdminRoute ? "/admin/login" : "/login"}
@@ -79,14 +103,18 @@ function RequireAuth({ children, role }) {
     );
   }
 
-  if (!role) return children;
+  // If no specific role required, token presence is enough
+  if (required.length === 0) return children;
 
-  const required = Array.isArray(role) ? role : [role];
-  const superOverridesTheatre = userRole === "SUPER_ADMIN" && required.includes("THEATER_ADMIN");
+  // Role checks (SUPER_ADMIN overrides THEATER_ADMIN)
+  const superOverridesTheatre =
+    currentRole === "SUPER_ADMIN" && required.includes("THEATER_ADMIN");
 
-  if (required.includes(userRole) || superOverridesTheatre) return children;
+  if (required.includes(currentRole) || superOverridesTheatre) return children;
 
-  return <Navigate to="/" replace />;
+  // If we ended up here, we are logged in with the wrong role.
+  // Send admins back to admin home, users to site home.
+  return <Navigate to={isAdminRoute ? "/admin" : "/"} replace />;
 }
 
 function ScrollToTop() {
@@ -97,8 +125,9 @@ function ScrollToTop() {
 
 function AdminIndex() {
   const auth = useAuth();
-  if (auth.role === "SUPER_ADMIN") return <Navigate to="/admin/dashboard" replace />;
-  if (auth.role === "THEATER_ADMIN") return <Navigate to="/theatre/my" replace />;
+  const role = norm(auth?.role);
+  if (role === "SUPER_ADMIN") return <Navigate to="/admin/dashboard" replace />;
+  if (role === "THEATER_ADMIN") return <Navigate to="/theatre/my" replace />;
   return <Navigate to="/" replace />;
 }
 
@@ -109,16 +138,15 @@ function TheatreIndex() {
 /** Smart router: send each role to its own profile page */
 function RoleProfileRouter() {
   const { role } = useAuth() || {};
-  if (role === "SUPER_ADMIN" || role === "ADMIN") return <Navigate to="/admin/profile" replace />;
-  if (role === "THEATER_ADMIN") return <Navigate to="/theatre/profile" replace />;
+  const r = norm(role);
+  if (r === "SUPER_ADMIN" || r === "ADMIN") return <Navigate to="/admin/profile" replace />;
+  if (r === "THEATER_ADMIN") return <Navigate to="/theatre/profile" replace />;
   return <Navigate to="/profile" replace />;
 }
 
 /* ---------------------------------- App ---------------------------------- */
 
 export default function App() {
-  // useSSE(); // uncomment if you want SSE notifications globally
-
   return (
     <div className="flex flex-col min-h-screen text-gray-800 overflow-x-hidden bg-transparent">
       <Navbar />
@@ -145,7 +173,7 @@ export default function App() {
             <Route path="/movies" element={<Movies />} />
             <Route path="/movies/:movieId" element={<MovieDetail />} />
             <Route path="/showtimes" element={<Showtimes />} />
-            <Route path="/theaters" element={<TheatersPage />} /> {/* added so navbar link works */}
+            <Route path="/theaters" element={<TheatersPage />} />
 
             {/* Booking */}
             <Route path="/seats/:showtimeId" element={<SeatSelection />} />
@@ -157,7 +185,7 @@ export default function App() {
             <Route path="/account" element={<RequireAuth role="USER"><AccountInfo /></RequireAuth>} />
             <Route path="/bookings" element={<RequireAuth role="USER"><MyBookings /></RequireAuth>} />
             <Route path="/bookings/:id" element={<RequireAuth role="USER"><TicketDetails /></RequireAuth>} />
-            <Route path="/ticket/:bookingId" element={<RequireAuth role="USER"><TicketDetails /></RequireAuth>} /> {/* alias */}
+            <Route path="/ticket/:bookingId" element={<RequireAuth role="USER"><TicketDetails /></RequireAuth>} />
 
             {/* Smart aliases for “my profile” */}
             <Route
