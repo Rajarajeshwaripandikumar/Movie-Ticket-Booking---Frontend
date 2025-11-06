@@ -1,9 +1,10 @@
 // src/components/Navbar.jsx
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import Logo from "./Logo";
-import { ChevronDown, Menu, X, UserRound, Shield, LogOut } from "lucide-react";
+import { ChevronDown, Menu, X, UserRound, Shield, LogOut, Bell } from "lucide-react";
+import api from "../api/api";
 
 /* --------------------------- Walmart primitives --------------------------- */
 const cn = (...xs) => xs.filter(Boolean).join(" ");
@@ -76,21 +77,101 @@ const THEATRE_ADMIN_LINKS = [
 /* -------------------------------------------------------------------------- */
 
 export default function Navbar() {
-  const { user, logout, isAdmin, isSuperAdmin, isTheatreAdmin, isLoggedIn } = useAuth();
+  const {
+    user,
+    logout,
+    isAdmin,
+    isSuperAdmin,
+    isTheatreAdmin,
+    isLoggedIn,
+    token: ctxToken,
+  } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
   const [open, setOpen] = useState(false);
   const [adminMenu, setAdminMenu] = useState(false);
 
-  // ✅ Render Navbar everywhere (including /admin and /theatre)
+  // Notifications state
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const notifRef = useRef(null);
+
+  // Prefer token from context; fallback to localStorage
+  const token = ctxToken || localStorage.getItem("token") || "";
+
+  // Unread derived from notifications; fallback to user count if present
+  const unread = useMemo(() => {
+    const fromList = notifications.filter((n) => !n.readAt).length;
+    const fromUser = Number(user?.unreadNotifications ?? 0);
+    return fromList || fromUser || 0;
+  }, [notifications, user]);
+
+  // Fetch notifications once when logged in (and when token changes)
+  useEffect(() => {
+    if (!isLoggedIn || !token) return;
+    let ignore = false;
+    (async () => {
+      try {
+        const res = await api.get("/notifications", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const items = Array.isArray(res.data) ? res.data : res.data?.items || [];
+        if (!ignore) setNotifications(items);
+      } catch {
+        // ignore fetch errors
+      }
+    })();
+    return () => {
+      ignore = true;
+    };
+  }, [isLoggedIn, token]);
+
+  // Close dropdowns on outside click
+  useEffect(() => {
+    const onDocClick = (e) => {
+      if (!notifRef.current) return;
+      if (!notifRef.current.contains(e.target)) setNotifOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, []);
+
+  // Close menus when route changes
+  useEffect(() => {
+    setNotifOpen(false);
+    setAdminMenu(false);
+  }, [location.pathname]);
+
+  // Helpers
+  const toKey = (n) => n._id || n.id || `${n.type || "n"}-${n.createdAt || Math.random()}`;
+  const resolveNotificationPath = (n) => {
+    const t = (n.type || "").toLowerCase();
+    if (t.includes("booking")) return "/bookings";
+    if (t.includes("showtime")) return (isSuperAdmin || isAdmin || isTheatreAdmin) ? "/admin/showtimes" : "/showtimes";
+    return (isSuperAdmin || isAdmin || isTheatreAdmin) ? "/admin" : "/bookings";
+  };
+  const markOneRead = async (id) => {
+    try {
+      await api.post(`/notifications/${id}/read`, {}, { headers: { Authorization: `Bearer ${token}` } });
+      setNotifications((prev) =>
+        prev.map((n) =>
+          (n._id === id || n.id === id) ? { ...n, readAt: n.readAt || new Date().toISOString() } : n
+        )
+      );
+    } catch {
+      // ignore
+    }
+  };
+
+  // Render Navbar everywhere (including /admin and /theatre)
   const path = location.pathname || "";
 
   // Role-aware profile link
   const profilePath = isSuperAdmin ? "/admin/profile" : isTheatreAdmin ? "/theatre/profile" : "/profile";
 
   return (
-    <header className="w-full sticky top-0 z-50"> {/* keep sticky; high z-index */}
+    <header className="w-full sticky top-0 z-50">
       <div className="relative isolate z-50 backdrop-blur-md bg-white/85 border-b border-slate-200 shadow-sm overflow-visible">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           {/* ROW: logo | middle nav | right controls */}
@@ -125,6 +206,100 @@ export default function Navbar() {
 
             {/* Right Controls (pushed right) */}
             <div className="ml-auto flex items-center gap-3 relative">
+              {/* Notifications */}
+              {isLoggedIn && (
+                <div className="relative z-50" ref={notifRef}>
+                  <IconBtn
+                    aria-label="Notifications"
+                    title="Notifications"
+                    onClick={() => { setNotifOpen((v) => !v); setAdminMenu(false); }}
+                  >
+                    <Bell className="w-5 h-5" />
+                  </IconBtn>
+
+                  {unread > 0 && (
+                    <span className="absolute -top-1 -right-1 text-[10px] leading-none px-1.5 py-0.5 rounded-full border border-white bg-rose-600 text-white shadow-sm">
+                      {unread > 99 ? "99+" : unread}
+                    </span>
+                  )}
+
+                  {notifOpen && (
+                    <Card
+                      className="absolute right-0 mt-3 w-80 bg-white max-h-96 overflow-auto p-0 z-50"
+                      onClick={(e) => e.stopPropagation()}
+                      role="menu"
+                      aria-label="Notifications"
+                    >
+                      {/* Mark all as read */}
+                      {notifications.length > 0 && (
+                        <div className="sticky top-0 bg-white border-b border-slate-200 p-2 text-right">
+                          <button
+                            className="text-[11px] px-2 py-1 rounded-full border border-slate-300 bg-white hover:bg-slate-50 font-semibold"
+                            onClick={async () => {
+                              try {
+                                await api.post("/notifications/read-all", {}, { headers: { Authorization: `Bearer ${token}` } });
+                                setNotifications((prev) =>
+                                  prev.map((n) => ({ ...n, readAt: n.readAt || new Date().toISOString() }))
+                                );
+                              } catch { /* ignore */ }
+                            }}
+                          >
+                            Mark all as read
+                          </button>
+                        </div>
+                      )}
+
+                      {notifications.length === 0 ? (
+                        <div className="p-4 text-sm text-slate-600 text-center">No notifications yet.</div>
+                      ) : (
+                        <ul>
+                          {notifications.map((n) => {
+                            const to = resolveNotificationPath(n);
+                            return (
+                              <li key={toKey(n)}>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setNotifOpen(false);
+                                    if ((n._id || n.id) && !n.readAt) markOneRead(n._id || n.id);
+                                    navigate(to);
+                                  }}
+                                  className={cn(
+                                    "w-full text-left p-3 border-b border-slate-200 last:border-b-0",
+                                    "hover:bg-slate-50 focus:bg-slate-50 outline-none",
+                                    !n.readAt && "bg-yellow-50/70"
+                                  )}
+                                  title="Open notification"
+                                  role="menuitem"
+                                >
+                                  <div className="flex items-start gap-2">
+                                    {!n.readAt && (
+                                      <span className="mt-1 inline-block w-2 h-2 rounded-full bg-rose-500" />
+                                    )}
+                                    <div className="flex-1">
+                                      <div className="text-sm font-extrabold text-slate-900">
+                                        {n.title || "Notification"}
+                                      </div>
+                                      <div className="text-xs text-slate-700 whitespace-pre-line">
+                                        {n.message || n.body || ""}
+                                      </div>
+                                      <div className="text-[10px] text-slate-500 mt-1">
+                                        {new Date(n.createdAt || Date.now()).toLocaleString()}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </button>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+                    </Card>
+                  )}
+                </div>
+              )}
+
               {/* Admin access / login */}
               {!isLoggedIn ? (
                 <button
@@ -155,7 +330,7 @@ export default function Navbar() {
                   </button>
 
                   {adminMenu && (
-                    <Card className="absolute right-0 mt-2 w-64 p-1 bg-white z-50"> {/* z-50 prevents clipping */}
+                    <Card className="absolute right-0 mt-2 w-64 p-1 bg-white z-50">
                       {/* Profile routes by role */}
                       <MenuItemLink to={profilePath} onClick={() => setAdminMenu(false)}>
                         Profile
@@ -189,6 +364,7 @@ export default function Navbar() {
                         onClick={async () => {
                           await logout();
                           setAdminMenu(false);
+                          setNotifOpen(false);
                           navigate("/", { replace: true });
                         }}
                         className="w-full text-left px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 rounded-xl font-semibold"
@@ -209,10 +385,8 @@ export default function Navbar() {
         </div>
       </div>
 
-      {/* Optional: add spacer so sticky header doesn't cover top content on admin pages */}
-      {path.startsWith("/admin") || path.startsWith("/theatre") ? (
-        <div className="h-0 md:h-0" />
-      ) : null}
+      {/* Optional: spacer so sticky header doesn't cover top content on admin pages */}
+      {path.startsWith("/admin") || path.startsWith("/theatre") ? <div className="h-0 md:h-0" /> : null}
     </header>
   );
 }
