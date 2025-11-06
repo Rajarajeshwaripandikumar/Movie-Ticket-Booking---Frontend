@@ -71,7 +71,13 @@ function toLocalDatetimeInputValue(iso) {
 export default function TheatreShowtimes() {
   const { token, user, isTheatreAdmin } = useAuth() || {};
   const theatreId =
-    user?.theatreId || user?.theaterId || user?.theatre?._id || user?.theater?._id || "";
+    user?.theatreId ||
+    user?.theaterId ||
+    user?.theatre?.id ||
+    user?.theatre?._id ||
+    user?.theater?.id ||
+    user?.theater?._id ||
+    "";
 
   const [movies, setMovies] = useState([]);
   const [screens, setScreens] = useState([]);
@@ -96,6 +102,7 @@ export default function TheatreShowtimes() {
     document.title = "Manage Showtimes | Theatre";
   }, []);
 
+  // 🔁 Load theatre, movies, screens, showtimes
   useEffect(() => {
     if (!token || !isTheatreAdmin || !theatreId) return;
     (async () => {
@@ -104,9 +111,10 @@ export default function TheatreShowtimes() {
       try {
         const ts = Date.now();
 
-        // Load theatre details (for city inference)
+        // theatre (for city)
         const tData =
           (await tryGet([
+            `/theatre/my?ts=${ts}`,
             `/theatre/me?ts=${ts}`,
             `/theaters/${theatreId}?ts=${ts}`,
             `/admin/theaters/${theatreId}?ts=${ts}`,
@@ -115,11 +123,7 @@ export default function TheatreShowtimes() {
           tData?.theatre || tData?.theater || tData?.data || (typeof tData === "object" ? tData : null);
         setTheatre(t || null);
 
-        // Load movies
-        const mData = (await tryGet([`/admin/movies?ts=${ts}`, `/movies?ts=${ts}`])) || [];
-        setMovies(A(mData));
-
-        // Load screens for this theatre
+        // screens
         const sData =
           (await tryGet([
             `/theatre/screens?ts=${ts}`,
@@ -135,14 +139,39 @@ export default function TheatreShowtimes() {
           }))
         );
 
-        // Load showtimes for this theatre
+        // showtimes (used also to derive movie list if movies API returns empty)
         const stData =
           (await tryGet([
             `/theatre/showtimes?theatre=${theatreId}&ts=${ts}`,
             `/admin/showtimes?theatre=${theatreId}&ts=${ts}`,
             `/showtimes?theatre=${theatreId}&ts=${ts}`,
           ])) || [];
-        setShowtimes(A(stData));
+        const stItems = A(stData);
+        setShowtimes(stItems);
+
+        // movies (generic endpoints; may be empty)
+        const mData = (await tryGet([`/theatre/movies?ts=${ts}`, `/admin/movies?ts=${ts}`, `/movies?ts=${ts}`])) || [];
+        let mvItems = A(mData);
+
+        // ✅ Fallback: derive unique movies from existing showtimes
+        if (!mvItems.length && stItems.length) {
+          const seen = new Set();
+          mvItems = stItems
+            .map((st) => {
+              const m =
+                st.movie && typeof st.movie === "object"
+                  ? st.movie
+                  : { _id: st.movieId || st.movie, title: st.movieTitle || st.title || "Untitled" };
+              const id = idOf(m);
+              if (!id) return null;
+              if (seen.has(id)) return null;
+              seen.add(id);
+              return { _id: id, title: titleOf(m) };
+            })
+            .filter(Boolean);
+        }
+
+        setMovies(mvItems);
       } catch (e) {
         console.error("init load error", e);
         setMsgType("error");
@@ -191,7 +220,26 @@ export default function TheatreShowtimes() {
           `/admin/showtimes?theatre=${theatreId}&ts=${ts}`,
           `/showtimes?theatre=${theatreId}&ts=${ts}`,
         ])) || [];
-      setShowtimes(A(stData));
+      const stItems = A(stData);
+      setShowtimes(stItems);
+
+      // keep movie dropdown populated even if movies API remains empty
+      if (!movies.length && stItems.length) {
+        const seen = new Set();
+        const mv = stItems
+          .map((st) => {
+            const m =
+              st.movie && typeof st.movie === "object"
+                ? st.movie
+                : { _id: st.movieId || st.movie, title: st.movieTitle || st.title || "Untitled" };
+            const id = idOf(m);
+            if (!id || seen.has(id)) return null;
+            seen.add(id);
+            return { _id: id, title: titleOf(m) };
+          })
+          .filter(Boolean);
+        setMovies(mv);
+      }
     } catch (err) {
       console.error("create showtime err", err);
       setMsgType("error");
@@ -261,6 +309,8 @@ export default function TheatreShowtimes() {
     return <div className="p-8 text-center text-rose-600 font-semibold">Access Denied</div>;
   }
 
+  const formValid = Boolean(movieId && screenId && startTime);
+
   return (
     <main className="min-h-screen bg-slate-50 py-8">
       <div className="max-w-4xl mx-auto px-4 space-y-5">
@@ -293,7 +343,7 @@ export default function TheatreShowtimes() {
                 <option value="">Select screen</option>
                 {screens.map((s) => (
                   <option key={idOf(s)} value={idOf(s)}>
-                    {s.name} ({rowsOf(s) || "?"}×{colsOf(s) || "?"})
+                    {s.name || "Screen"} ({rowsOf(s) || "?"}×{colsOf(s) || "?"})
                   </option>
                 ))}
               </select>
@@ -322,7 +372,12 @@ export default function TheatreShowtimes() {
             </div>
 
             <div className="sm:col-span-2">
-              <button className="bg-[#0071DC] text-white rounded-full px-4 py-2">Create Showtime</button>
+              <button
+                disabled={!formValid}
+                className="bg-[#0071DC] text-white rounded-full px-4 py-2 disabled:opacity-50"
+              >
+                Create Showtime
+              </button>
             </div>
           </form>
         </Card>
@@ -351,7 +406,10 @@ export default function TheatreShowtimes() {
             <ul className="space-y-3">
               {showtimes.map((s) => {
                 const sid = idOf(s);
-                const movieTitle = s.movie?.title || s.movie?.name || (typeof s.movie === "string" ? s.movie : "Movie");
+                const movieTitle =
+                  s.movie?.title ||
+                  s.movie?.name ||
+                  (typeof s.movie === "string" ? s.movie : "Movie");
                 const when = s.startTime || s.startAt || s.time || s.datetime || "";
                 const price = s.basePrice ?? s.price ?? s.amount ?? "";
                 const editing = editId === sid;
