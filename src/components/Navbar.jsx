@@ -134,41 +134,30 @@ export default function Navbar() {
 
   const unread = useMemo(() => notifications.filter((n) => !n.readAt).length, [notifications]);
 
+  // Load notifications from your backend (single working endpoint)
   useEffect(() => {
     if (!isLoggedIn || !token) return;
     let alive = true;
 
-    // Try multiple endpoints; stop on first non-empty response
-    const candidates =
-      (isSuperAdmin || isAdmin || isTheatreAdmin)
-        ? ["/admin/notifications", "/notifications", "/user/notifications"]
-        : ["/notifications", "/user/notifications"];
-
     const load = async () => {
-      for (const path of candidates) {
-        try {
-          const res = await api.get(path, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          const { items, unreadFallback } = normalizeNotifications(res.data);
-          console.debug("[notifications] via", path, { itemsLen: items.length, unreadFallback });
-          if (!alive) return;
-          if (items.length > 0 || unreadFallback > 0) {
-            setNotifications(items);
-            return;
-          }
-        } catch {
-          // try next
-        }
+      try {
+        const res = await api.get("/notifications", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const { items } = normalizeNotifications(res.data);
+        if (!alive) return;
+        setNotifications(items);
+      } catch {
+        if (alive) setNotifications([]);
       }
-      if (alive) setNotifications([]);
     };
 
     load();
     const t = setInterval(load, 30000); // optional polling
     return () => { alive = false; clearInterval(t); };
-  }, [isLoggedIn, token, isSuperAdmin, isAdmin, isTheatreAdmin]);
+  }, [isLoggedIn, token]);
 
+  // Close dropdowns on outside click
   useEffect(() => {
     const onDocClick = (e) => {
       if (!notifRef.current) return;
@@ -178,6 +167,7 @@ export default function Navbar() {
     return () => document.removeEventListener("mousedown", onDocClick);
   }, []);
 
+  // Close menus on route change
   useEffect(() => {
     setNotifOpen(false);
     setAdminMenu(false);
@@ -194,14 +184,11 @@ export default function Navbar() {
 
   const markOneRead = async (id) => {
     try {
-      const path = (isSuperAdmin || isAdmin || isTheatreAdmin)
-        ? `/admin/notifications/${id}/read`
-        : `/notifications/${id}/read`;
-      await api.post(path, {}, { headers: { Authorization: `Bearer ${token}` } });
+      await api.post(`/notifications/${id}/read`, {}, { headers: { Authorization: `Bearer ${token}` } });
       setNotifications((prev) =>
         prev.map((n) => (n.id === id ? { ...n, readAt: n.readAt || new Date().toISOString() } : n))
       );
-    } catch {/* ignore */}
+    } catch { /* ignore */ }
   };
 
   const path = location.pathname || "";
@@ -274,10 +261,7 @@ export default function Navbar() {
                             className="text-[11px] px-2 py-1 rounded-full border border-slate-300 bg-white hover:bg-slate-50 font-semibold"
                             onClick={async () => {
                               try {
-                                const path = (isSuperAdmin || isAdmin || isTheatreAdmin)
-                                  ? "/admin/notifications/read-all"
-                                  : "/notifications/read-all";
-                                await api.post(path, {}, { headers: { Authorization: `Bearer ${token}` } });
+                                await api.post("/notifications/read-all", {}, { headers: { Authorization: `Bearer ${token}` } });
                                 setNotifications((prev) =>
                                   prev.map((n) => ({ ...n, readAt: n.readAt || new Date().toISOString() }))
                                 );
