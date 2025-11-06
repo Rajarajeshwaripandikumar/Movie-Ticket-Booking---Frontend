@@ -110,7 +110,8 @@ export default function Navbar() {
     isSuperAdmin,
     isTheatreAdmin,
     isLoggedIn,
-    token: ctxToken,
+    token: userToken,        // from context
+    adminToken,              // NEW: prefer this for admin
   } = useAuth();
 
   const navigate = useNavigate();
@@ -124,11 +125,11 @@ export default function Navbar() {
   const [notifications, setNotifications] = useState([]);
   const notifRef = useRef(null);
 
-  // Prefer context token; otherwise try common localStorage keys
+  // Prefer admin token, then context user token, then localStorage fallback
   const token =
-    ctxToken ||
+    adminToken ||
+    userToken ||
     localStorage.getItem("adminToken") ||
-    localStorage.getItem("theatreToken") ||
     localStorage.getItem("token") ||
     "";
 
@@ -191,8 +192,12 @@ export default function Navbar() {
     } catch { /* ignore */ }
   };
 
-  const path = location.pathname || "";
-  const profilePath = isSuperAdmin ? "/admin/profile" : isTheatreAdmin ? "/theatre/profile" : "/profile";
+  const profilePath =
+    isSuperAdmin ? "/admin/profile"
+    : isTheatreAdmin ? "/theatre/profile"
+    : "/profile";
+
+  const anyAdmin = isSuperAdmin || isAdmin || isTheatreAdmin;
 
   return (
     <header className="w-full sticky top-0 z-50">
@@ -221,7 +226,8 @@ export default function Navbar() {
               <NavLink to="/showtimes">
                 {({ isActive }) => <GhostLink active={isActive}>Showtimes</GhostLink>}
               </NavLink>
-              {isLoggedIn && !isAdmin && (
+              {/* Hide "My Bookings" for ALL admin roles */}
+              {isLoggedIn && !anyAdmin && (
                 <NavLink to="/bookings">
                   {({ isActive }) => <GhostLink active={isActive}>My Bookings</GhostLink>}
                 </NavLink>
@@ -344,7 +350,7 @@ export default function Navbar() {
                     Register
                   </Link>
                 </>
-              ) : (isAdmin || isSuperAdmin || isTheatreAdmin) ? (
+              ) : anyAdmin ? (
                 <button
                   onClick={() => navigate(isSuperAdmin ? "/admin" : isTheatreAdmin ? "/theatre" : "/admin")}
                   className="text-sm font-semibold px-4 py-2 rounded-full border border-[#0071DC]/40 text-[#0071DC] hover:bg-[#E8F1FF]"
@@ -371,7 +377,8 @@ export default function Navbar() {
                         Profile
                       </MenuItemLink>
 
-                      {!isAdmin && (
+                      {/* Hide My Bookings for ALL admin roles */}
+                      {!anyAdmin && (
                         <MenuItemLink to="/bookings" onClick={() => setAdminMenu(false)}>
                           My Bookings
                         </MenuItemLink>
