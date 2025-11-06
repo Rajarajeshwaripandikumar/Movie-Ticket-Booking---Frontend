@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import api from "../../api/api";
 import { useAuth } from "../../context/AuthContext";
+import { Navigate } from "react-router-dom";
 
 const Card = ({ children, className = "" }) => (
   <div className={`bg-white border border-slate-200 rounded-2xl shadow-sm p-4 ${className}`}>{children}</div>
@@ -15,6 +16,14 @@ const titleOf = (x) => x?.title ?? x?.name ?? x?.movieTitle ?? "Untitled";
 const rowsOf = (x) => x?.rows ?? x?.seatRows ?? x?.numRows ?? "";
 const colsOf = (x) => x?.cols ?? x?.columns ?? x?.seatCols ?? x?.numCols ?? "";
 const cityOf = (t) => t?.city ?? t?.location?.city ?? t?.location ?? "";
+
+function decodeJwt(t) {
+  try {
+    return JSON.parse(atob(String(t ?? "").split(".")[1])) || {};
+  } catch {
+    return {};
+  }
+}
 
 async function tryGet(endpoints) {
   for (const ep of endpoints.filter(Boolean)) {
@@ -69,7 +78,10 @@ function toLocalDatetimeInputValue(iso) {
 }
 
 export default function TheatreShowtimes() {
-  const { token, user, isTheatreAdmin } = useAuth() || {};
+  const { token, adminToken, user, isTheatreAdmin } = useAuth() || {};
+  const activeToken = adminToken || token || null;            // ✅ use admin token if present
+  const payload = decodeJwt(activeToken);
+
   const theatreId =
     user?.theatreId ||
     user?.theaterId ||
@@ -77,6 +89,8 @@ export default function TheatreShowtimes() {
     user?.theatre?._id ||
     user?.theater?.id ||
     user?.theater?._id ||
+    payload?.theatreId ||
+    payload?.theaterId ||
     "";
 
   const [movies, setMovies] = useState([]);
@@ -90,7 +104,7 @@ export default function TheatreShowtimes() {
 
   const [theatre, setTheatre] = useState(null);
   const [editId, setEditId] = useState("");
-  const [editStart, setEditStart] = useState("");
+  the const [editStart, setEditStart] = useState("");
 
   const [msg, setMsg] = useState("");
   const [msgType, setMsgType] = useState("info");
@@ -104,7 +118,7 @@ export default function TheatreShowtimes() {
 
   // 🔁 Load theatre, movies, screens, showtimes
   useEffect(() => {
-    if (!token || !isTheatreAdmin || !theatreId) return;
+    if (!activeToken || !isTheatreAdmin || !theatreId) return;
     (async () => {
       setLoading(true);
       setMsg("");
@@ -150,7 +164,9 @@ export default function TheatreShowtimes() {
         setShowtimes(stItems);
 
         // movies (generic endpoints; may be empty)
-        const mData = (await tryGet([`/theatre/movies?ts=${ts}`, `/admin/movies?ts=${ts}`, `/movies?ts=${ts}`])) || [];
+        const mData =
+          (await tryGet([`/theatre/movies?ts=${ts}`, `/admin/movies?ts=${ts}`, `/movies?ts=${ts}`])) ||
+          [];
         let mvItems = A(mData);
 
         // ✅ Fallback: derive unique movies from existing showtimes
@@ -181,7 +197,7 @@ export default function TheatreShowtimes() {
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, isTheatreAdmin, theatreId]);
+  }, [activeToken, isTheatreAdmin, theatreId]);
 
   async function createShowtime(e) {
     e?.preventDefault();
@@ -212,6 +228,7 @@ export default function TheatreShowtimes() {
       setScreenId("");
       setStartTime("");
       setBasePrice(150);
+
       // refresh list
       const ts = Date.now();
       const stData =
@@ -268,6 +285,7 @@ export default function TheatreShowtimes() {
       setMsgType("success");
       setMsg("Showtime updated.");
       cancelEdit();
+
       const ts = Date.now();
       const stData =
         (await tryGet([
@@ -290,6 +308,7 @@ export default function TheatreShowtimes() {
       await tryDelete([`/theatre/showtimes/${id}`, `/admin/showtimes/${id}`, `/showtimes/${id}`]);
       setMsgType("success");
       setMsg("Showtime deleted.");
+
       const ts = Date.now();
       const stData =
         (await tryGet([
@@ -305,6 +324,8 @@ export default function TheatreShowtimes() {
     }
   }
 
+  // ✅ Guards
+  if (!activeToken) return <Navigate to="/admin/login" replace />;
   if (!isTheatreAdmin) {
     return <div className="p-8 text-center text-rose-600 font-semibold">Access Denied</div>;
   }
@@ -427,7 +448,11 @@ export default function TheatreShowtimes() {
                         </div>
                         <div className="flex gap-2">
                           <button
-                            onClick={() => beginEdit(s)}
+                            onClick={() => {
+                              setEditId(sid);
+                              const w = s.startTime || s.startAt || s.time || s.datetime;
+                              setEditStart(toLocalDatetimeInputValue(w));
+                            }}
                             className="px-3 py-1 rounded-full border border-slate-300"
                           >
                             Edit
