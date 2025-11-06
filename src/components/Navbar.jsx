@@ -65,13 +65,14 @@ const SUPER_ADMIN_LINKS = [
   { label: "Theatre Admins", to: "/super/theatre-admins" },
 ];
 
+// ✅ cleaned & aligned with routes
 const THEATRE_ADMIN_LINKS = [
-  { label: "Dashboard", to: "/theatre" },
-  { label: "My Theatre", to: "/theatre/my" },
+  { label: "Dashboard", to: "/theatre/my" },
   { label: "Manage Screens", to: "/theatre/screens" },
   { label: "Manage Showtimes", to: "/theatre/showtimes" },
   { label: "Update Pricing", to: "/theatre/pricing" },
   { label: "Theatre Reports", to: "/theatre/reports" },
+  { label: "My Theatre", to: "/theatre/profile" },
 ];
 
 /* --------------------------- Notifications utils -------------------------- */
@@ -175,12 +176,23 @@ export default function Navbar() {
   }, [location.pathname]);
 
   const toKey = (n) => n.id || `${n.type || "n"}-${n.createdAt || Math.random()}`;
+
+  // ✅ theatre admins deep-link to /theatre/showtimes
   const resolveNotificationPath = (n) => {
     const t = (n.type || "").toLowerCase();
-    if (t.includes("booking")) return "/bookings";
-    if (t.includes("showtime"))
-      return (isSuperAdmin || isAdmin || isTheatreAdmin) ? "/admin/showtimes" : "/showtimes";
-    return (isSuperAdmin || isAdmin || isTheatreAdmin) ? "/admin" : "/bookings";
+    if (t.includes("booking")) {
+      return "/bookings"; // user booking list (admins usually have per-id route)
+    }
+    if (t.includes("showtime")) {
+      if (isSuperAdmin) return "/admin/showtimes";
+      if (isTheatreAdmin) return "/theatre/showtimes";
+      if (isAdmin) return "/admin/showtimes";
+      return "/showtimes";
+    }
+    // default landing by role
+    if (isTheatreAdmin) return "/theatre/my";
+    if (isSuperAdmin || isAdmin) return "/admin";
+    return "/bookings";
   };
 
   const markOneRead = async (id) => {
