@@ -56,11 +56,12 @@ function normalizeRole(raw) {
 
 function defaultLandingFor(role) {
   const r = normalizeRole(role);
-  if (r === "SUPER_ADMIN" || r === "ADMIN" || r === "THEATER_ADMIN") {
-    return "/admin/dashboard";
-  }
+
+  if (r === "SUPER_ADMIN" || r === "ADMIN") return "/admin/dashboard";
+  if (r === "THEATER_ADMIN") return "/theatre/my";
   return "/";
 }
+
 
 /* ---------------- AuthProvider ---------------- */
 export function AuthProvider({ children }) {
