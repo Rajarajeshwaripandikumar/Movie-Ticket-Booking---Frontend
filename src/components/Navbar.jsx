@@ -69,7 +69,6 @@ function MenuItemLink({ to, children, onClick }) {
 
 /* ------------------------------- Constants ------------------------------ */
 const SUPER_ADMIN_LINKS = [
-  { label: "Admin Dashboard", to: "/admin/dashboard" },
   { label: "Manage Theaters", to: "/admin/theaters" },
   { label: "Manage Screens", to: "/admin/screens" },
   { label: "Manage Showtimes", to: "/admin/showtimes" },
