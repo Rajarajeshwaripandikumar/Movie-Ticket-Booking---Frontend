@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "lint": "echo \"No lint configured\"",
-    "postinstall": "npm rebuild esbuild --update-binary || true"
+    "postinstall": "npm rebuild esbuild --update-binary || true",
+    "build:ci": "node -e \"console.log('Node',process.version);\" && npx vite --version && npx rollup --version || true && npm run build"
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.8",
