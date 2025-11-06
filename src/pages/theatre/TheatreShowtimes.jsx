@@ -1,5 +1,5 @@
-// src/pages/theatre/TheatreShowtimes.jsx
-import React, { useEffect, useState } from "react";
+// src/pages/theatre/TheatreShowtimes.jsx — resilient CRUD (Walmart style)
+import React, { useEffect, useMemo, useState } from "react";
 import api from "../../api/api";
 import { useAuth } from "../../context/AuthContext";
 
@@ -7,90 +7,407 @@ const Card = ({ children, className = "" }) => (
   <div className={`bg-white border border-slate-200 rounded-2xl shadow-sm p-4 ${className}`}>{children}</div>
 );
 
+// helpers
+const A = (x) =>
+  Array.isArray(x) ? x : Array.isArray(x?.items) ? x.items : Array.isArray(x?.data) ? x.data : [];
+const idOf = (x) => x?._id ?? x?.id ?? x?.uuid ?? "";
+const titleOf = (x) => x?.title ?? x?.name ?? x?.movieTitle ?? "Untitled";
+const rowsOf = (x) => x?.rows ?? x?.seatRows ?? x?.numRows ?? "";
+const colsOf = (x) => x?.cols ?? x?.columns ?? x?.seatCols ?? x?.numCols ?? "";
+const cityOf = (t) => t?.city ?? t?.location?.city ?? t?.location ?? "";
+
+async function tryGet(endpoints) {
+  for (const ep of endpoints.filter(Boolean)) {
+    try {
+      const r = await api.get(ep);
+      return r?.data ?? r;
+    } catch {}
+  }
+  return undefined;
+}
+async function tryPost(endpoints, body) {
+  for (const ep of endpoints.filter(Boolean)) {
+    try {
+      const r = await api.post(ep, body);
+      return r?.data ?? r;
+    } catch {}
+  }
+  throw new Error("Create endpoint not found");
+}
+async function tryPatchPut(endpoints, body) {
+  for (const ep of endpoints.filter(Boolean)) {
+    try {
+      const r = await api.patch(ep, body);
+      return r?.data ?? r;
+    } catch {
+      try {
+        const r2 = await api.put(ep, body);
+        return r2?.data ?? r2;
+      } catch {}
+    }
+  }
+  throw new Error("Update endpoint not found");
+}
+async function tryDelete(endpoints) {
+  for (const ep of endpoints.filter(Boolean)) {
+    try {
+      await api.delete(ep);
+      return true;
+    } catch {}
+  }
+  throw new Error("Delete endpoint not found");
+}
+
+function toLocalDatetimeInputValue(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d)) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(
+    d.getMinutes()
+  )}`;
+}
+
 export default function TheatreShowtimes() {
-  const { token, user, role } = useAuth();
-  const theatreId = user?.theatreId;
+  const { token, user, isTheatreAdmin } = useAuth() || {};
+  const theatreId =
+    user?.theatreId || user?.theaterId || user?.theatre?._id || user?.theater?._id || "";
+
+  const [movies, setMovies] = useState([]);
   const [screens, setScreens] = useState([]);
+  const [showtimes, setShowtimes] = useState([]);
+
   const [movieId, setMovieId] = useState("");
   const [screenId, setScreenId] = useState("");
   const [startTime, setStartTime] = useState("");
   const [basePrice, setBasePrice] = useState(150);
-  const [movies, setMovies] = useState([]);
+
+  const [theatre, setTheatre] = useState(null);
+  const [editId, setEditId] = useState("");
+  const [editStart, setEditStart] = useState("");
+
+  const [msg, setMsg] = useState("");
+  const [msgType, setMsgType] = useState("info");
+  const [loading, setLoading] = useState(true);
+
+  const city = useMemo(() => cityOf(theatre), [theatre]);
 
   useEffect(() => {
-    if (!theatreId || !token) return;
+    document.title = "Manage Showtimes | Theatre";
+  }, []);
+
+  useEffect(() => {
+    if (!token || !isTheatreAdmin || !theatreId) return;
     (async () => {
+      setLoading(true);
+      setMsg("");
       try {
-        const hdr = { headers: { Authorization: `Bearer ${token}` } };
-        const sRes = await api.get(`/admin/theaters/${theatreId}/screens`, hdr);
-        setScreens(sRes?.data || sRes || []);
-        const mRes = await api.get("/movies", hdr);
-        setMovies(mRes?.data || mRes || []);
-      } catch (err) {
-        console.error("load showtime data", err);
+        const ts = Date.now();
+
+        // Load theatre details (for city inference)
+        const tData =
+          (await tryGet([
+            `/theatre/me?ts=${ts}`,
+            `/theaters/${theatreId}?ts=${ts}`,
+            `/admin/theaters/${theatreId}?ts=${ts}`,
+          ])) || {};
+        const t =
+          tData?.theatre || tData?.theater || tData?.data || (typeof tData === "object" ? tData : null);
+        setTheatre(t || null);
+
+        // Load movies
+        const mData = (await tryGet([`/admin/movies?ts=${ts}`, `/movies?ts=${ts}`])) || [];
+        setMovies(A(mData));
+
+        // Load screens for this theatre
+        const sData =
+          (await tryGet([
+            `/theatre/screens?ts=${ts}`,
+            `/admin/theaters/${theatreId}/screens?ts=${ts}`,
+            `/theaters/${theatreId}/screens?ts=${ts}`,
+          ])) || [];
+        setScreens(
+          A(sData).map((s) => ({
+            ...s,
+            _id: idOf(s),
+            rows: rowsOf(s),
+            cols: colsOf(s),
+          }))
+        );
+
+        // Load showtimes for this theatre
+        const stData =
+          (await tryGet([
+            `/theatre/showtimes?theatre=${theatreId}&ts=${ts}`,
+            `/admin/showtimes?theatre=${theatreId}&ts=${ts}`,
+            `/showtimes?theatre=${theatreId}&ts=${ts}`,
+          ])) || [];
+        setShowtimes(A(stData));
+      } catch (e) {
+        console.error("init load error", e);
+        setMsgType("error");
+        setMsg(e?.response?.data?.message || "Failed to load showtimes data.");
+      } finally {
+        setLoading(false);
       }
     })();
-  }, [theatreId, token]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, isTheatreAdmin, theatreId]);
 
   async function createShowtime(e) {
     e?.preventDefault();
-    if (!movieId || !screenId || !startTime) return alert("Select movie, screen and start time");
+    if (!movieId || !screenId || !startTime) {
+      setMsgType("error");
+      setMsg("Select movie, screen and start time.");
+      return;
+    }
     try {
-      const hdr = { headers: { Authorization: `Bearer ${token}` } };
-      await api.post("/admin/showtimes", {
+      const iso = new Date(startTime).toISOString();
+      const body = {
+        movieId,
+        screenId,
         movie: movieId,
         screen: screenId,
-        city: "", // backend infers from screen/theatre if necessary
-        startTime,
-        basePrice,
-      }, hdr);
-      alert("Showtime created");
-      setMovieId(""); setScreenId(""); setStartTime(""); setBasePrice(150);
+        theatreId,
+        theaterId: theatreId,
+        city,
+        startTime: iso,
+        startAt: iso,
+        price: Number(basePrice),
+        basePrice: Number(basePrice),
+      };
+      await tryPost([`/theatre/showtimes`, `/admin/showtimes`, `/showtimes`], body);
+      setMsgType("success");
+      setMsg("Showtime created.");
+      setMovieId("");
+      setScreenId("");
+      setStartTime("");
+      setBasePrice(150);
+      // refresh list
+      const ts = Date.now();
+      const stData =
+        (await tryGet([
+          `/theatre/showtimes?theatre=${theatreId}&ts=${ts}`,
+          `/admin/showtimes?theatre=${theatreId}&ts=${ts}`,
+          `/showtimes?theatre=${theatreId}&ts=${ts}`,
+        ])) || [];
+      setShowtimes(A(stData));
     } catch (err) {
       console.error("create showtime err", err);
-      alert(err?.response?.data?.message || err.message || "Failed to create showtime");
+      setMsgType("error");
+      setMsg(err?.response?.data?.message || err.message || "Failed to create showtime");
     }
   }
 
-  if (role !== "THEATRE_ADMIN") return <div className="p-8 text-center text-rose-600 font-semibold">Access Denied</div>;
+  function beginEdit(st) {
+    setEditId(idOf(st));
+    const when = st.startTime || st.startAt || st.time || st.datetime;
+    setEditStart(toLocalDatetimeInputValue(when));
+  }
+  function cancelEdit() {
+    setEditId("");
+    setEditStart("");
+  }
+
+  async function saveEdit() {
+    if (!editId || !editStart) return;
+    try {
+      const iso = new Date(editStart).toISOString();
+      await tryPatchPut([`/theatre/showtimes/${editId}`, `/admin/showtimes/${editId}`, `/showtimes/${editId}`], {
+        startTime: iso,
+        startAt: iso,
+      });
+      setMsgType("success");
+      setMsg("Showtime updated.");
+      cancelEdit();
+      const ts = Date.now();
+      const stData =
+        (await tryGet([
+          `/theatre/showtimes?theatre=${theatreId}&ts=${ts}`,
+          `/admin/showtimes?theatre=${theatreId}&ts=${ts}`,
+          `/showtimes?theatre=${theatreId}&ts=${ts}`,
+        ])) || [];
+      setShowtimes(A(stData));
+    } catch (err) {
+      console.error("update showtime err", err);
+      setMsgType("error");
+      setMsg(err?.response?.data?.message || err.message || "Failed to update showtime");
+    }
+  }
+
+  async function removeShowtime(id) {
+    if (!id) return;
+    if (!window.confirm("Delete this showtime?")) return;
+    try {
+      await tryDelete([`/theatre/showtimes/${id}`, `/admin/showtimes/${id}`, `/showtimes/${id}`]);
+      setMsgType("success");
+      setMsg("Showtime deleted.");
+      const ts = Date.now();
+      const stData =
+        (await tryGet([
+          `/theatre/showtimes?theatre=${theatreId}&ts=${ts}`,
+          `/admin/showtimes?theatre=${theatreId}&ts=${ts}`,
+          `/showtimes?theatre=${theatreId}&ts=${ts}`,
+        ])) || [];
+      setShowtimes(A(stData));
+    } catch (err) {
+      console.error("delete showtime err", err);
+      setMsgType("error");
+      setMsg(err?.response?.data?.message || err.message || "Failed to delete showtime");
+    }
+  }
+
+  if (!isTheatreAdmin) {
+    return <div className="p-8 text-center text-rose-600 font-semibold">Access Denied</div>;
+  }
 
   return (
     <main className="min-h-screen bg-slate-50 py-8">
       <div className="max-w-4xl mx-auto px-4 space-y-5">
         <Card>
-          <h2 className="text-lg font-bold">Create Showtime</h2>
-
+          <h2 className="text-lg font-extrabold text-[#111827]">Create Showtime</h2>
           <form onSubmit={createShowtime} className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
             <div>
               <label className="text-xs font-semibold">Movie</label>
-              <select value={movieId} onChange={(e) => setMovieId(e.target.value)} className="w-full border p-2 rounded-xl">
+              <select
+                value={movieId}
+                onChange={(e) => setMovieId(e.target.value)}
+                className="w-full border p-2 rounded-xl"
+              >
                 <option value="">Select movie</option>
-                {movies.map((m) => <option key={m._id} value={m._id}>{m.title}</option>)}
+                {movies.map((m) => (
+                  <option key={idOf(m)} value={idOf(m)}>
+                    {titleOf(m)}
+                  </option>
+                ))}
               </select>
             </div>
 
             <div>
               <label className="text-xs font-semibold">Screen</label>
-              <select value={screenId} onChange={(e) => setScreenId(e.target.value)} className="w-full border p-2 rounded-xl">
+              <select
+                value={screenId}
+                onChange={(e) => setScreenId(e.target.value)}
+                className="w-full border p-2 rounded-xl"
+              >
                 <option value="">Select screen</option>
-                {screens.map((s) => <option key={s._id} value={s._id}>{s.name} ({s.rows}×{s.cols})</option>)}
+                {screens.map((s) => (
+                  <option key={idOf(s)} value={idOf(s)}>
+                    {s.name} ({rowsOf(s) || "?"}×{colsOf(s) || "?"})
+                  </option>
+                ))}
               </select>
             </div>
 
             <div>
               <label className="text-xs font-semibold">Start time</label>
-              <input value={startTime} onChange={(e) => setStartTime(e.target.value)} placeholder="YYYY-MM-DDTHH:MM" className="w-full border p-2 rounded-xl" />
+              <input
+                type="datetime-local"
+                value={startTime}
+                onChange={(e) => setStartTime(e.target.value)}
+                className="w-full border p-2 rounded-xl"
+              />
             </div>
 
             <div>
               <label className="text-xs font-semibold">Base price</label>
-              <input type="number" value={basePrice} onChange={(e) => setBasePrice(e.target.value)} className="w-full border p-2 rounded-xl" />
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={basePrice}
+                onChange={(e) => setBasePrice(e.target.value)}
+                className="w-full border p-2 rounded-xl"
+              />
             </div>
 
             <div className="sm:col-span-2">
               <button className="bg-[#0071DC] text-white rounded-full px-4 py-2">Create Showtime</button>
             </div>
           </form>
+        </Card>
+
+        {msg && (
+          <Card
+            className={`p-3 font-semibold ${
+              msgType === "error"
+                ? "bg-rose-50 border-rose-200 text-rose-700"
+                : msgType === "success"
+                ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                : "bg-blue-50 border-blue-200 text-blue-700"
+            }`}
+          >
+            {msg}
+          </Card>
+        )}
+
+        <Card>
+          <h3 className="font-semibold mb-3">Existing Showtimes</h3>
+          {loading ? (
+            <div>Loading…</div>
+          ) : showtimes.length === 0 ? (
+            <div className="text-sm text-slate-600">No showtimes found.</div>
+          ) : (
+            <ul className="space-y-3">
+              {showtimes.map((s) => {
+                const sid = idOf(s);
+                const movieTitle = s.movie?.title || s.movie?.name || (typeof s.movie === "string" ? s.movie : "Movie");
+                const when = s.startTime || s.startAt || s.time || s.datetime || "";
+                const price = s.basePrice ?? s.price ?? s.amount ?? "";
+                const editing = editId === sid;
+
+                return (
+                  <li key={sid} className="p-3 border rounded-xl flex flex-col gap-2">
+                    {!editing ? (
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <div className="font-semibold">{movieTitle}</div>
+                          <div className="text-xs text-slate-600">
+                            {when ? new Date(when).toLocaleString() : "—"}
+                            {price !== "" ? ` · ₹${price}` : ""}
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => beginEdit(s)}
+                            className="px-3 py-1 rounded-full border border-slate-300"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => removeShowtime(sid)}
+                            className="px-3 py-1 rounded-full border border-rose-200 text-rose-700"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+                        <div className="sm:col-span-2">
+                          <label className="text-xs font-semibold">Start time</label>
+                          <input
+                            type="datetime-local"
+                            value={editStart}
+                            onChange={(e) => setEditStart(e.target.value)}
+                            className="w-full border p-2 rounded-xl"
+                          />
+                        </div>
+                        <div className="flex gap-2">
+                          <button onClick={saveEdit} className="px-4 py-2 rounded-full bg-[#0071DC] text-white">
+                            Save
+                          </button>
+                          <button onClick={cancelEdit} className="px-4 py-2 rounded-full border border-slate-300">
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </Card>
       </div>
     </main>
