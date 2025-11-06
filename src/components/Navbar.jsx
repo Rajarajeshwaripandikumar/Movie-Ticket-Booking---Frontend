@@ -110,8 +110,8 @@ export default function Navbar() {
     isSuperAdmin,
     isTheatreAdmin,
     isLoggedIn,
-    token: userToken,        // from context
-    adminToken,              // NEW: prefer this for admin
+    token: userToken,
+    adminToken,
   } = useAuth();
 
   const navigate = useNavigate();
@@ -135,7 +135,7 @@ export default function Navbar() {
 
   const unread = useMemo(() => notifications.filter((n) => !n.readAt).length, [notifications]);
 
-  // Load notifications from your backend (single working endpoint)
+  // Load notifications
   useEffect(() => {
     if (!isLoggedIn || !token) return;
     let alive = true;
@@ -154,7 +154,7 @@ export default function Navbar() {
     };
 
     load();
-    const t = setInterval(load, 30000); // optional polling
+    const t = setInterval(load, 30000);
     return () => { alive = false; clearInterval(t); };
   }, [isLoggedIn, token]);
 
@@ -350,13 +350,6 @@ export default function Navbar() {
                     Register
                   </Link>
                 </>
-              ) : anyAdmin ? (
-                <button
-                  onClick={() => navigate(isSuperAdmin ? "/admin" : isTheatreAdmin ? "/theatre" : "/admin")}
-                  className="text-sm font-semibold px-4 py-2 rounded-full border border-[#0071DC]/40 text-[#0071DC] hover:bg-[#E8F1FF]"
-                >
-                  <Shield className="w-4 h-4 inline-block" /> Go to Admin
-                </button>
               ) : null}
 
               {/* Account Menu — only when logged in */}
@@ -378,7 +371,7 @@ export default function Navbar() {
                       </MenuItemLink>
 
                       {/* Hide My Bookings for ALL admin roles */}
-                      {!anyAdmin && (
+                      {!(isSuperAdmin || isAdmin || isTheatreAdmin) && (
                         <MenuItemLink to="/bookings" onClick={() => setAdminMenu(false)}>
                           My Bookings
                         </MenuItemLink>
