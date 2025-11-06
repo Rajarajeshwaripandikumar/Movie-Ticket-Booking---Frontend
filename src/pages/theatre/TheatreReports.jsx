@@ -1,6 +1,6 @@
 // src/pages/theatre/TheatreReports.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, Navigate } from "react-router-dom";
 import api from "../../api/api";
 import { useAuth } from "../../context/AuthContext";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
@@ -29,6 +29,14 @@ function fmtDateLong(d) {
 const A = (x) =>
   Array.isArray(x) ? x : Array.isArray(x?.items) ? x.items : Array.isArray(x?.data) ? x.data : [];
 
+function decodeJwt(t) {
+  try {
+    return JSON.parse(atob(String(t ?? "").split(".")[1])) || {};
+  } catch {
+    return {};
+  }
+}
+
 async function tryGet(endpoints) {
   for (const ep of endpoints.filter(Boolean)) {
     try {
@@ -42,9 +50,21 @@ async function tryGet(endpoints) {
 }
 
 export default function TheatreReports() {
-  const { user, isTheatreAdmin } = useAuth() || {};
+  const { token, adminToken, user, isTheatreAdmin } = useAuth() || {};
+  const activeToken = adminToken || token || null;               // ✅ use admin token when present
+  const payload = decodeJwt(activeToken);
+
+  // ✅ consistent theatreId detection (same as other theatre pages)
   const theatreId =
-    user?.theatreId || user?.theaterId || user?.theatre?._id || user?.theater?._id || "";
+    user?.theatreId ||
+    user?.theaterId ||
+    user?.theatre?._id ||
+    user?.theatre?.id ||
+    user?.theater?._id ||
+    user?.theater?.id ||
+    payload?.theatreId ||
+    payload?.theaterId ||
+    "";
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -77,11 +97,12 @@ export default function TheatreReports() {
   }, []);
 
   useEffect(() => {
+    if (!activeToken || !isTheatreAdmin || !theatreId) return;
+
     (async () => {
       setLoading(true);
       setError(null);
       try {
-        // Build endpoint candidates that your backend may expose
         const q = `start=${encodeURIComponent(startDate)}&end=${encodeURIComponent(endDate)}`;
         const base = theatreId ? `theatre=${encodeURIComponent(theatreId)}&` : "";
 
@@ -91,7 +112,7 @@ export default function TheatreReports() {
             `/theatre/reports?${base}${q}`,
             // Admin scoped with theatre filter
             `/admin/reports?${base}${q}`,
-            // Generic reports with theatre filter
+            // Generic with theatre filter
             `/reports?${base}${q}`,
           ])) || {};
 
@@ -104,7 +125,7 @@ export default function TheatreReports() {
         setLoading(false);
       }
     })();
-  }, [startDate, endDate, theatreId]);
+  }, [activeToken, isTheatreAdmin, theatreId, startDate, endDate]);
 
   const summary = reports?.summary || { revenue: 0, ticketsSold: 0, avgPrice: 0 };
   const salesByDay = reports?.salesByDay || [];
@@ -116,7 +137,7 @@ export default function TheatreReports() {
     return bookings.filter((b) => {
       const seatsStr = Array.isArray(b.seats) ? b.seats.join(" ") : (b.seats || "");
       return (
-        String(b.id).toLowerCase().includes(q) ||
+        String(b.id ?? b._id ?? "").toLowerCase().includes(q) ||
         (b.customerName || "").toLowerCase().includes(q) ||
         seatsStr.toLowerCase().includes(q) ||
         (b.showTitle || "").toLowerCase().includes(q)
@@ -148,7 +169,7 @@ export default function TheatreReports() {
     ];
     for (const b of filteredBookings) {
       rows.push([
-        b.id,
+        b.id ?? b._id ?? "",
         b.customerName || "",
         b.showTitle || "",
         b.showTime || "",
@@ -172,6 +193,12 @@ export default function TheatreReports() {
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+  }
+
+  // ✅ Proper guards
+  if (!activeToken) return <Navigate to="/admin/login" replace />;
+  if (!isTheatreAdmin) {
+    return <div className="p-8 text-center text-rose-600 font-semibold">Access Denied</div>;
   }
 
   if (loading) {
@@ -316,8 +343,8 @@ export default function TheatreReports() {
                   </thead>
                   <tbody>
                     {pageItems.map((b) => (
-                      <tr key={b.id} className="border-b">
-                        <td className="py-2 text-xs text-slate-700">{b.id}</td>
+                      <tr key={b.id ?? b._id} className="border-b">
+                        <td className="py-2 text-xs text-slate-700">{b.id ?? b._id}</td>
                         <td className="py-2">{b.customerName || "—"}</td>
                         <td className="py-2">{b.showTitle || "—"}</td>
                         <td className="py-2 text-xs">
