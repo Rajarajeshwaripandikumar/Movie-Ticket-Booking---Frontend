@@ -1,5 +1,5 @@
 // src/pages/theatre/TheatreDashboard.jsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import api from "../../api/api";
 import { useAuth } from "../../context/AuthContext";
 import { Monitor, CalendarClock, BarChart3 } from "lucide-react";
@@ -15,13 +15,15 @@ const arr = (x) =>
 const firstObj = (x) => (x && typeof x === "object" ? x : null);
 
 /** Try endpoints in order and return the first successful payload */
-async function tryFetch(candidates = []) {
+async function tryFetch(candidates = [], signal) {
   for (const ep of candidates) {
     try {
-      const res = await api.get(ep);
+      const res = await api.get(ep, { signal });
       return res?.data ?? res;
-    } catch (_) {
-      /* try next */
+    } catch (e) {
+      // If aborted, stop immediately
+      if (signal?.aborted) throw e;
+      // otherwise try next
     }
   }
   return undefined;
@@ -29,95 +31,138 @@ async function tryFetch(candidates = []) {
 
 export default function TheatreDashboard() {
   const { token, user, isTheatreAdmin } = useAuth() || {};
-  const theatreId = user?.theatreId || user?.theaterId || user?.theatre?.id || user?.theater?.id || "";
+  const theatreIdFromUser =
+    user?.theatreId || user?.theaterId || user?.theatre?.id || user?.theater?.id || "";
 
   const [stats, setStats] = useState({ screens: 0, upcomingShowtimes: 0, bookings: 0 });
   const [theatre, setTheatre] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
 
+  // prevent state writes after unmount + avoid redundant updates
+  const mountedRef = useRef(false);
+  const prevTheatreJson = useRef("");
+  const prevStatsJson = useRef("");
+
   useEffect(() => {
     document.title = "My Theatre | Cinema";
   }, []);
 
-  useEffect(() => {
-    if (!token || !isTheatreAdmin) return;
-    (async () => {
-      setLoading(true);
+  const loadDashboard = useCallback(
+    async (signal) => {
       setErr("");
 
+      /* ---------- load theatre details ---------- */
+      // IMPORTANT: prefer /theatre/my (not /theatre/me)
+      const tData =
+        (await tryFetch(
+          [
+            "/theatre/my",
+            theatreIdFromUser ? `/theaters/${theatreIdFromUser}` : "",
+            theatreIdFromUser ? `/admin/theaters/${theatreIdFromUser}` : "",
+          ].filter(Boolean),
+          signal
+        )) || {};
+
+      const t =
+        firstObj(tData.theatre) ||
+        firstObj(tData.theater) ||
+        firstObj(tData.data) ||
+        firstObj(tData) ||
+        null;
+
+      const tJson = JSON.stringify(t ?? {});
+      if (prevTheatreJson.current !== tJson) {
+        prevTheatreJson.current = tJson;
+        if (!signal?.aborted && mountedRef.current) setTheatre(t);
+      }
+
+      const resolvedTheatreId =
+        theatreIdFromUser || t?._id || t?.id || t?.theatreId || t?.theaterId || "";
+
+      /* ---------- load screens ---------- */
+      const sData =
+        (await tryFetch(
+          [
+            "/theatre/screens",
+            resolvedTheatreId ? `/theaters/${resolvedTheatreId}/screens` : "",
+            resolvedTheatreId ? `/admin/theaters/${resolvedTheatreId}/screens` : "",
+          ].filter(Boolean),
+          signal
+        )) || [];
+
+      const screens = arr(sData);
+      const screensCount = screens.length;
+
+      /* ---------- load upcoming showtimes ---------- */
+      const stData =
+        (await tryFetch(
+          [
+            "/theatre/showtimes?upcoming=true",
+            resolvedTheatreId ? `/showtimes?theatre=${resolvedTheatreId}&upcoming=true` : "",
+            resolvedTheatreId ? `/admin/showtimes?theatre=${resolvedTheatreId}&upcoming=true` : "",
+          ].filter(Boolean),
+          signal
+        )) || [];
+
+      const showtimes = arr(stData);
+      const upcomingShowtimes = showtimes.length;
+
+      /* ---------- load bookings summary ---------- */
+      const bData =
+        (await tryFetch(
+          [
+            "/theatre/reports?summary=true",
+            resolvedTheatreId ? `/theatre/reports?theatre=${resolvedTheatreId}&summary=true` : "",
+            resolvedTheatreId ? `/admin/reports?theatre=${resolvedTheatreId}&summary=true` : "",
+          ].filter(Boolean),
+          signal
+        )) || {};
+
+      const bookings =
+        bData?.count ?? bData?.totalBookings ?? (Array.isArray(bData) ? bData.length : 0);
+
+      const nextStats = { screens: screensCount, upcomingShowtimes, bookings };
+      const nextStatsJson = JSON.stringify(nextStats);
+      if (prevStatsJson.current !== nextStatsJson) {
+        prevStatsJson.current = nextStatsJson;
+        if (!signal?.aborted && mountedRef.current) setStats(nextStats);
+      }
+    },
+    [theatreIdFromUser]
+  );
+
+  useEffect(() => {
+    if (!token || !isTheatreAdmin) return;
+    mountedRef.current = true;
+    setLoading(true);
+
+    const controller = new AbortController();
+
+    (async () => {
       try {
-        /* ---------- load theatre details ---------- */
-        const tData =
-          (await tryFetch([
-            "/theatre/me",
-            theatreId ? `/theaters/${theatreId}` : "",
-            theatreId ? `/admin/theaters/${theatreId}` : "",
-          ].filter(Boolean))) || {};
-
-        // Normalize various shapes
-        const t =
-          firstObj(tData.theatre) ||
-          firstObj(tData.theater) ||
-          firstObj(tData.data) ||
-          firstObj(tData) ||
-          null;
-
-        setTheatre(t);
-
-        const resolvedTheatreId =
-          theatreId || t?._id || t?.id || t?.theatreId || t?.theaterId || "";
-
-        /* ---------- load screens ---------- */
-        const sData =
-          (await tryFetch(
-            [
-              "/theatre/screens",
-              resolvedTheatreId ? `/theaters/${resolvedTheatreId}/screens` : "",
-              resolvedTheatreId ? `/admin/theaters/${resolvedTheatreId}/screens` : "",
-            ].filter(Boolean)
-          )) || [];
-
-        const screens = arr(sData);
-        const screensCount = screens.length;
-
-        /* ---------- load upcoming showtimes ---------- */
-        const stData =
-          (await tryFetch(
-            [
-              "/theatre/showtimes?upcoming=true",
-              resolvedTheatreId ? `/showtimes?theatre=${resolvedTheatreId}&upcoming=true` : "",
-              resolvedTheatreId ? `/admin/showtimes?theatre=${resolvedTheatreId}&upcoming=true` : "",
-            ].filter(Boolean)
-          )) || [];
-
-        const showtimes = arr(stData);
-        const upcomingShowtimes = showtimes.length;
-
-        /* ---------- load bookings summary ---------- */
-        const bData =
-          (await tryFetch(
-            [
-              "/theatre/reports?summary=true",
-              resolvedTheatreId ? `/theatre/reports?theatre=${resolvedTheatreId}&summary=true` : "",
-              resolvedTheatreId ? `/admin/reports?theatre=${resolvedTheatreId}&summary=true` : "",
-            ].filter(Boolean)
-          )) || {};
-
-        const bookings =
-          bData?.count ??
-          bData?.totalBookings ??
-          (Array.isArray(bData) ? bData.length : 0);
-
-        setStats({ screens: screensCount, upcomingShowtimes, bookings });
+        await loadDashboard(controller.signal);
       } catch (e) {
-        console.error("TheatreDashboard load error", e?.response || e);
-        setErr(e?.response?.data?.message || "Failed to load theatre dashboard.");
+        if (!controller.signal.aborted) {
+          console.error("TheatreDashboard load error", e?.response || e);
+          const status = e?.response?.status;
+          if (status === 404) {
+            // Stop spinner and show a friendly message (no retry loop)
+            setTheatre(null);
+          } else {
+            setErr(e?.response?.data?.message || "Failed to load theatre dashboard.");
+          }
+        }
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     })();
-  }, [token, isTheatreAdmin, theatreId]);
+
+    return () => {
+      mountedRef.current = false;
+      controller.abort();
+    };
+  }, [token, isTheatreAdmin, loadDashboard]);
 
   // 🔒 Guard using context boolean to avoid role string mismatch
   if (!token) return <Navigate to="/admin/login" replace />;
