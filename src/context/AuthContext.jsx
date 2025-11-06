@@ -64,6 +64,15 @@ function normalizeRole(raw) {
   }
 }
 
+/* ---------------- default landing by role ---------------- */
+function defaultLandingFor(role) {
+  const r = normalizeRole(role);
+  if (r === "SUPER_ADMIN" || r === "ADMIN" || r === "THEATER_ADMIN") {
+    return "/admin/dashboard";
+  }
+  return "/";
+}
+
 /* ---------------- AuthProvider ---------------- */
 export function AuthProvider({ children }) {
   const [token, setToken] = useState(() => {
@@ -230,6 +239,13 @@ export function AuthProvider({ children }) {
       setPerms(permsArr);
       setUser(finalUser);
 
+      // --- redirect right after successful login
+      const target = defaultLandingFor(derivedRole);
+      // allow state/localStorage to settle before navigation
+      setTimeout(() => {
+        window.location.replace(target);
+      }, 0);
+
       return { token: t, role: derivedRole, roles: normalizedRoles, perms: permsArr, user: finalUser };
     } catch (err) {
       console.error("[Auth] login failed:", err);
@@ -257,6 +273,10 @@ export function AuthProvider({ children }) {
       localStorage.removeItem("user");
     } catch {}
     api.setAuthToken?.(null);
+    // Optional: send user to public home after logout
+    setTimeout(() => {
+      window.location.replace("/");
+    }, 0);
   }, []);
 
   /* ---------------- REFRESH PROFILE ---------------- */
@@ -307,6 +327,17 @@ export function AuthProvider({ children }) {
   const isAdmin = role === "ADMIN" || isSuperAdmin; // generic Admin flag
   const isTheatreAdmin = role === "THEATER_ADMIN"; // normalized
   const isUser = role === "USER";
+
+  /* ---------------- Auto-redirect on load/refresh ---------------- */
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    const target = defaultLandingFor(role);
+    const here = window.location.pathname;
+    // Auto-bounce from generic entry points
+    if ((here === "/" || here === "/login" || here === "/admin") && here !== target) {
+      window.location.replace(target);
+    }
+  }, [isLoggedIn, role]);
 
   const value = useMemo(
     () => ({
