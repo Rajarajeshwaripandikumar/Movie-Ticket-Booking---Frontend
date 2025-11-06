@@ -2,33 +2,75 @@
 import React, { useEffect, useState } from "react";
 import api from "../../api/api";
 import { useAuth } from "../../context/AuthContext";
+import { Navigate } from "react-router-dom";
+
+function decodeJwt(t) {
+  try {
+    return JSON.parse(atob(String(t ?? "").split(".")[1])) || {};
+  } catch {
+    return {};
+  }
+}
 
 export default function TheatreProfile() {
-  const { user, refreshProfile } = useAuth();
+  const { token, adminToken, user, isTheatreAdmin, refreshProfile } = useAuth() || {};
+  const activeToken = adminToken || token || null;                          // ✅ correct token
+
+  const payload = decodeJwt(activeToken);
+
+  // ✅ consistent theatreId detection across all theatre pages
   const theatreId =
-    user?.theatreId || user?.theaterId || user?.theatre?._id || user?.theater?._id || "";
+    user?.theatreId ||
+    user?.theaterId ||
+    user?.theatre?.id ||
+    user?.theatre?._id ||
+    user?.theater?.id ||
+    user?.theater?._id ||
+    payload?.theatreId ||
+    payload?.theaterId ||
+    "";
 
   const [theatre, setTheatre] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
 
   useEffect(() => {
+    if (!activeToken || !isTheatreAdmin) return;
+
     (async () => {
       try {
-        const res = await api.get(`/theatre/me`);
-        setTheatre(res.data?.theatre || res.data?.theater || res.data || null);
+        setErr("");
+        // Try multiple backend patterns — one will match yours
+        const res =
+          (await api.get(`/theatre/me`).catch(() => null)) ||
+          (await api.get(`/theatre/${theatreId}`).catch(() => null)) ||
+          (await api.get(`/admin/theaters/${theatreId}`).catch(() => null));
+
+        setTheatre(
+          res?.data?.theatre ||
+            res?.data?.theater ||
+            res?.data ||
+            null
+        );
       } catch (err) {
+        setErr("Failed to load theatre profile.");
         console.error(err);
       } finally {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [activeToken, isTheatreAdmin, theatreId]);
 
   async function save() {
     try {
       setSaving(true);
-      await api.put(`/theatre/me`, theatre);
+      setErr("");
+
+      await api.put(`/theatre/me`, theatre).catch(async () => {
+        return await api.put(`/theatre/${theatreId}`, theatre);
+      });
+
       await refreshProfile();
       alert("Updated successfully");
     } catch (err) {
@@ -39,7 +81,13 @@ export default function TheatreProfile() {
     }
   }
 
+  // ✅ Proper guards
+  if (!activeToken) return <Navigate to="/admin/login" replace />;
+  if (!isTheatreAdmin)
+    return <div className="p-8 text-center text-rose-600 font-semibold">Access Denied</div>;
+
   if (loading) return <div className="p-6 text-center">Loading…</div>;
+  if (err) return <div className="p-6 text-center text-rose-600">{err}</div>;
   if (!theatre) return <div className="p-6 text-center">Theatre not found</div>;
 
   return (
