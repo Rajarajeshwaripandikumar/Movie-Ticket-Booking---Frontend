@@ -53,6 +53,20 @@ function GhostLink({ active, className = "", ...rest }) {
   );
 }
 
+/* ------------------------------- Menu Link ------------------------------- */
+function MenuItemLink({ to, children, onClick }) {
+  return (
+    <Link
+      to={to}
+      onClick={(e) => onClick?.(e)}
+      className="block w-full text-left px-3 py-2 text-sm rounded-xl hover:bg-slate-50 font-semibold"
+      role="menuitem"
+    >
+      {children}
+    </Link>
+  );
+}
+
 /* ------------------------------- Constants ------------------------------ */
 const SUPER_ADMIN_LINKS = [
   { label: "Admin Dashboard", to: "/admin/dashboard" },
@@ -69,7 +83,7 @@ const THEATRE_ADMIN_LINKS = [
   { label: "My Theatre", to: "/theatre/my" },
   { label: "Manage Screens", to: "/theatre/screens" },
   { label: "Manage Showtimes", to: "/theatre/showtimes" },
-  { label: "Update Pricing", to: "/admin/pricing" }, // fixed: this route exists
+  { label: "Update Pricing", to: "/admin/pricing" },
   { label: "Theatre Reports", to: "/theatre/reports" },
 ];
 
@@ -247,6 +261,8 @@ export default function Navbar() {
   const unread = notifications.filter((n) => !n.readAt).length;
 
   /* -------------------------------- render -------------------------------- */
+  const profilePath = isSuperAdmin ? "/admin/profile" : isTheatreAdmin ? "/theatre/profile" : "/profile";
+
   return (
     <header className="w-full sticky top-0 z-50">
       <div className="backdrop-blur-md bg-white/85 border-b border-slate-200 shadow-sm">
@@ -330,18 +346,16 @@ export default function Navbar() {
 
                             return (
                               <li key={toKey(n)}>
-                                <button
-                                  type="button"
+                                <Link
+                                  to={to}
                                   onClick={(e) => {
-                                    e.stopPropagation();
                                     setNotifOpen(false);
                                     if (n._id && !n.readAt) {
                                       api.patch(`/notifications/${n._id}/read`, {}, { headers: { Authorization: authHeader } }).catch(()=>{});
                                     }
-                                    navigate(to);
                                   }}
                                   className={cn(
-                                    "w-full text-left p-3 border-b border-slate-200 last:border-b-0",
+                                    "block p-3 border-b border-slate-200 last:border-b-0",
                                     "hover:bg-slate-50 focus:bg-slate-50 outline-none",
                                     !n.readAt && "bg-yellow-50/70"
                                   )}
@@ -362,7 +376,7 @@ export default function Navbar() {
                                       </div>
                                     </div>
                                   </div>
-                                </button>
+                                </Link>
                               </li>
                             );
                           })}
@@ -415,60 +429,38 @@ export default function Navbar() {
 
                   {adminMenu && (
                     <Card className="absolute right-0 mt-2 w-60 p-1 bg-white" onMouseLeave={() => setAdminMenu(false)}>
-                      <button
-                        onClick={() => {
-                          setAdminMenu(false);
-                          navigate(isSuperAdmin ? "/admin/profile" : isTheatreAdmin ? "/theatre/profile" : "/profile");
-                        }}
-                        className="block w-full text-left px-3 py-2 text-sm rounded-xl hover:bg-slate-50 font-semibold"
-                      >
+                      {/* Profile */}
+                      <MenuItemLink to={profilePath} onClick={() => setAdminMenu(false)}>
                         Profile
-                      </button>
+                      </MenuItemLink>
 
+                      {/* Non-admin quick link */}
                       {!isAdmin && (
-                        <button
-                          onClick={() => {
-                            setAdminMenu(false);
-                            navigate("/bookings");
-                          }}
-                          className="block w-full text-left px-3 py-2 text-sm rounded-xl hover:bg-slate-50 font-semibold"
-                        >
+                        <MenuItemLink to="/bookings" onClick={() => setAdminMenu(false)}>
                           My Bookings
-                        </button>
+                        </MenuItemLink>
                       )}
 
+                      {/* Super admin menu */}
                       {isSuperAdmin && (
                         <>
                           <div className="my-1 h-px bg-slate-200" />
                           {SUPER_ADMIN_LINKS.map((item) => (
-                            <button
-                              key={item.to}
-                              onClick={() => {
-                                setAdminMenu(false);
-                                navigate(item.to);
-                              }}
-                              className="block w-full text-left px-3 py-2 text-sm rounded-xl hover:bg-slate-50 font-semibold"
-                            >
+                            <MenuItemLink key={item.to} to={item.to} onClick={() => setAdminMenu(false)}>
                               {item.label}
-                            </button>
+                            </MenuItemLink>
                           ))}
                         </>
                       )}
 
+                      {/* Theatre admin menu */}
                       {isTheatreAdmin && (
                         <>
                           <div className="my-1 h-px bg-slate-200" />
                           {THEATRE_ADMIN_LINKS.map((item) => (
-                            <button
-                              key={item.to}
-                              onClick={() => {
-                                setAdminMenu(false);
-                                navigate(item.to);
-                              }}
-                              className="block w-full text-left px-3 py-2 text-sm rounded-xl hover:bg-slate-50 font-semibold"
-                            >
+                            <MenuItemLink key={item.to} to={item.to} onClick={() => setAdminMenu(false)}>
                               {item.label}
-                            </button>
+                            </MenuItemLink>
                           ))}
                         </>
                       )}
@@ -567,42 +559,22 @@ export default function Navbar() {
 
             {isLoggedIn ? (
               <>
-                <button
-                  onClick={() => {
-                    closeAllMenus();
-                    navigate(isSuperAdmin ? "/admin/profile" : isTheatreAdmin ? "/theatre/profile" : "/profile");
-                  }}
-                  className="block w-full text-left text-sm font-semibold hover:text-[#0654BA]"
-                >
+                <MenuItemLink to={profilePath} onClick={closeAllMenus}>
                   Profile
-                </button>
+                </MenuItemLink>
 
                 {isSuperAdmin &&
                   SUPER_ADMIN_LINKS.map((item) => (
-                    <button
-                      key={item.to}
-                      onClick={() => {
-                        closeAllMenus();
-                        navigate(item.to);
-                      }}
-                      className="block w-full text-left text-sm py-1.5 font-semibold hover:text-[#0654BA]"
-                    >
+                    <MenuItemLink key={item.to} to={item.to} onClick={closeAllMenus}>
                       {item.label}
-                    </button>
+                    </MenuItemLink>
                   ))}
 
                 {isTheatreAdmin &&
                   THEATRE_ADMIN_LINKS.map((item) => (
-                    <button
-                      key={item.to}
-                      onClick={() => {
-                        closeAllMenus();
-                        navigate(item.to);
-                      }}
-                      className="block w-full text-left text-sm py-1.5 font-semibold hover:text-[#0654BA]"
-                    >
+                    <MenuItemLink key={item.to} to={item.to} onClick={closeAllMenus}>
                       {item.label}
-                    </button>
+                    </MenuItemLink>
                   ))}
 
                 <button
