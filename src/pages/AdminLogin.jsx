@@ -1,6 +1,6 @@
-// src/pages/AdminLogin.jsx — Admin login for SUPER_ADMIN & THEATER_ADMIN
+// src/pages/AdminLogin.jsx — Admin login for SUPER_ADMIN & THEATRE_ADMIN
 import React, { useState } from "react";
-import { useAuth } from "../context/AuthContext";
+import api from "../api/api";
 
 /* --------------------------- Walmart UI bits --------------------------- */
 const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
@@ -45,22 +45,10 @@ function PrimaryBtn({ children, className = "", ...props }) {
 
 /* -------------------------------- Component -------------------------------- */
 export default function AdminLogin() {
-  const { login } = useAuth();
-
   const [email, setEmail] = useState("admin@cinema.com");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-
-  // "auto" | "theatre" | "super"
-  const [roleMode, setRoleMode] = useState("auto");
-
-  const roleHint =
-    roleMode === "auto"
-      ? undefined
-      : roleMode === "theatre"
-      ? "THEATER_ADMIN"
-      : "SUPER_ADMIN";
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -73,9 +61,23 @@ export default function AdminLogin() {
 
     setBusy(true);
     try {
-      // Pass chosen hint; AuthContext will decode JWT + redirect by final role.
-      await login(email, password, roleHint);
-      // No navigate() here — AuthContext already window.location.replace(...)
+      // 🔐 Admin-only endpoint
+      const res = await api.post("/auth/admin-login", { email, password });
+      const { token, user } = res.data || {};
+
+      if (!token || !user) {
+        throw new Error("Invalid admin login response");
+      }
+
+      // Store only admin token; clear any normal user token
+      localStorage.setItem("adminToken", token);
+      localStorage.removeItem("token");
+
+      // Optional: keep a lightweight admin user snapshot (helps Navbar label)
+      localStorage.setItem("adminUser", JSON.stringify(user));
+
+      // Hard redirect to ensure all providers/guards see the new token
+      window.location.replace("/admin");
     } catch (err) {
       const msg = err?.response?.data?.message || err?.message || "Login failed";
       setError(msg);
@@ -122,43 +124,6 @@ export default function AdminLogin() {
             autoComplete="current-password"
           />
 
-          {/* Role hint selector */}
-          <div>
-            <label className="block text-[12px] font-semibold text-slate-600 mb-1">Role</label>
-            <div className="grid grid-cols-3 gap-2">
-              <button
-                type="button"
-                onClick={() => setRoleMode("auto")}
-                className={`px-3 py-2 rounded-xl border text-sm font-semibold ${
-                  roleMode === "auto" ? "border-[#0071DC] bg-[#E6F0FE] text-[#0654BA]" : "border-slate-300 bg-white"
-                }`}
-              >
-                Auto
-              </button>
-              <button
-                type="button"
-                onClick={() => setRoleMode("theatre")}
-                className={`px-3 py-2 rounded-xl border text-sm font-semibold ${
-                  roleMode === "theatre" ? "border-[#0071DC] bg-[#E6F0FE] text-[#0654BA]" : "border-slate-300 bg-white"
-                }`}
-              >
-                Theatre Admin
-              </button>
-              <button
-                type="button"
-                onClick={() => setRoleMode("super")}
-                className={`px-3 py-2 rounded-xl border text-sm font-semibold ${
-                  roleMode === "super" ? "border-[#0071DC] bg-[#E6F0FE] text-[#0654BA]" : "border-slate-300 bg-white"
-                }`}
-              >
-                Super Admin
-              </button>
-            </div>
-            <p className="mt-1 text-[12px] text-slate-500">
-              Auto lets the server/JWT decide (works great when your account is SUPER_ADMIN).
-            </p>
-          </div>
-
           {error && (
             <Card className="p-3 bg-rose-50 border-rose-200 text-rose-700 font-semibold">⚠️ {error}</Card>
           )}
@@ -174,7 +139,6 @@ export default function AdminLogin() {
                 setEmail("admin@cinema.com");
                 setPassword("");
                 setError("");
-                setRoleMode("auto");
               }}
               className="inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 font-semibold border border-slate-300 bg-white text-slate-800 hover:bg-slate-50"
             >
@@ -182,7 +146,7 @@ export default function AdminLogin() {
             </button>
 
             <p className="text-slate-600 italic text-[13px] text-center mt-2">
-              Tip: SUPER_ADMIN can leave role as <b>Auto</b>. Theatre admins can pick <b>Theatre Admin</b>.
+              Only <b>SUPER_ADMIN</b> and <b>THEATRE_ADMIN</b> can sign in here.
             </p>
           </div>
         </form>
