@@ -1,6 +1,5 @@
-// src/pages/AdminTheaters.jsx — FULL UPDATED (o1m2 backend + admins table fix)
-
-import { useEffect, useRef, useState } from "react";
+// src/pages/AdminTheaters.jsx — Walmart Style (clean, rounded, blue accents)
+import { useEffect, useMemo, useState } from "react";
 import api from "../api/api";
 import { useAuth } from "../context/AuthContext";
 import {
@@ -11,24 +10,19 @@ import {
   Image as ImageIcon,
   RefreshCcw,
   PlusCircle,
+  PencilLine,
   Trash2,
   X,
   Check,
-  UserRound,
-  Mail,
-  Lock,
 } from "lucide-react";
 
 /* -------------------------------------------------------------------------- */
-/* BASE URL (Your backend is o1m2, so we use it directly)                     */
+/* Constants                                                                  */
 /* -------------------------------------------------------------------------- */
-const API_BASE = (
-  api?.defaults?.baseURL ||
-  import.meta.env.VITE_API_BASE ||
-  "https://movie-ticket-booking-backend-o1m2.onrender.com/api"
-).replace(/\/+$/, "");
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8080/api";
+const FILES_BASE = API_BASE.replace(/\/api\/?$/, "");
 
-const FILES_BASE = API_BASE.replace(/\/api$/, "");
+// Tiny inline SVG fallback
 const DEFAULT_IMG =
   "data:image/svg+xml;utf8," +
   encodeURIComponent(`
@@ -39,7 +33,7 @@ const DEFAULT_IMG =
     </svg>
   `);
 
-/* --------------------------- Walmart UI Components ----------------------- */
+/* --------------------------- Walmart primitives --------------------------- */
 const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
   <Tag className={`bg-white border border-slate-200 rounded-2xl shadow-sm ${className}`} {...rest}>
     {children}
@@ -50,20 +44,31 @@ function Field({ as = "input", icon: Icon, className = "", label, ...props }) {
   const C = as;
   return (
     <div>
-      {label && <label className="block text-[12px] font-semibold text-slate-600 mb-1">{label}</label>}
+      {label ? (
+        <label className="block text-[12px] font-semibold text-slate-600 mb-1">{label}</label>
+      ) : null}
       <div className="flex items-center gap-2 border border-slate-300 rounded-xl bg-white px-3 py-2 focus-within:ring-2 focus-within:ring-[#0071DC]">
-        {Icon && <Icon className="h-4 w-4 text-slate-700" />}
-        <C {...props} className={`w-full outline-none bg-transparent text-sm ${className}`} />
+        {Icon ? <Icon className="h-4 w-4 text-slate-700" /> : null}
+        <C {...props} className={`w-full outline-none bg-transparent text-sm sm:text-base ${className}`} />
       </div>
     </div>
   );
 }
 
-function PrimaryBtn({ children, className = "", type = "button", ...props }) {
+function PrimaryBtn({ children, className = "", ...props }) {
   return (
     <button
-      type={type}
-      className={`inline-flex items-center justify-center gap-2 rounded-full px-5 py-2 font-semibold text-white bg-[#0071DC] hover:bg-[#0654BA] disabled:opacity-60 ${className}`}
+      className={`inline-flex items-center justify-center gap-2 rounded-full px-5 py-2 font-semibold text-white bg-[#0071DC] hover:bg-[#0654BA] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071DC] disabled:opacity-60 ${className}`}
+      {...props}
+    >
+      {children}
+    </button>
+  );
+}
+function SecondaryBtn({ children, className = "", ...props }) {
+  return (
+    <button
+      className={`inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 font-semibold border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071DC] ${className}`}
       {...props}
     >
       {children}
@@ -71,356 +76,341 @@ function PrimaryBtn({ children, className = "", type = "button", ...props }) {
   );
 }
 
-function SecondaryBtn({ children, className = "", type = "button", ...props }) {
-  return (
-    <button
-      type={type}
-      className={`inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 font-semibold border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 disabled:opacity-60 ${className}`}
-      {...props}
-    >
-      {children}
-    </button>
-  );
-}
-
-/* --------------------------- Helpers --------------------------- */
+/* -------------------------------------------------------------------------- */
+/* Helpers                                                                    */
+/* -------------------------------------------------------------------------- */
 const resolveImageUrl = (url, updatedAt) => {
   if (!url) return null;
-  const abs = /^https?:\/\//i.test(url) ? url : `${FILES_BASE}${url.startsWith("/") ? "" : "/"}${url}`;
+  const abs = /^https?:\/\//i.test(url)
+    ? url
+    : `${FILES_BASE}${url.startsWith("/") ? "" : "/"}${url}`;
   const v = updatedAt ? new Date(updatedAt).getTime() : null;
   return v ? `${abs}${abs.includes("?") ? "&" : "?"}v=${v}` : abs;
 };
 
-const parseAmenities = (raw) =>
-  !raw
-    ? []
-    : Array.isArray(raw)
-    ? raw
-    : String(raw)
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-
-const normalizeTheater = (t = {}) => ({
-  ...t,
-  amenities: parseAmenities(t.amenities),
-  imageUrl: resolveImageUrl(t.imageUrl || t.poster || t.theaterImage || t.image, t.updatedAt),
-});
-
-// Format "createdAt"
-const formatDate = (iso) => {
-  if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleString(undefined, {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  } catch {
-    return iso;
-  }
+// Normalize a theater object so we always have amenities: string[] and imageUrl
+const normalizeTheater = (t = {}) => {
+  const raw = Array.isArray(t.amenities)
+    ? t.amenities
+    : typeof t.amenities === "string"
+    ? t.amenities.split(",")
+    : [];
+  const amenities = Array.from(
+    new Set(raw.map((a) => String(a).trim()).filter(Boolean))
+  );
+  return {
+    ...t,
+    amenities,
+    imageUrl: resolveImageUrl(t.imageUrl || t.poster || t.image, t.updatedAt) || "",
+  };
 };
 
-/* Decode JWT to gate super-only UI */
-function parseJwt(token) {
-  try {
-    const base = token.split(".")[1];
-    return JSON.parse(atob(base.replace(/-/g, "+").replace(/_/g, "/"))) || {};
-  } catch {
-    return {};
-  }
-}
+const sameStringArray = (a = [], b = []) => {
+  if (a.length !== b.length) return false;
+  const sa = [...a].map(String).map((s) => s.trim()).sort();
+  const sb = [...b].map(String).map((s) => s.trim()).sort();
+  return sa.every((v, i) => v === sb[i]);
+};
+
+const COMMON_AMENITIES = ["Parking", "Snacks", "AC", "Wheelchair", "3D", "IMAX", "Dolby Atmos"];
 
 /* -------------------------------------------------------------------------- */
-/* Component                                                                 */
+/* Component                                                                  */
 /* -------------------------------------------------------------------------- */
 export default function AdminTheaters() {
-  const { token } = useAuth();
-  const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
-  const claims = token ? parseJwt(token) : {};
-  const role = String(claims?.role || "").toUpperCase();
-  const isSuper = role === "SUPER_ADMIN";
-
+  const { token, role } = useAuth() || {};
   const [theaters, setTheaters] = useState([]);
-  const [admins, setAdmins] = useState([]);
-  const [adminsEnabled, setAdminsEnabled] = useState(false);
 
+  // form fields
   const [selectedId, setSelectedId] = useState(null);
   const [name, setName] = useState("");
   const [city, setCity] = useState("");
   const [address, setAddress] = useState("");
-
   const [amenitiesList, setAmenitiesList] = useState([]);
+  const [originalAmenities, setOriginalAmenities] = useState([]);
+  const [amenitiesDirty, setAmenitiesDirty] = useState(false);
   const [amenityInput, setAmenityInput] = useState("");
 
+  // image
+  const [imageFile, setImageFile] = useState(null);
   const [preview, setPreview] = useState("");
   const [previewKey, setPreviewKey] = useState(0);
-  const fileInputRef = useRef(null);
-  const [selectedFile, setSelectedFile] = useState(null);
 
+  // ui state
+  const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
   const [msgType, setMsgType] = useState("info");
-  const [loading, setLoading] = useState(false);
 
-  /* ------- Theatre Admin Creation Form ------- */
-  const [adminName, setAdminName] = useState("");
-  const [adminEmail, setAdminEmail] = useState("");
-  const [adminPassword, setAdminPassword] = useState("");
+  /* Load theaters on admin login */
+  useEffect(() => {
+    if (token && role?.toLowerCase() === "admin") loadTheaters();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, role]);
 
-  /* Load theaters */
   async function loadTheaters() {
     try {
-      const res = await api.get("/theaters", { headers: authHeaders });
-      const arr = res?.data?.data || res?.data?.theaters || res?.data || [];
-      setTheaters(arr.map(normalizeTheater));
+      // public /theaters route; backend sorts newest-first
+      const { data } = await api.get("/theaters", {
+        params: { page: 1, limit: 500, ts: Date.now() },
+      });
+      const arr = Array.isArray(data?.theaters) ? data.theaters : Array.isArray(data) ? data : [];
+      const normalized = arr.map(normalizeTheater);
+      setTheaters(normalized);
+      setMsg("");
     } catch (err) {
-      console.error(err);
-      setMsg("⚠️ Failed to load theaters");
+      console.error("loadTheaters error:", err);
+      setMsg("⚠️ Failed to load theaters (is API up? VITE_API_BASE correct?)");
       setMsgType("error");
     }
   }
 
-  /* Load admins (SUPER only) */
-  async function loadAdmins() {
-    if (!isSuper) {
-      setAdmins([]);
-      setAdminsEnabled(false);
-      return;
-    }
-    try {
-      const res = await api.get("/superadmin/theatre-admins", { headers: authHeaders });
-      const arr = res?.data?.data || [];
-      setAdmins(arr);
-      setAdminsEnabled(true);
-    } catch (err) {
-      const status = err?.response?.status;
-      if (status === 401 || status === 403) {
-        setAdmins([]);
-        setAdminsEnabled(false);
-      } else {
-        setMsg("⚠️ Failed to load theatre admins");
-        setMsgType("error");
-        setAdminsEnabled(false);
-      }
-    }
-  }
-
-  useEffect(() => {
-    loadTheaters();
-    loadAdmins(); // will no-op if not super
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSuper, token]);
-
-  /* Select file */
-  const onPickFile = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setSelectedFile(file);
-    setPreview(URL.createObjectURL(file));
-    setPreviewKey((k) => k + 1);
-  };
-
-  /* Create Theater */
-  async function createTheater() {
-    if (!name.trim() || !city.trim()) {
-      setMsg("⚠️ Name and City required");
-      setMsgType("error");
-      return;
-    }
-    setLoading(true);
-    try {
-      let body;
-      if (selectedFile) {
-        body = new FormData();
-        body.append("image", selectedFile);
-        body.append("name", name);
-        body.append("city", city);
-        if (address) body.append("address", address);
-        body.append("amenities", JSON.stringify(amenitiesList));
-      } else {
-        body = { name, city, address, amenities: amenitiesList };
-      }
-      await api.post("/theaters/admin", body, { headers: authHeaders });
-      resetForm();
-      await loadTheaters();
-      setMsg("✅ Theater created!");
-      setMsgType("success");
-    } catch (err) {
-      const status = err?.response?.status;
-      const m = err?.response?.data?.message || "Failed to create theater";
-      if (status === 401) {
-        setMsg("🔑 Session expired. Please log in again.");
-      } else {
-        setMsg(`❌ ${m}`);
-      }
-      setMsgType("error");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  /* Update */
-  async function updateTheaterById() {
-    if (!selectedId) return;
-    setLoading(true);
-    try {
-      let body;
-      if (selectedFile) {
-        body = new FormData();
-        body.append("image", selectedFile);
-        body.append("name", name);
-        body.append("city", city);
-        if (address) body.append("address", address);
-        body.append("amenities", JSON.stringify(amenitiesList));
-      } else {
-        body = { name, city, address, amenities: amenitiesList };
-      }
-      await api.put(`/theaters/admin/${selectedId}`, body, { headers: authHeaders });
-      resetForm();
-      await loadTheaters();
-      setMsg("✅ Updated successfully!");
-      setMsgType("success");
-    } catch (err) {
-      const status = err?.response?.status;
-      const m = err?.response?.data?.message || "Update failed";
-      if (status === 401) {
-        setMsg("🔑 Session expired. Please log in again.");
-      } else {
-        setMsg(`❌ ${m}`);
-      }
-      setMsgType("error");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  /* Delete */
-  async function deleteTheater(id) {
-    if (!window.confirm("Delete this theater?")) return;
-    try {
-      await api.delete(`/theaters/admin/${id}`, { headers: authHeaders });
-      await loadTheaters();
-    } catch (err) {
-      const m = err?.response?.data?.message || "Delete failed";
-      setMsg(`❌ ${m}`);
-      setMsgType("error");
-    }
-  }
-
-  /* Reset Form */
+  /* Form helpers */
   function resetForm() {
     setSelectedId(null);
     setName("");
     setCity("");
     setAddress("");
     setAmenitiesList([]);
+    setOriginalAmenities([]);
+    setAmenitiesDirty(false);
+    setAmenityInput("");
+    if (preview?.startsWith("blob:")) URL.revokeObjectURL(preview);
+    setImageFile(null);
     setPreview("");
-    setSelectedFile(null);
-    if (fileInputRef.current) fileInputRef.current.value = "";
+    setPreviewKey((k) => k + 1);
   }
 
-  /* Fill Form for Edit */
-  function fillFromTheater(t) {
+  function onPickFile(e) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (!["image/jpeg", "image/png", "image/webp", "image/gif"].includes(f.type)) {
+      setMsg("Only JPG/PNG/WEBP/GIF allowed");
+      setMsgType("error");
+      return;
+    }
+    if (f.size > 3 * 1024 * 1024) {
+      setMsg("Max file size is 3MB");
+      setMsgType("error");
+      return;
+    }
+    if (preview?.startsWith("blob:")) URL.revokeObjectURL(preview);
+    const url = URL.createObjectURL(f);
+    setImageFile(f);
+    setPreview(url);
+    setPreviewKey((k) => k + 1);
+  }
+
+  /* Amenities UI */
+  function addAmenity(value) {
+    const items = String(value || "")
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean);
+
+    if (!items.length) return;
+    setAmenitiesList((list) => {
+      const set = new Set(list);
+      items.forEach((i) => set.add(i));
+      const next = Array.from(set);
+      setAmenitiesDirty(!sameStringArray(next, originalAmenities));
+      return next;
+    });
+  }
+  function removeAmenity(value) {
+    setAmenitiesList((list) => {
+      const next = list.filter((x) => x !== value);
+      setAmenitiesDirty(!sameStringArray(next, originalAmenities));
+      return next;
+    });
+  }
+  function clearAmenities() {
+    setAmenitiesList([]);
+    setAmenitiesDirty(!sameStringArray([], originalAmenities));
+  }
+
+  /* Create / Update / Delete */
+  async function createTheater(e) {
+    e.preventDefault();
+    if (!name.trim() || !city.trim()) {
+      setMsg("Name and City are required");
+      setMsgType("error");
+      return;
+    }
+    setLoading(true);
+    try {
+      let res;
+
+      if (imageFile) {
+        const fd = new FormData();
+        fd.append("name", name.trim());
+        fd.append("city", city.trim());
+        fd.append("address", (address || "").trim());
+        if (amenitiesList.length) {
+          amenitiesList.forEach((a) => fd.append("amenities", a));
+        }
+        fd.append("image", imageFile);
+        res = await api.post("/theaters", fd, {
+          params: { ts: Date.now() },
+          headers: { "Content-Type": "multipart/form-data" },
+        });
+      } else {
+        const payload = {
+          name: name.trim(),
+          city: city.trim(),
+          address: (address || "").trim(),
+          amenities: amenitiesList,
+        };
+        res = await api.post("/theaters", payload, { params: { ts: Date.now() } });
+      }
+
+      const created = normalizeTheater(res.data?.data || res.data);
+      setTheaters((s) => [created, ...s]);
+      setMsg("✅ Theater created!");
+      setMsgType("success");
+      resetForm();
+    } catch (err) {
+      const m = err?.response?.data?.error || err?.response?.data?.message || err.message;
+      setMsg("❌ Create failed: " + m);
+      setMsgType("error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function updateTheaterById() {
+    if (!selectedId) {
+      setMsg("Pick a theater from the list (Use) to update.");
+      setMsgType("error");
+      return;
+    }
+    if (!name.trim() || !city.trim()) {
+      setMsg("Name and City are required");
+      setMsgType("error");
+      return;
+    }
+    setLoading(true);
+    try {
+      let res;
+
+      if (imageFile) {
+        const fd = new FormData();
+        fd.append("name", name.trim());
+        fd.append("city", city.trim());
+        fd.append("address", (address || "").trim());
+        if (amenitiesDirty) {
+          amenitiesList.forEach((a) => fd.append("amenities", a));
+        }
+        fd.append("image", imageFile);
+        res = await api.put(`/theaters/${selectedId}`, fd, {
+          params: { ts: Date.now() },
+          headers: { "Content-Type": "multipart/form-data" },
+        });
+      } else {
+        const payload = {
+          name: name.trim(),
+          city: city.trim(),
+          address: (address || "").trim(),
+          ...(amenitiesDirty ? { amenities: amenitiesList } : {}),
+        };
+        res = await api.put(`/theaters/${selectedId}`, payload, {
+          params: { ts: Date.now() },
+        });
+      }
+
+      const updated = normalizeTheater(res.data?.data || res.data);
+      setTheaters((list) => list.map((t) => (t._id === updated._id ? updated : t)));
+      setMsg("✅ Theater updated.");
+      setMsgType("success");
+
+      setOriginalAmenities(updated.amenities || []);
+      setAmenitiesDirty(false);
+    } catch (err) {
+      const m = err?.response?.data?.error || err?.response?.data?.message || err.message;
+      setMsg("❌ Update failed: " + m);
+      setMsgType("error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function deleteTheater(id) {
+    if (!confirm("Delete this theater?")) return;
+    try {
+      await api.delete(`/theaters/${id}`, { params: { ts: Date.now() } });
+      setTheaters((s) => s.filter((t) => t._id !== id));
+      if (selectedId === id) resetForm();
+      setMsg("🗑️ Theater deleted");
+      setMsgType("info");
+    } catch (err) {
+      const m = err?.response?.data?.error || err?.response?.data?.message || err.message;
+      setMsg("❌ Delete failed: " + m);
+      setMsgType("error");
+    }
+  }
+
+  /* Autocomplete lists */
+  const names = useMemo(() => [...new Set(theaters.map((t) => t.name))], [theaters]);
+  const cities = useMemo(() => [...new Set(theaters.map((t) => t.city))], [theaters]);
+  const addresses = useMemo(
+    () => [...new Set(theaters.map((t) => t.address || "").filter(Boolean))],
+    [theaters]
+  );
+
+  function fillFromTheater(raw) {
+    const t = normalizeTheater(raw);
     setSelectedId(t._id);
     setName(t.name || "");
     setCity(t.city || "");
     setAddress(t.address || "");
-    setAmenitiesList(t.amenities || []);
-    setPreview(t.imageUrl || "");
-    setSelectedFile(null);
-    if (fileInputRef.current) fileInputRef.current.value = "";
+    setAmenitiesList(Array.isArray(t.amenities) ? t.amenities : []);
+    setOriginalAmenities(Array.isArray(t.amenities) ? t.amenities : []);
+    setAmenitiesDirty(false);
+    const url = t.imageUrl || "";
+    if (preview?.startsWith("blob:")) URL.revokeObjectURL(preview);
+    setPreview(url);
+    setImageFile(null);
+    setPreviewKey((k) => k + 1);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  /* Reset Theatre Admin Password (SUPER only) */
-  async function resetAdminPassword(adminId) {
-    if (!isSuper) {
-      setMsg("🔒 Only Super Admin can reset admin passwords.");
-      setMsgType("error");
-      return;
-    }
-    const newPassword = window.prompt("Enter a new password for this admin:");
-    if (!newPassword) return;
-    try {
-      const res = await api.post(
-        "/superadmin/admin/reset-password",
-        { adminId, newPassword },
-        { headers: authHeaders }
-      );
-      setMsg("✅ " + (res?.data?.message || "Password reset"));
-      setMsgType("success");
-    } catch (err) {
-      const status = err?.response?.status;
-      const serverMsg = err?.response?.data?.message || err?.response?.data?.error || "Failed to reset password";
-      if (status === 401 || status === 403) {
-        setMsg("🔒 Not authorized to reset passwords.");
-      } else {
-        setMsg(`❌ ${serverMsg}`);
-      }
-      setMsgType("error");
-    }
-  }
+  const onSelectName = (val) => {
+    setName(val);
+    const match =
+      theaters.find((t) => t.name === val && t.city === city) ||
+      theaters.find((t) => t.name === val);
+    if (match) fillFromTheater(match);
+  };
+  const onSelectCity = (val) => {
+    setCity(val);
+    const match =
+      theaters.find((t) => t.city === val && t.name === name) ||
+      theaters.find((t) => t.city === val);
+    if (match) fillFromTheater(match);
+  };
+  const onSelectAddress = (val) => {
+    setAddress(val);
+    const match = theaters.find((t) => (t.address || "") === val);
+    if (match) fillFromTheater(match);
+  };
 
-  /* Create Theatre Admin (SUPER only + detailed 409 messaging) */
-  async function createTheatreAdmin() {
-    if (!isSuper) {
-      setMsg("🔒 Only Super Admin can create theatre admins.");
-      setMsgType("error");
-      return;
-    }
-    if (!selectedId) {
-      setMsg("⚠️ Select a theatre first.");
-      setMsgType("error");
-      return;
-    }
-    if (!adminName || !adminEmail || !adminPassword) {
-      setMsg("⚠️ Name, Email, Password required");
-      setMsgType("error");
-      return;
-    }
-    try {
-      await api.post(
-        "/superadmin/create-theatre-admin",
-        { name: adminName, email: adminEmail, password: adminPassword, theatreId: selectedId },
-        { headers: authHeaders }
-      );
-      setAdminName("");
-      setAdminEmail("");
-      setAdminPassword("");
-      await loadAdmins();
-      setMsg("✅ Theatre Admin Created");
-      setMsgType("success");
-    } catch (err) {
-      const status = err?.response?.status;
-      const code = err?.response?.data?.code;
-      const serverMsg = err?.response?.data?.message || err?.response?.data?.error;
-      if (status === 409 && code === "EMAIL_TAKEN") {
-        setMsg("❌ Email already exists. Use a different email.");
-      } else if (status === 409 && code === "THEATER_ALREADY_HAS_ADMIN") {
-        setMsg("❌ This theatre already has an admin.");
-      } else if (status === 401 || status === 403) {
-        setMsg("🔒 Not authorized to create theatre admins.");
-      } else {
-        setMsg(`❌ ${serverMsg || "Failed to create theatre admin"}`);
-      }
-      setMsgType("error");
-      console.error("[createTheatreAdmin]", { status, data: err?.response?.data });
-    }
-  }
-
+  /* Render */
   return (
-    <main className="min-h-screen w-full bg-slate-50 py-8">
-      <div className="max-w-6xl mx-auto px-4 space-y-5">
-        <Card className="p-5 flex justify-between items-center">
-          <h1 className="text-2xl font-extrabold flex gap-2">
-            <Building2 className="h-6 w-6" /> Manage Theaters
-          </h1>
-          <SecondaryBtn onClick={() => { loadTheaters(); loadAdmins(); }}>
+    <main className="min-h-screen w-screen [margin-inline:calc(50%-50vw)] bg-slate-50 text-slate-900 py-8 px-4 md:px-6">
+      <div className="max-w-7xl mx-auto space-y-5">
+        {/* Header */}
+        <Card className="p-5 flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight flex items-center gap-2">
+              <Building2 className="h-6 w-6" /> Manage Theaters
+            </h1>
+            <p className="text-sm text-slate-600 mt-1">Add, edit, or remove theaters.</p>
+          </div>
+          <SecondaryBtn onClick={loadTheaters}>
             <RefreshCcw className="h-4 w-4" /> Refresh
           </SecondaryBtn>
         </Card>
 
+        {/* Messages */}
         {msg && (
           <Card
             className={`p-3 font-semibold ${
@@ -435,145 +425,146 @@ export default function AdminTheaters() {
           </Card>
         )}
 
-        <div className="grid lg:grid-cols-3 gap-6">
-          {/* List */}
-          <div className="lg:col-span-2 space-y-6">
-            <Card className="p-5">
-              <h2 className="font-extrabold mb-4 flex items-center gap-2 border-b pb-2">
-                <ImageIcon className="h-5 w-5" /> Theaters
-              </h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          {/* ---------------- Form ---------------- */}
+          <Card className="p-5">
+            <h2 className="text-lg font-extrabold tracking-tight border-b border-slate-200 pb-2 mb-4 flex items-center gap-2">
+              <PlusCircle className="h-5 w-5" /> Add / Edit Theater
+            </h2>
 
-              {theaters.length === 0 ? <p>No theaters yet.</p> : (
-                <ul className="space-y-3 max-h-[60vh] overflow-y-auto">
-                  {theaters.map((t) => (
-                    <li key={t._id} className="flex justify-between items-center border rounded-2xl p-3 shadow-sm">
-                      <div className="flex gap-3">
-                        <img src={t.imageUrl || DEFAULT_IMG} className="w-14 h-14 rounded-xl object-cover border" alt="" />
-                        <div>
-                          <div className="font-bold">{t.name}</div>
-                          <div className="text-sm text-slate-600">{t.city}</div>
-                        </div>
-                      </div>
-                      <div className="flex gap-2">
-                        <PrimaryBtn onClick={() => fillFromTheater(t)} className="px-3 py-1 text-sm">Use</PrimaryBtn>
-                        <SecondaryBtn onClick={() => deleteTheater(t._id)} className="px-3 py-1 text-sm">
-                          <Trash2 className="h-4 w-4" /> Delete
-                        </SecondaryBtn>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </Card>
-
-            {/* Admins list (SUPER only; shows when API succeeded) */}
-            {isSuper && adminsEnabled && (
-              <Card className="p-5">
-                <h2 className="font-extrabold mb-4 flex items-center gap-2 border-b pb-2">
-                  <UserRound className="h-5 w-5" /> Theatre Admins
-                </h2>
-
-                {admins.length === 0 ? (
-                  <p>No theatre admins yet.</p>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full table-fixed border-separate border-spacing-0">
-                      <colgroup>
-                        <col className="w-[32%]" /> {/* Name */}
-                        <col className="w-[30%]" /> {/* Email */}
-                        <col className="w-[23%]" /> {/* Theatre */}
-                        <col className="w-[15%]" /> {/* Created */}
-                      </colgroup>
-                      <thead>
-                        <tr className="text-left text-slate-600 border-b">
-                          <th className="py-3 px-4 font-medium">Name</th>
-                          <th className="py-3 px-4 font-medium">Email</th>
-                          <th className="py-3 px-4 font-medium">Theatre</th>
-                          <th className="py-3 px-4 font-medium">Created</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {admins.map((a) => (
-                          <tr key={a._id} className="border-b last:border-0">
-                            <td className="py-3 px-4">
-                              <div className="flex items-center gap-3">
-                                <div className="h-9 w-9 rounded-full bg-slate-200 grid place-items-center font-bold text-slate-600 shrink-0">
-                                  {String(a?.name || a?.email || "A").slice(0, 1).toUpperCase()}
-                                </div>
-                                <div className="min-w-0">
-                                  <div className="font-semibold truncate">{a?.name || "—"}</div>
-                                  <div className="text-xs text-slate-500 whitespace-nowrap">{a?.role || "manager"}</div>
-                                </div>
-                              </div>
-                            </td>
-
-                            <td className="py-3 px-4 align-middle">
-                              <div className="truncate" title={a?.email}>{a?.email}</div>
-                            </td>
-
-                            <td className="py-3 px-4 align-middle">
-                              <div
-                                className="truncate whitespace-nowrap"
-                                title={`${a?.theatreId?.name || ""} ${a?.theatreId?.city ? "• " + a.theatreId.city : ""}`}
-                              >
-                                {a?.theatreId?.name || "—"} {a?.theatreId?.city ? `• ${a.theatreId.city}` : ""}
-                              </div>
-                            </td>
-
-                            <td className="py-3 px-4 align-middle whitespace-nowrap">
-                              {formatDate(a?.createdAt)}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </Card>
-            )}
-          </div>
-
-          {/* Add/Edit Form */}
-          <div>
-            <Card className="p-5 sticky top-6 space-y-4">
-              <h2 className="font-extrabold text-lg flex items-center gap-2 border-b pb-2">
-                <PlusCircle className="h-5 w-5" /> Add / Edit
-              </h2>
-
-              <div>
-                <label className="text-[12px] font-semibold mb-1 block">Poster</label>
-                <div className="flex gap-3 items-center">
-                  <img key={previewKey} src={preview || DEFAULT_IMG} className="w-20 h-20 rounded-xl object-cover border" alt="" />
-                  <button type="button" onClick={() => fileInputRef.current?.click()} className="px-3 py-1 border rounded-full text-sm">
-                    <ImageIcon className="h-4 w-4" /> Choose
-                  </button>
-                  <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={onPickFile} />
+            <form onSubmit={createTheater} className="space-y-4">
+              {selectedId && (
+                <div className="text-xs text-slate-600">
+                  Editing ID: <span className="font-mono">{selectedId}</span>
                 </div>
+              )}
+
+              {/* Name */}
+              <div className="space-y-2">
+                <Field
+                  as="select"
+                  label="Select Existing Name"
+                  value={names.includes(name) ? name : ""}
+                  onChange={(e) => onSelectName(e.target.value)}
+                  icon={Building2}
+                >
+                  <option value="">—</option>
+                  {names.map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </Field>
+                <Field
+                  label="Theater Name"
+                  placeholder="Enter theater name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  icon={Building2}
+                  required
+                />
               </div>
 
-              <Field label="Name" value={name} onChange={(e) => setName(e.target.value)} icon={Building2} />
-              <Field label="City" value={city} onChange={(e) => setCity(e.target.value)} icon={MapPin} />
-              <Field label="Address" value={address} onChange={(e) => setAddress(e.target.value)} icon={Home} />
-
-              <div>
-                <label className="text-[12px] font-semibold mb-1">Amenities</label>
-                <div className="flex flex-wrap gap-2 mb-2">
-                  {amenitiesList.map((a) => (
-                    <span key={a} className="px-2 py-1 text-xs border rounded-full flex items-center gap-1">
-                      <Check className="h-3 w-3 text-emerald-600" /> {a}
-                      <X className="h-3 w-3 cursor-pointer" onClick={() => setAmenitiesList((x) => x.filter((y) => y !== a))} />
-                    </span>
-                  ))}
-                </div>
+              {/* City */}
+              <div className="space-y-2">
                 <Field
-                  placeholder="Press Enter to add"
+                  as="select"
+                  label="Select Existing City"
+                  value={cities.includes(city) ? city : ""}
+                  onChange={(e) => onSelectCity(e.target.value)}
+                  icon={MapPin}
+                >
+                  <option value="">—</option>
+                  {cities.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </Field>
+                <Field
+                  label="City"
+                  placeholder="Enter city"
+                  value={city}
+                  onChange={(e) => setCity(e.target.value)}
+                  icon={MapPin}
+                  required
+                />
+              </div>
+
+              {/* Address */}
+              <div className="space-y-2">
+                <Field
+                  as="select"
+                  label="Select Existing Address"
+                  value={addresses.includes(address) ? address : ""}
+                  onChange={(e) => onSelectAddress(e.target.value)}
+                  icon={Home}
+                >
+                  <option value="">—</option>
+                  {addresses.map((a) => (
+                    <option key={a} value={a}>
+                      {a}
+                    </option>
+                  ))}
+                </Field>
+                <Field
+                  label="Address"
+                  placeholder="Enter address"
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
+                  icon={Home}
+                />
+              </div>
+
+              {/* Amenities */}
+              <div className="space-y-2">
+                <label className="block text-[12px] font-semibold text-slate-600">Amenities</label>
+
+                <div className="flex flex-wrap gap-2">
+                  {amenitiesList.length ? (
+                    amenitiesList.map((a) => (
+                      <span
+                        key={a}
+                        className="inline-flex items-center gap-1 text-xs border border-slate-300 rounded-lg bg-white px-2 py-1"
+                      >
+                        <Check className="h-3.5 w-3.5 text-emerald-600" />
+                        {a}
+                        <button
+                          type="button"
+                          onClick={() => removeAmenity(a)}
+                          className="ml-1 rounded-full hover:bg-slate-100 p-0.5"
+                          aria-label={`Remove ${a}`}
+                        >
+                          <X className="h-3.5 w-3.5 text-slate-600" />
+                        </button>
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-xs text-slate-500 italic">No amenities added</span>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {COMMON_AMENITIES.map((a) => (
+                    <SecondaryBtn key={a} className="text-xs px-2 py-1" onClick={() => addAmenity(a)}>
+                      + {a}
+                    </SecondaryBtn>
+                  ))}
+                  {selectedId && (
+                    <SecondaryBtn className="text-xs px-2 py-1" onClick={clearAmenities} title="Clear all amenities">
+                      Clear amenities
+                    </SecondaryBtn>
+                  )}
+                </div>
+
+                <Field
+                  placeholder="Type amenity (or comma list) and press Enter"
                   value={amenityInput}
                   onChange={(e) => setAmenityInput(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
                       e.preventDefault();
-                      const v = amenityInput.trim();
-                      if (v && !amenitiesList.includes(v)) setAmenitiesList([...amenitiesList, v]);
+                      addAmenity(amenityInput);
                       setAmenityInput("");
                     }
                   }}
@@ -581,37 +572,128 @@ export default function AdminTheaters() {
                 />
               </div>
 
-              <div className="flex justify-between gap-2 pt-2">
-                <PrimaryBtn onClick={createTheater} disabled={loading}>
-                  {loading ? "Saving..." : "Create"}
-                </PrimaryBtn>
-                <PrimaryBtn onClick={updateTheaterById} disabled={!selectedId || loading} className="bg-[#0A66C2] hover:bg-[#0956A3]">
-                  Update
-                </PrimaryBtn>
-                <SecondaryBtn onClick={resetForm}>Clear</SecondaryBtn>
+              {/* Image */}
+              <div className="space-y-2">
+                <label className="block text-[12px] font-semibold text-slate-600">Theater Image</label>
+                <div className="flex items-center gap-4">
+                  <div className="w-20 h-20 rounded-xl overflow-hidden bg-slate-200 border border-slate-200 shadow-sm">
+                    <img
+                      key={previewKey}
+                      src={preview || DEFAULT_IMG}
+                      onError={(e) => (e.currentTarget.src = DEFAULT_IMG)}
+                      alt="preview"
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="inline-flex items-center gap-2 cursor-pointer">
+                      <input type="file" accept="image/*" onChange={onPickFile} className="hidden" />
+                      <SecondaryBtn className="px-3 py-1.5">
+                        <ImageIcon className="h-4 w-4" /> Choose Image
+                      </SecondaryBtn>
+                    </label>
+                    {imageFile && (
+                      <span className="text-xs text-slate-600">
+                        Selected: {imageFile.name} ({Math.round(imageFile.size / 1024)} KB)
+                      </span>
+                    )}
+                    <span className="text-xs text-slate-500">JPG/PNG/WEBP/GIF · up to 3MB.</span>
+                  </div>
+                </div>
               </div>
-            </Card>
-          </div>
-        </div>
 
-        {/* Create Theatre Admin (SUPER only; show only if admins panel enabled) */}
-        {isSuper && adminsEnabled && (
-          <Card className="p-5 mt-6">
-            <h2 className="font-extrabold text-lg mb-4 flex items-center gap-2 border-b pb-2">
-              <UserRound className="h-5 w-5" /> Create Theatre Admin
-            </h2>
+              {/* Buttons */}
+              <div className="flex flex-wrap gap-2 justify-between items-center pt-1">
+                <div className="flex gap-2">
+                  <PrimaryBtn disabled={loading} type="submit">
+                    {loading ? "Saving..." : (<><PlusCircle className="h-4 w-4" /> Create Theater</>)}
+                  </PrimaryBtn>
+                  <PrimaryBtn
+                    disabled={loading}
+                    type="button"
+                    onClick={updateTheaterById}
+                    className="bg-[#0A66C2] hover:bg-[#0956A3]"
+                  >
+                    <PencilLine className="h-4 w-4" /> Update Selected
+                  </PrimaryBtn>
+                </div>
+                <SecondaryBtn
+                  type="button"
+                  onClick={() => {
+                    resetForm();
+                    setMsg("");
+                  }}
+                >
+                  Clear
+                </SecondaryBtn>
+              </div>
+            </form>
+          </Card>
 
-            <div className="grid md:grid-cols-3 gap-4">
-              <Field label="Full Name" value={adminName} onChange={(e) => setAdminName(e.target.value)} icon={UserRound} />
-              <Field label="Email" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} icon={Mail} />
-              <Field label="Password" type="password" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} icon={Lock} />
+          {/* ---------------- List ---------------- */}
+          <Card className="p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-extrabold tracking-tight border-b border-slate-200 pb-2 flex items-center gap-2">
+                <Building2 className="h-5 w-5" /> Existing Theaters
+              </h2>
+              <SecondaryBtn onClick={loadTheaters}>
+                <RefreshCcw className="h-4 w-4" /> Refresh
+              </SecondaryBtn>
             </div>
 
-            <PrimaryBtn className="mt-4" onClick={createTheatreAdmin} disabled={!selectedId || !isSuper}>
-              Create Theatre Admin (Select a theatre first)
-            </PrimaryBtn>
+            {theaters.length === 0 ? (
+              <p className="text-sm text-slate-700">No theaters found.</p>
+            ) : (
+              <ul className="space-y-3 max-h-[60vh] overflow-auto pr-1">
+                {theaters.map((t) => (
+                  <li
+                    key={t._id}
+                    className={`flex justify-between items-center border border-slate-200 bg-white rounded-2xl p-3 shadow-sm ${
+                      selectedId === t._id ? "ring-2 ring-[#0071DC]" : ""
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-14 h-14 rounded-xl overflow-hidden bg-slate-200 border border-slate-200 shadow-sm">
+                        <img
+                          src={t.imageUrl || DEFAULT_IMG}
+                          onError={(e) => (e.currentTarget.src = DEFAULT_IMG)}
+                          alt={t.name}
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                      <div>
+                        <div className="font-extrabold text-slate-900">{t.name}</div>
+                        <div className="text-sm text-slate-700">
+                          {t.city} — {t.address || "No address"}
+                        </div>
+                        <div className="text-xs text-slate-500 mt-0.5 line-clamp-1">
+                          {Array.isArray(t.amenities) && t.amenities.length > 0
+                            ? t.amenities.join(" • ")
+                            : "No amenities"}
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-0.5">
+                          ID: {String(t._id).slice(0, 8)}…
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <PrimaryBtn onClick={() => fillFromTheater(t)} className="px-3 py-1 text-sm">
+                        Use
+                      </PrimaryBtn>
+                      <SecondaryBtn
+                        onClick={() => deleteTheater(t._id)}
+                        className="px-3 py-1 text-sm"
+                        title="Delete theater"
+                      >
+                        <Trash2 className="h-4 w-4" /> Delete
+                      </SecondaryBtn>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
           </Card>
-        )}
+        </div>
       </div>
     </main>
   );
