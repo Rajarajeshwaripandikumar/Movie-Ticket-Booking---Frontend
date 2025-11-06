@@ -29,49 +29,15 @@ import {
   Line,
 } from "recharts";
 
-/* ======================== API base helpers ======================== */
-function resolveApiBase() {
-  const raw =
-    import.meta.env.VITE_API_BASE ||
-    import.meta.env.VITE_API_BASE_URL ||
-    "http://localhost:8080";
-
-  let base = String(raw).replace(/\/+$/, "");
-  // remove any trailing /api/... to get root
-  base = base.replace(/\/api(\/.*)?$/i, "");
-  const API_ROOT = `${base}/api`.replace(/\/+$/, "");
-  const API_BASE = `${API_ROOT}/analytics`.replace(/\/+$/, "");
-  return { API_BASE, API_ROOT };
-}
-const { API_BASE, API_ROOT } = resolveApiBase();
-
-const authHeaders = () => {
-  const token = localStorage.getItem("token") || localStorage.getItem("jwt") || "";
-  return token ? { Authorization: `Bearer ${token}` } : {};
-};
-
-async function getJSON(path, params = {}, options = {}) {
-  // options: { root: boolean, signal: AbortSignal }
-  const base = options.root ? API_ROOT : API_BASE;
-  const rel = path.startsWith("/") ? path.slice(1) : path;
-  const url = new URL(rel, base + "/");
-  Object.entries(params || {}).forEach(([k, v]) => {
-    if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, String(v));
-  });
-  const res = await fetch(url.toString(), {
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    signal: options.signal,
-    credentials: "include",
-  });
-  if (!res.ok) {
-    let msg = "";
-    try {
-      msg = (await res.json())?.message || "";
-    } catch {}
-    throw new Error(`HTTP ${res.status}: ${msg || res.statusText}`);
-  }
-  return res.json();
-}
+/* ======================== API (use axios instance) ======================== */
+import api, { extractApiError } from "../api/api";
+import {
+  fetchRevenueTrends,
+  fetchBookingSummary,
+  fetchPopularMovies,
+  fetchActiveUsers,
+  fetchOccupancy,
+} from "../api/analytics";
 
 /* ======================== Styling primitives ======================== */
 const BLUE = "#0071DC";
@@ -204,8 +170,8 @@ export default function AdminAnalyticsDashboard() {
   async function loadCatalogs(signal) {
     try {
       const [t, m] = await Promise.all([
-        getJSON("/theaters", {}, { root: true, signal }).catch(() => []),
-        getJSON("/movies", { limit: 500 }, { root: true, signal }).catch(() => []),
+        api.safeGet("/theaters", { signal }).catch(() => []),
+        api.safeGet("/movies", { params: { limit: 500 }, signal }).catch(() => []),
       ]);
       setTheaters(Array.isArray(t) ? t : []);
       const norm = (Array.isArray(m) ? m : []).map((mm) => ({
@@ -220,9 +186,9 @@ export default function AdminAnalyticsDashboard() {
 
   async function loadAlerts(signal) {
     try {
-      const data = await getJSON("/notifications", {}, { root: true, signal }).catch(() => []);
+      const data = await api.safeGet("/notifications", { signal }).catch(() => []);
       setAlerts(Array.isArray(data) ? data : data.notifications ?? []);
-    } catch (e) {
+    } catch {
       // ignore
     }
   }
@@ -241,20 +207,27 @@ export default function AdminAnalyticsDashboard() {
     setError("");
     try {
       const days = daysOf(selectedRange);
-      const params = { days, ...(filters.theater ? { theater: filters.theater } : {}), ...(filters.movie ? { movie: filters.movie } : {}) };
+      const params = {
+        days,
+        ...(filters.theater ? { theater: filters.theater } : {}),
+        ...(filters.movie ? { movie: filters.movie } : {}),
+      };
 
       const [revTrends, dau, movies, occ, bookSum, bookSum7] = await Promise.all([
-        getJSON("/revenue/trends", params, { signal: controller.signal }),
-        getJSON("/users/active", params, { signal: controller.signal }),
-        getJSON("/movies/popular", { ...params, limit: 10 }, { signal: controller.signal }),
-        getJSON("/occupancy", params, { signal: controller.signal }),
-        getJSON("/bookings/summary", params, { signal: controller.signal }),
-        getJSON("/bookings/summary", { days: 7 }, { signal: controller.signal }),
+        fetchRevenueTrends(days).then((r) => r),                    // already accepts days, but we also support filters
+        fetchActiveUsers(days).then((r) => r),
+        fetchPopularMovies(days, 10).then((r) => r),
+        fetchOccupancy(days).then((r) => r),
+        fetchBookingSummary(days).then((r) => r),
+        fetchBookingSummary(7).then((r) => r),
       ]);
+
+      // NOTE: If your backend supports theater/movie filters on analytics endpoints,
+      // you can switch the above to:
+      // api.get("/analytics/revenue/trends", { params }).then(r => r.data), etc.
 
       // save raw responses — export can use these to avoid mapping issues
       lastRawRef.current = { revTrends, dau, movies, occ, bookSum, bookSum7 };
-      console.log("DEBUG raw revTrends:", revTrends);
 
       setRevenueDaily(toRevenueDaily(revTrends || []));
       setDauDaily(toDauDaily(dau || []));
@@ -265,13 +238,15 @@ export default function AdminAnalyticsDashboard() {
       const orders = (bookSum || []).reduce((s, d) => s + Number(d.confirmed ?? d.confirmed ?? 0), 0);
       const aov = orders ? Math.round(revenue30 / orders) : 0;
       const revenue7 = (bookSum7 || []).reduce((s, d) => s + Number(d.revenue ?? 0), 0);
-      const avgDau = (dau || []).length ? Math.round((dau || []).reduce((s, d) => s + Number(d.dau ?? d.count ?? d.users ?? 0), 0) / dau.length) : 0;
+      const avgDau = (dau || []).length
+        ? Math.round((dau || []).reduce((s, d) => s + Number(d.dau ?? d.count ?? d.users ?? 0), 0) / dau.length)
+        : 0;
 
       setSummary({ revenue30d: revenue30, orders, aov, revenue7d: revenue7, dau: avgDau });
     } catch (e) {
       if (e.name === "AbortError") return;
       console.error("Analytics load failed:", e);
-      setError(e.message || "Failed to load analytics");
+      setError(extractApiError(e));
     } finally {
       setLoading(false);
     }
@@ -305,14 +280,24 @@ export default function AdminAnalyticsDashboard() {
 
     // Build rows using raw payloads (fall back to mapped state)
     const revRows = (rawRev || []).map((r, i) => {
-      const iso = (r.dayISO && String(r.dayISO)) || (r.date && String(r.date).slice(0, 10)) || (r._id && String(r._id).slice(0, 10)) || (revenueDaily[i] && revenueDaily[i].dayISO) || `D${i + 1}`;
+      const iso =
+        (r.dayISO && String(r.dayISO)) ||
+        (r.date && String(r.date).slice(0, 10)) ||
+        (r._id && String(r._id).slice(0, 10)) ||
+        (revenueDaily[i] && revenueDaily[i].dayISO) ||
+        `D${i + 1}`;
       const revenue = Number(r.totalRevenue ?? r.revenue ?? r.total ?? 0);
       const bookings = Number(r.bookings ?? r.totalBookings ?? 0);
       return { dayISO: wrapExcelText(iso), day: wrapExcelText(fmtDay(iso)), revenue, bookings };
     });
 
     const dauRows = (rawDau || []).map((r, i) => {
-      const iso = (r.dayISO && String(r.dayISO)) || (r.date && String(r.date).slice(0, 10)) || (r._id && String(r._id).slice(0, 10)) || (dauDaily[i] && dauDaily[i].dayISO) || `D${i + 1}`;
+      const iso =
+        (r.dayISO && String(r.dayISO)) ||
+        (r.date && String(r.date).slice(0, 10)) ||
+        (r._id && String(r._id).slice(0, 10)) ||
+        (dauDaily[i] && dauDaily[i].dayISO) ||
+        `D${i + 1}`;
       const users = Number(r.dau ?? r.count ?? r.users ?? 0);
       return { dayISO: wrapExcelText(iso), day: wrapExcelText(fmtDay(iso)), users };
     });
@@ -331,12 +316,6 @@ export default function AdminAnalyticsDashboard() {
       seatsBooked: r.seatsBooked ?? 0,
     }));
 
-    // Debug logs (paste these if you want me to inspect)
-    // eslint-disable-next-line no-console
-    console.log("DEBUG revRows:", JSON.stringify(revRows, null, 2));
-    // eslint-disable-next-line no-console
-    console.log("DEBUG dauRows:", JSON.stringify(dauRows, null, 2));
-
     const sections = [];
     sections.push(makeCSV("Revenue (Daily)", ["dayISO", "day", "revenue", "bookings"], revRows));
     sections.push(makeCSV("Active Users (Daily)", ["dayISO", "day", "users"], dauRows));
@@ -345,10 +324,6 @@ export default function AdminAnalyticsDashboard() {
 
     // Prepend UTF-8 BOM so Excel (Windows) recognizes UTF-8 and columns properly.
     const csvContent = "\uFEFF" + sections.join("");
-
-    // LOG preview start
-    // eslint-disable-next-line no-console
-    console.log("DEBUG CSV start:", csvContent.slice(0, 500));
 
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
