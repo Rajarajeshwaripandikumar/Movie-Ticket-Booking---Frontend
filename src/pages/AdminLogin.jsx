@@ -1,9 +1,8 @@
-// src/pages/AdminLogin.jsx — Walmart Style (clean, rounded, blue accents)
+// src/pages/AdminLogin.jsx — Admin login for SUPER_ADMIN & THEATER_ADMIN
 import React, { useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { useNavigate, useLocation } from "react-router-dom";
 
-/* --------------------------- Walmart primitives --------------------------- */
+/* --------------------------- Walmart UI bits --------------------------- */
 const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
   <Tag className={`bg-white border border-slate-200 rounded-2xl shadow-sm ${className}`} {...rest}>
     {children}
@@ -44,28 +43,24 @@ function PrimaryBtn({ children, className = "", ...props }) {
   );
 }
 
-function SecondaryBtn({ children, className = "", ...props }) {
-  return (
-    <button
-      className={`inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 font-semibold border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071DC] ${className}`}
-      {...props}
-    >
-      {children}
-    </button>
-  );
-}
-
 /* -------------------------------- Component -------------------------------- */
 export default function AdminLogin() {
-  const { login, isSuperAdmin, isTheatreAdmin } = useAuth();
-  const navigate = useNavigate();
-  const location = useLocation();
-  const from = location.state?.from?.pathname;
+  const { login } = useAuth();
 
   const [email, setEmail] = useState("admin@cinema.com");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  // "auto" | "theatre" | "super"
+  const [roleMode, setRoleMode] = useState("auto");
+
+  const roleHint =
+    roleMode === "auto"
+      ? undefined
+      : roleMode === "theatre"
+      ? "THEATER_ADMIN"
+      : "SUPER_ADMIN";
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -78,24 +73,9 @@ export default function AdminLogin() {
 
     setBusy(true);
     try {
-      // IMPORTANT: pass "ADMIN" so AuthContext uses/derives admin role correctly
-      await login(email, password, "ADMIN");
-
-      // If user was redirected here from a protected admin path, send them back
-      if (from && from !== "/" && from !== "/login" && from !== "/admin/login") {
-        navigate(from, { replace: true });
-        return;
-      }
-
-      // Role-based landing
-      if (isSuperAdmin) {
-        navigate("/admin", { replace: true });
-      } else if (isTheatreAdmin) {
-        navigate("/theatre/my", { replace: true });
-      } else {
-        // If a non-admin logs in here, send to public home (or change as you prefer)
-        navigate("/", { replace: true });
-      }
+      // Pass chosen hint; AuthContext will decode JWT + redirect by final role.
+      await login(email, password, roleHint);
+      // No navigate() here — AuthContext already window.location.replace(...)
     } catch (err) {
       const msg = err?.response?.data?.message || err?.message || "Login failed";
       setError(msg);
@@ -112,7 +92,7 @@ export default function AdminLogin() {
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">Cinema Admin</h1>
-              <p className="text-sm text-slate-600">Manage theaters, showtimes & reports</p>
+              <p className="text-sm text-slate-600">Login as Super Admin or Theatre Admin</p>
             </div>
             <div className="rounded-full px-3 py-1 text-xs font-semibold bg-[#E6F0FE] text-[#0654BA] border border-[#C7DCF9]">
               Admin
@@ -142,6 +122,43 @@ export default function AdminLogin() {
             autoComplete="current-password"
           />
 
+          {/* Role hint selector */}
+          <div>
+            <label className="block text-[12px] font-semibold text-slate-600 mb-1">Role</label>
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={() => setRoleMode("auto")}
+                className={`px-3 py-2 rounded-xl border text-sm font-semibold ${
+                  roleMode === "auto" ? "border-[#0071DC] bg-[#E6F0FE] text-[#0654BA]" : "border-slate-300 bg-white"
+                }`}
+              >
+                Auto
+              </button>
+              <button
+                type="button"
+                onClick={() => setRoleMode("theatre")}
+                className={`px-3 py-2 rounded-xl border text-sm font-semibold ${
+                  roleMode === "theatre" ? "border-[#0071DC] bg-[#E6F0FE] text-[#0654BA]" : "border-slate-300 bg-white"
+                }`}
+              >
+                Theatre Admin
+              </button>
+              <button
+                type="button"
+                onClick={() => setRoleMode("super")}
+                className={`px-3 py-2 rounded-xl border text-sm font-semibold ${
+                  roleMode === "super" ? "border-[#0071DC] bg-[#E6F0FE] text-[#0654BA]" : "border-slate-300 bg-white"
+                }`}
+              >
+                Super Admin
+              </button>
+            </div>
+            <p className="mt-1 text-[12px] text-slate-500">
+              Auto lets the server/JWT decide (works great when your account is SUPER_ADMIN).
+            </p>
+          </div>
+
           {error && (
             <Card className="p-3 bg-rose-50 border-rose-200 text-rose-700 font-semibold">⚠️ {error}</Card>
           )}
@@ -151,21 +168,21 @@ export default function AdminLogin() {
           </PrimaryBtn>
 
           <div className="flex flex-col items-center justify-center text-xs text-slate-700 mt-2">
-            <SecondaryBtn
+            <button
               type="button"
               onClick={() => {
                 setEmail("admin@cinema.com");
                 setPassword("");
                 setError("");
+                setRoleMode("auto");
               }}
-              className="mb-2"
+              className="inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 font-semibold border border-slate-300 bg-white text-slate-800 hover:bg-slate-50"
             >
               Reset
-            </SecondaryBtn>
+            </button>
 
-            <p className="text-slate-600 italic text-[13px] text-center">
-              Tip: Use <span className="font-semibold">Email(admin@cinema.com)</span> and{" "}
-              <span className="font-semibold">password(NewPass123!)</span>.
+            <p className="text-slate-600 italic text-[13px] text-center mt-2">
+              Tip: SUPER_ADMIN can leave role as <b>Auto</b>. Theatre admins can pick <b>Theatre Admin</b>.
             </p>
           </div>
         </form>
