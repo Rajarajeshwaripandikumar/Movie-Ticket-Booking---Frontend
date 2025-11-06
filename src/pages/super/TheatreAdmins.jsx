@@ -37,10 +37,11 @@ export default function TheatreAdmins() {
     );
   }, [search, admins]);
 
+  const fmt = (d) => (d ? new Date(d).toLocaleString() : "-");
+
   return (
     <main className="min-h-screen bg-slate-50 py-8 px-4">
       <div className="max-w-5xl mx-auto space-y-6">
-        
         {/* Header Card */}
         <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5 flex justify-between items-center">
           <h1 className="text-2xl font-extrabold flex gap-2 items-center">
@@ -82,7 +83,15 @@ export default function TheatreAdmins() {
               No theatre admins found.
             </p>
           ) : (
-            <table className="w-full text-left text-sm">
+            <table className="w-full table-fixed text-left text-sm">
+              {/* Lock column widths so cells stay aligned */}
+              <colgroup>
+                <col style={{ width: "34%" }} />
+                <col style={{ width: "28%" }} />
+                <col style={{ width: "23%" }} />
+                <col style={{ width: "15%" }} />
+              </colgroup>
+
               <thead className="border-b bg-slate-100 text-slate-700 font-semibold">
                 <tr>
                   <th className="py-3 px-3">Name</th>
@@ -91,25 +100,64 @@ export default function TheatreAdmins() {
                   <th className="py-3 px-3">Created</th>
                 </tr>
               </thead>
+
               <tbody className="divide-y">
                 {filtered.map((a) => (
-                  <tr key={a._id} className="hover:bg-slate-50">
-                    <td className="py-3 px-3 font-medium flex items-center gap-2">
-                      <div className="h-8 w-8 rounded-full bg-slate-200 grid place-items-center text-slate-700 font-bold">
-                        {a.name?.charAt(0)?.toUpperCase()}
+                  <tr key={a._id} className="hover:bg-slate-50 align-middle">
+                    {/* Name */}
+                    <td className="py-3 px-3 whitespace-nowrap">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="h-8 w-8 shrink-0 rounded-full bg-slate-200 grid place-items-center text-slate-700 font-bold">
+                          {a.name?.charAt(0)?.toUpperCase() || "?"}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="font-medium text-slate-900 truncate" title={a.name}>
+                            {a.name || "—"}
+                          </div>
+                          <div className="text-xs text-slate-500">OWNER</div>
+                        </div>
                       </div>
-                      {a.name}
                     </td>
-                    <td className="py-3 px-3 flex items-center gap-2">
-                      <Mail className="h-4 w-4 text-slate-500" />
-                      {a.email}
+
+                    {/* Email */}
+                    <td className="py-3 px-3 whitespace-nowrap">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Mail className="h-4 w-4 text-slate-500 shrink-0" />
+                        <span className="truncate" title={a.email}>
+                          {a.email || "—"}
+                        </span>
+                      </div>
                     </td>
-                    <td className="py-3 px-3 flex items-center gap-2">
-                      <Building2 className="h-4 w-4 text-slate-500" />
-                      {a.theatreId?.name} {a.theatreId?.city && `• ${a.theatreId.city}`}
+
+                    {/* Theatre */}
+                    <td className="py-3 px-3 whitespace-nowrap">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Building2 className="h-4 w-4 text-slate-500 shrink-0" />
+                        <span
+                          className="truncate"
+                          title={
+                            a.theatreId?.name
+                              ? `${a.theatreId.name}${a.theatreId?.city ? " • " + a.theatreId.city : ""}`
+                              : ""
+                          }
+                        >
+                          {a.theatreId?.name ? (
+                            <>
+                              {a.theatreId.name}
+                              {a.theatreId?.city && (
+                                <span className="text-slate-500"> • {a.theatreId.city}</span>
+                              )}
+                            </>
+                          ) : (
+                            "—"
+                          )}
+                        </span>
+                      </div>
                     </td>
-                    <td className="py-3 px-3 text-slate-600">
-                      {a.createdAt ? new Date(a.createdAt).toLocaleString() : "-"}
+
+                    {/* Created */}
+                    <td className="py-3 px-3 text-slate-600 whitespace-nowrap">
+                      {fmt(a.createdAt)}
                     </td>
                   </tr>
                 ))}
