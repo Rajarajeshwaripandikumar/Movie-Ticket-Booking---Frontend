@@ -322,14 +322,28 @@ export default function Navbar() {
                 </div>
               )}
 
-              {/* Admin access / login */}
+              {/* Admin access / login + Login/Register pills */}
               {!isLoggedIn ? (
-                <button
-                  onClick={() => navigate("/admin/login")}
-                  className="text-sm font-semibold px-4 py-2 rounded-full border border-[#0071DC]/40 text-[#0071DC] hover:bg-[#E8F1FF]"
-                >
-                  <Shield className="w-4 h-4 inline-block" /> Admin
-                </button>
+                <>
+                  <button
+                    onClick={() => navigate("/admin/login")}
+                    className="text-sm font-semibold px-4 py-2 rounded-full border border-[#0071DC]/40 text-[#0071DC] hover:bg-[#E8F1FF]"
+                  >
+                    <Shield className="w-4 h-4 inline-block" /> Admin
+                  </button>
+                  <Link
+                    to="/login"
+                    className="text-sm font-semibold px-4 py-2 rounded-full border border-slate-300 text-slate-800 hover:bg-slate-50"
+                  >
+                    Login
+                  </Link>
+                  <Link
+                    to="/register"
+                    className="text-sm font-semibold px-4 py-2 rounded-full bg-[#0071DC] text-white hover:bg-[#0654BA]"
+                  >
+                    Register
+                  </Link>
+                </>
               ) : (isAdmin || isSuperAdmin || isTheatreAdmin) ? (
                 <button
                   onClick={() => navigate(isSuperAdmin ? "/admin" : isTheatreAdmin ? "/theatre" : "/admin")}
@@ -339,7 +353,7 @@ export default function Navbar() {
                 </button>
               ) : null}
 
-              {/* Account Menu */}
+              {/* Account Menu — only when logged in */}
               {isLoggedIn && (
                 <div className="relative">
                   <button
@@ -353,7 +367,7 @@ export default function Navbar() {
 
                   {adminMenu && (
                     <Card className="absolute right-0 mt-2 w-64 p-1 bg-white z-50">
-                      <MenuItemLink to={isSuperAdmin ? "/admin/profile" : isTheatreAdmin ? "/theatre/profile" : "/profile"} onClick={() => setAdminMenu(false)}>
+                      <MenuItemLink to={profilePath} onClick={() => setAdminMenu(false)}>
                         Profile
                       </MenuItemLink>
 
