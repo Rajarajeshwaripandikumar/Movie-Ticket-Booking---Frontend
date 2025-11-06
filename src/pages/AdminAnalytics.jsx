@@ -29,6 +29,9 @@ import {
   Line,
 } from "recharts";
 
+/* ======================== Auth gate (NEW) ======================== */
+import { useAuth } from "../context/AuthContext";
+
 /* ======================== API (use axios instance) ======================== */
 import api, { extractApiError } from "../api/api";
 import {
@@ -128,6 +131,8 @@ const toTheaterOcc = (arr = []) =>
 
 /* ======================== Main Component ======================== */
 export default function AdminAnalyticsDashboard() {
+  const { user, loading: authLoading } = useAuth(); // ← NEW
+
   const [range, setRange] = useState("30d");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -149,23 +154,47 @@ export default function AdminAnalyticsDashboard() {
   const [alerts, setAlerts] = useState([]);
 
   const controllerRef = useRef(null);
-  const lastRawRef = useRef({}); // NEW: store raw API responses for robust export
+  const lastRawRef = useRef({}); // store raw API responses for export/debug
   const daysOf = (id) => ranges.find((r) => r.id === id)?.days ?? 30;
 
+  /* ---------- Prime axios Authorization immediately if token exists (extra safety) ---------- */
   useEffect(() => {
-    // load catalogs for filter selects and alerts
+    try {
+      const raw = localStorage.getItem("auth") || sessionStorage.getItem("auth");
+      if (raw) {
+        const a = JSON.parse(raw);
+        if (a?.token) api.setAuthToken(a.token);
+      } else {
+        const fallback =
+          localStorage.getItem("auth_token") ||
+          localStorage.getItem("authToken") ||
+          localStorage.getItem("accessToken") ||
+          localStorage.getItem("access_token") ||
+          localStorage.getItem("token") ||
+          sessionStorage.getItem("auth_token") ||
+          sessionStorage.getItem("token");
+        if (fallback) api.setAuthToken(fallback);
+      }
+    } catch {}
+  }, []);
+
+  /* ---------- Initial load: only after auth is ready + user exists ---------- */
+  useEffect(() => {
+    if (authLoading || !user) return; // ← gate all analytics/API calls until authorized
     const c = new AbortController();
     loadCatalogs(c.signal);
     loadAlerts(c.signal);
     loadData(range, c.signal);
     return () => c.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [authLoading, user]);
 
+  /* ---------- Subsequent loads on range/filter change (still gated) ---------- */
   useEffect(() => {
+    if (authLoading || !user) return;
     loadData(range);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [range, filters.theater, filters.movie]);
+  }, [range, filters.theater, filters.movie, authLoading, user]);
 
   async function loadCatalogs(signal) {
     try {
@@ -214,19 +243,16 @@ export default function AdminAnalyticsDashboard() {
       };
 
       const [revTrends, dau, movies, occ, bookSum, bookSum7] = await Promise.all([
-        fetchRevenueTrends(days).then((r) => r),                    // already accepts days, but we also support filters
-        fetchActiveUsers(days).then((r) => r),
-        fetchPopularMovies(days, 10).then((r) => r),
-        fetchOccupancy(days).then((r) => r),
-        fetchBookingSummary(days).then((r) => r),
-        fetchBookingSummary(7).then((r) => r),
+        // if your backend supports filters on these endpoints, pass { params }:
+        // api.get("/analytics/revenue/trends", { params }).then(r => r.data), etc.
+        fetchRevenueTrends(days),
+        fetchActiveUsers(days),
+        fetchPopularMovies(days, 10),
+        fetchOccupancy(days),
+        fetchBookingSummary(days),
+        fetchBookingSummary(7),
       ]);
 
-      // NOTE: If your backend supports theater/movie filters on analytics endpoints,
-      // you can switch the above to:
-      // api.get("/analytics/revenue/trends", { params }).then(r => r.data), etc.
-
-      // save raw responses — export can use these to avoid mapping issues
       lastRawRef.current = { revTrends, dau, movies, occ, bookSum, bookSum7 };
 
       setRevenueDaily(toRevenueDaily(revTrends || []));
@@ -235,7 +261,7 @@ export default function AdminAnalyticsDashboard() {
       setTheaterOcc(toTheaterOcc(occ || []));
 
       const revenue30 = (bookSum || []).reduce((s, d) => s + Number(d.revenue ?? 0), 0);
-      const orders = (bookSum || []).reduce((s, d) => s + Number(d.confirmed ?? d.confirmed ?? 0), 0);
+      const orders = (bookSum || []).reduce((s, d) => s + Number(d.confirmed ?? d.orders ?? 0), 0);
       const aov = orders ? Math.round(revenue30 / orders) : 0;
       const revenue7 = (bookSum7 || []).reduce((s, d) => s + Number(d.revenue ?? 0), 0);
       const avgDau = (dau || []).length
@@ -260,7 +286,6 @@ export default function AdminAnalyticsDashboard() {
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
 
-    // Wrap as ="text" to stop Excel turning it into #### or date rounding
     const wrapExcelText = (s) => {
       if (s === undefined || s === null || s === "") return "";
       return `="${String(s)}"`;
@@ -273,12 +298,10 @@ export default function AdminAnalyticsDashboard() {
       return csv;
     };
 
-    // prefer raw API payloads where possible (most robust)
     const raw = lastRawRef.current || {};
     const rawRev = Array.isArray(raw.revTrends) ? raw.revTrends : revenueDaily.map((r) => ({ date: r.dayISO, totalRevenue: r.revenue, bookings: r.bookings }));
     const rawDau = Array.isArray(raw.dau) ? raw.dau : dauDaily.map((d) => ({ date: d.dayISO, users: d.users }));
 
-    // Build rows using raw payloads (fall back to mapped state)
     const revRows = (rawRev || []).map((r, i) => {
       const iso =
         (r.dayISO && String(r.dayISO)) ||
@@ -302,7 +325,6 @@ export default function AdminAnalyticsDashboard() {
       return { dayISO: wrapExcelText(iso), day: wrapExcelText(fmtDay(iso)), users };
     });
 
-    // occupancy & movies use mapped state (they're already normalized)
     const occRows = (theaterOcc || []).map((r) => ({
       name: r.name ?? r.theaterName ?? "",
       occupancy: r.occupancy ?? r.occupancyRate ?? "",
@@ -322,14 +344,11 @@ export default function AdminAnalyticsDashboard() {
     sections.push(makeCSV("Theater Occupancy", ["name", "occupancy", "totalBooked", "totalCapacity"], occRows));
     sections.push(makeCSV("Top Movies", ["title", "bookings", "revenue", "seatsBooked"], movieRows));
 
-    // Prepend UTF-8 BOM so Excel (Windows) recognizes UTF-8 and columns properly.
     const csvContent = "\uFEFF" + sections.join("");
 
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
-    // open preview in new tab for inspection
     window.open(url, "_blank");
-    // trigger download
     const link = document.createElement("a");
     link.href = url;
     link.setAttribute("download", `analytics_${range}_${new Date().toISOString().slice(0, 10)}.csv`);
@@ -343,7 +362,6 @@ export default function AdminAnalyticsDashboard() {
   function applyFilters(e) {
     e?.preventDefault?.();
     setFiltersOpen(false);
-    // loadData will run via useEffect watching filters
   }
   function resetFilters() {
     setFilters({ theater: "", movie: "" });
@@ -369,7 +387,7 @@ export default function AdminAnalyticsDashboard() {
                 <Pill onClick={() => { setAlertsOpen(true); refreshAlerts(); }}><Bell className="h-4 w-4" /> Alerts</Pill>
                 <Pill onClick={() => setFiltersOpen(true)}><Filter className="h-4 w-4" /> Filter</Pill>
                 <Primary onClick={exportCSV}><Download className="h-4 w-4" /> Export CSV</Primary>
-                <Pill onClick={() => loadData(range)}><RefreshCcw className="h-4 w-4" /> Refresh</Pill>
+                <Pill onClick={() => loadData(range)} disabled={authLoading || !user}><RefreshCcw className="h-4 w-4" /> Refresh</Pill>
                 <div className="flex items-center gap-1.5 bg-slate-100 rounded-full p-1">
                   {ranges.map((r) => (
                     <button
@@ -401,7 +419,7 @@ export default function AdminAnalyticsDashboard() {
         {/* Charts */}
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
           <div className="lg:col-span-3">
-            <ChartCard title="Daily Revenue" subtitle="Aggregate revenue per day" right={<Pill onClick={() => loadData(range)}><RefreshCcw className="h-3.5 w-3.5" /> Refresh</Pill>}>
+            <ChartCard title="Daily Revenue" subtitle="Aggregate revenue per day" right={<Pill onClick={() => loadData(range)} disabled={authLoading || !user}><RefreshCcw className="h-3.5 w-3.5" /> Refresh</Pill>}>
               {loading ? <EmptyMini label="Loading revenue..." /> : (
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={revenueDaily} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
