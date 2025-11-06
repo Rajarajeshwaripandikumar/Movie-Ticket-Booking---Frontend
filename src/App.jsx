@@ -47,6 +47,7 @@ import TheatreScreens from "./pages/theatre/TheatreScreens";
 import TheatreShowtimes from "./pages/theatre/TheatreShowtimes";
 import TheatreProfile from "./pages/theatre/TheatreProfile";
 import TheatreReports from "./pages/theatre/TheatreReports";
+import TheatrePricing from "./pages/theatre/TheatrePricing"; // ← NEW
 
 // Super-only: Theatre Admins list
 import TheatreAdmins from "./pages/super/TheatreAdmins";
@@ -65,7 +66,7 @@ function RequireAuth({ children, role }) {
   const userRole = auth?.role;
 
   if (!token) {
-    const isAdminRoute = Array.isArray(role) && role.some(r => r.includes("ADMIN"));
+    const isAdminRoute = Array.isArray(role) && role.some((r) => r.includes("ADMIN"));
     return (
       <Navigate
         to={isAdminRoute ? "/admin/login" : "/login"}
@@ -123,6 +124,7 @@ export default function App() {
             <Route path="/admin/login" element={<AdminLogin />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/reset-password/:token" element={<ResetPassword />} />{/* tokenized links */}
 
             {/* Movies */}
             <Route path="/movies" element={<Movies />} />
@@ -141,7 +143,14 @@ export default function App() {
             <Route path="/bookings/:id" element={<RequireAuth role="USER"><TicketDetails /></RequireAuth>} />
 
             {/* ========== ADMIN AREA ========== */}
-            <Route path="/admin" element={<RequireAuth role={["SUPER_ADMIN", "THEATER_ADMIN"]}><AdminShell><AdminIndex /></AdminShell></RequireAuth>} />
+            <Route
+              path="/admin"
+              element={
+                <RequireAuth role={["SUPER_ADMIN", "THEATER_ADMIN"]}>
+                  <AdminShell><AdminIndex /></AdminShell>
+                </RequireAuth>
+              }
+            />
 
             <Route path="/admin/dashboard" element={<RequireAuth role="SUPER_ADMIN"><AdminShell><AdminDashboard /></AdminShell></RequireAuth>} />
             <Route path="/admin/theaters" element={<RequireAuth role="SUPER_ADMIN"><AdminShell><AdminTheaters /></AdminShell></RequireAuth>} />
@@ -160,6 +169,7 @@ export default function App() {
             <Route path="/theatre/showtimes" element={<RequireAuth role="THEATER_ADMIN"><AdminShell><TheatreShowtimes /></AdminShell></RequireAuth>} />
             <Route path="/theatre/profile" element={<RequireAuth role="THEATER_ADMIN"><AdminShell><TheatreProfile /></AdminShell></RequireAuth>} />
             <Route path="/theatre/reports" element={<RequireAuth role="THEATER_ADMIN"><AdminShell><TheatreReports /></AdminShell></RequireAuth>} />
+            <Route path="/theatre/pricing" element={<RequireAuth role="THEATER_ADMIN"><AdminShell><TheatrePricing /></AdminShell></RequireAuth>} />{/* ← NEW */}
 
             {/* Super theatre-admin list */}
             <Route path="/super/theatre-admins" element={<RequireAuth role="SUPER_ADMIN"><AdminShell><TheatreAdmins /></AdminShell></RequireAuth>} />
