@@ -83,17 +83,15 @@ export default function Navbar() {
   const [open, setOpen] = useState(false);
   const [adminMenu, setAdminMenu] = useState(false);
 
-  // Hide public navbar on admin/theatre routes
+  // ✅ Render Navbar everywhere (including /admin and /theatre)
   const path = location.pathname || "";
-  const hideNavbar = path.startsWith("/admin") || path.startsWith("/theatre");
-  if (hideNavbar) return null;
 
   // Role-aware profile link
   const profilePath = isSuperAdmin ? "/admin/profile" : isTheatreAdmin ? "/theatre/profile" : "/profile";
 
   return (
-    <header className="w-full sticky top-0 z-50">
-      <div className="backdrop-blur-md bg-white/85 border-b border-slate-200 shadow-sm">
+    <header className="w-full sticky top-0 z-50"> {/* keep sticky; high z-index */}
+      <div className="relative isolate z-50 backdrop-blur-md bg-white/85 border-b border-slate-200 shadow-sm overflow-visible">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           {/* ROW: logo | middle nav | right controls */}
           <div className="h-16 flex items-center gap-6">
@@ -137,7 +135,7 @@ export default function Navbar() {
                 </button>
               ) : (isAdmin || isSuperAdmin || isTheatreAdmin) ? (
                 <button
-                  onClick={() => navigate(isSuperAdmin ? "/admin" : "/theatre")}
+                  onClick={() => navigate(isSuperAdmin ? "/admin" : isTheatreAdmin ? "/theatre" : "/admin")}
                   className="text-sm font-semibold px-4 py-2 rounded-full border border-[#0071DC]/40 text-[#0071DC] hover:bg-[#E8F1FF]"
                 >
                   <Shield className="w-4 h-4 inline-block" /> Go to Admin
@@ -157,7 +155,7 @@ export default function Navbar() {
                   </button>
 
                   {adminMenu && (
-                    <Card className="absolute right-0 mt-2 w-60 p-1 bg-white">
+                    <Card className="absolute right-0 mt-2 w-64 p-1 bg-white z-50"> {/* z-50 prevents clipping */}
                       {/* Profile routes by role */}
                       <MenuItemLink to={profilePath} onClick={() => setAdminMenu(false)}>
                         Profile
@@ -210,6 +208,11 @@ export default function Navbar() {
           </div>
         </div>
       </div>
+
+      {/* Optional: add spacer so sticky header doesn't cover top content on admin pages */}
+      {path.startsWith("/admin") || path.startsWith("/theatre") ? (
+        <div className="h-0 md:h-0" />
+      ) : null}
     </header>
   );
 }
