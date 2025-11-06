@@ -1,9 +1,8 @@
 // src/components/Navbar.jsx
-import React, { useEffect, useState, useRef } from "react";
+import React, { useState } from "react";
 import { Link, NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import Logo from "./Logo";
-import api from "../api/api";
 import { Bell, ChevronDown, Menu, X, UserRound, Shield, LogOut } from "lucide-react";
 
 /* --------------------------- Walmart primitives --------------------------- */
@@ -27,20 +26,6 @@ function IconBtn({ className = "", ...rest }) {
   );
 }
 
-function PrimaryBtn({ className = "", ...rest }) {
-  return (
-    <button
-      className={cn(
-        "inline-flex items-center gap-2 text-[12px] font-semibold px-3.5 py-2 rounded-full",
-        "bg-[#0071DC] text-white hover:bg-[#0654BA]",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071DC] disabled:opacity-60",
-        className
-      )}
-      {...rest}
-    />
-  );
-}
-
 function GhostLink({ active, className = "", ...rest }) {
   return (
     <button
@@ -54,26 +39,23 @@ function GhostLink({ active, className = "", ...rest }) {
   );
 }
 
-/* -------------------------- FIXED Menu Navigation -------------------------- */
+/* -------------------------- Menu Navigation Item -------------------------- */
+// Uses NavLink so React Router handles navigation reliably.
 function MenuItemLink({ to, children, onClick }) {
-  const navigate = useNavigate();
   return (
-    <button
-      type="button"
-      onClick={(e) => {
-        onClick?.(e);
-        setTimeout(() => navigate(to), 0); // reliable navigation
-      }}
+    <NavLink
+      to={to}
+      onClick={onClick}
       className="block w-full text-left px-3 py-2 text-sm rounded-xl hover:bg-slate-50 font-semibold"
       role="menuitem"
     >
       {children}
-    </button>
+    </NavLink>
   );
 }
 
 /* ------------------------------ Menu Groups ------------------------------ */
-// NOTE: Removed "Admin Profile" from this list to avoid duplicates in the dropdown
+// Super admin menu (no separate Admin Profile here)
 const SUPER_ADMIN_LINKS = [
   { label: "Manage Theaters", to: "/admin/theaters" },
   { label: "Manage Movies", to: "/admin/movies" },
@@ -101,24 +83,7 @@ export default function Navbar() {
 
   const [open, setOpen] = useState(false);
   const [adminMenu, setAdminMenu] = useState(false);
-  const [notifOpen, setNotifOpen] = useState(false);
-  const [notifications, setNotifications] = useState([]);
 
-  const extractJwt = (value) => {
-    try {
-      const s = typeof value === "string" ? value : JSON.stringify(value || "");
-      return s.replace(/^Bearer\s+/i, "");
-    } catch {
-      return "";
-    }
-  };
-
-  const authHeader =
-    extractJwt(token) || extractJwt(localStorage.getItem("token"))
-      ? `Bearer ${extractJwt(token || localStorage.getItem("token"))}`
-      : undefined;
-
-  /* ------------------------ Profile Path by Role ------------------------ */
   // ✅ Any admin (super or theatre) goes to AdminProfile.jsx (/admin/profile).
   // Non-admin users go to /profile.
   const profilePath = isAdmin ? "/admin/profile" : "/profile";
@@ -128,7 +93,6 @@ export default function Navbar() {
       <div className="backdrop-blur-md bg-white/85 border-b border-slate-200 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="h-16 flex items-center justify-between">
-
             {/* Brand */}
             <Link to="/" className="flex items-center gap-3">
               <Card className="p-1.5">
@@ -141,18 +105,25 @@ export default function Navbar() {
 
             {/* Main Links */}
             <nav className="hidden md:flex items-center gap-5">
-              <NavLink to="/movies">{({ isActive }) => <GhostLink active={isActive}>Movies</GhostLink>}</NavLink>
-              <NavLink to="/theaters">{({ isActive }) => <GhostLink active={isActive}>Theaters</GhostLink>}</NavLink>
-              <NavLink to="/showtimes">{({ isActive }) => <GhostLink active={isActive}>Showtimes</GhostLink>}</NavLink>
+              <NavLink to="/movies">
+                {({ isActive }) => <GhostLink active={isActive}>Movies</GhostLink>}
+              </NavLink>
+              <NavLink to="/theaters">
+                {({ isActive }) => <GhostLink active={isActive}>Theaters</GhostLink>}
+              </NavLink>
+              <NavLink to="/showtimes">
+                {({ isActive }) => <GhostLink active={isActive}>Showtimes</GhostLink>}
+              </NavLink>
 
               {isLoggedIn && !isAdmin && (
-                <NavLink to="/bookings">{({ isActive }) => <GhostLink active={isActive}>My Bookings</GhostLink>}</NavLink>
+                <NavLink to="/bookings">
+                  {({ isActive }) => <GhostLink active={isActive}>My Bookings</GhostLink>}
+                </NavLink>
               )}
             </nav>
 
             {/* Right Controls */}
             <div className="flex items-center gap-3 relative">
-
               {/* If not logged in → Admin Login button */}
               {!isLoggedIn && (
                 <button
@@ -206,8 +177,10 @@ export default function Navbar() {
                         ))}
 
                       <button
+                        type="button"
                         onClick={async () => {
                           await logout();
+                          setAdminMenu(false);
                           navigate("/", { replace: true });
                         }}
                         className="w-full text-left px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 rounded-xl font-semibold"
