@@ -58,10 +58,6 @@ function readCookie(name) {
 
 /**
  * Attempts to find an auth token + role across common storage locations.
- * Supports:
- *   - localStorage/sessionStorage: "auth" JSON { token, role, user:{ role, token } }
- *   - localStorage/sessionStorage plain keys: token/jwt/accessToken/authToken
- *   - cookies: token/jwt/accessToken
  */
 function getAuthFromStorage() {
   try {
@@ -81,26 +77,41 @@ function getAuthFromStorage() {
         if (token) return { token, role };
       } catch {}
     }
-    for (const k of ["token", "jwt", "accessToken", "authToken"]) {
+    for (const k of [
+      "token",
+      "jwt",
+      "accessToken",
+      "authToken",
+      "auth_token",
+      "access_token",
+      "bearer",
+    ]) {
       const v = localStorage.getItem(k) || sessionStorage.getItem(k);
       if (v) return { token: v, role: undefined };
     }
     const cookieToken =
       readCookie("token") || readCookie("jwt") || readCookie("accessToken");
     if (cookieToken) return { token: cookieToken, role: undefined };
+
+    // final fallback: reuse axios default Authorization if present
+    const authHeader = api?.defaults?.headers?.common?.Authorization;
+    if (typeof authHeader === "string") {
+      const m = authHeader.match(/^Bearer\s+(.+)$/i);
+      if (m) return { token: m[1], role: undefined };
+    }
   } catch {}
   return { token: null, role: undefined };
 }
 
 /* ------------------------------ Axios instance --------------------------- */
 const api = axios.create({
-  baseURL: AXIOS_BASE, // callers must pass paths WITHOUT "/api" (e.g., "/analytics/…")
+  baseURL: AXIOS_BASE, // callers pass paths WITHOUT "/api"
   timeout: 60000,
   withCredentials: false,
   headers: { Accept: "application/json" },
 });
 
-// keep FormData content-type dynamic (browser will set boundary)
+// keep FormData content-type dynamic
 if (api.defaults && api.defaults.headers) {
   ["post", "put", "patch"].forEach((m) => {
     if (api.defaults.headers[m]) delete api.defaults.headers[m]["Content-Type"];
@@ -108,9 +119,10 @@ if (api.defaults && api.defaults.headers) {
 }
 
 /* ----------------------- Request interceptor (JWT) ------------------------ */
-const API_DEBUG = true; // toggle for verbose request logs while diagnosing
+const API_DEBUG = true;
 const DEV_TOKEN_FALLBACK =
-  (typeof import.meta !== "undefined" && (import.meta.env?.DEV || import.meta.env?.VITE_DEV_TOKEN_FALLBACK === "true")) ||
+  (typeof import.meta !== "undefined" &&
+    (import.meta.env?.DEV || import.meta.env?.VITE_DEV_TOKEN_FALLBACK === "true")) ||
   false;
 
 // manual override (e.g., post-login priming)
@@ -163,19 +175,23 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// 3) DEV-ONLY emergency fallback: add ?token= if header still missing
-//    Requires backend dev middleware to promote query token -> header.
-//    Disable in production.
+// 3) Rescue: if analytics call still lacks Authorization, pick `?token=` from page URL.
+//    (Useful for the very first paint before auth context/primeAuth runs.)
 api.interceptors.request.use((config) => {
   try {
     const isAnalytics = String(config.url || "").includes("/analytics/");
     const hasAuth = !!(config.headers && config.headers.Authorization);
-    if (DEV_TOKEN_FALLBACK && isAnalytics && !hasAuth) {
-      const { token } = getAuthFromStorage();
-      if (token) {
-        config.params = { ...(config.params || {}), token }; // ⬅️ adds ?token=
-        if (API_DEBUG) {
-          console.warn("[api] added ?token= fallback for analytics", config.url);
+    if (isAnalytics && !hasAuth) {
+      const tokenFromUrl = new URLSearchParams(window.location.search).get("token");
+      if (tokenFromUrl) {
+        config.headers = config.headers || {};
+        config.headers.Authorization = `Bearer ${tokenFromUrl}`;
+        if (API_DEBUG) console.warn("[api] using ?token= from URL for analytics");
+      } else if (DEV_TOKEN_FALLBACK) {
+        const { token } = getAuthFromStorage();
+        if (token) {
+          config.params = { ...(config.params || {}), token }; // adds ?token=
+          if (API_DEBUG) console.warn("[api] added ?token= fallback for analytics", config.url);
         }
       }
     }
@@ -188,7 +204,6 @@ api.interceptors.response.use(
   (res) => res,
   (error) => {
     if (error?.response?.status === 401) {
-      // Let the app react (e.g., show toast, logout, redirect)
       window.dispatchEvent(new CustomEvent("api:unauthorized"));
     }
     return Promise.reject(error);
@@ -249,10 +264,6 @@ export function makeAbsoluteImageUrl(url) {
 }
 
 /* ----------------------------- Post-login hook ---------------------------- */
-/**
- * Call this right after a successful login to guarantee future requests are authed.
- * It stores in localStorage and primes the axios default Authorization header.
- */
 export function primeAuth(token, role) {
   try {
     const payload = { token, role: role ?? undefined };
@@ -263,5 +274,14 @@ export function primeAuth(token, role) {
     console.error("[api] primeAuth failed:", e);
   }
 }
+
+/* ------------------------- Startup hydration (NEW) ------------------------ */
+// If the user was already logged in, carry Authorization on first paint
+(() => {
+  try {
+    const { token } = getAuthFromStorage();
+    if (token) api.setAuthToken(token);
+  } catch {}
+})();
 
 export default api;
