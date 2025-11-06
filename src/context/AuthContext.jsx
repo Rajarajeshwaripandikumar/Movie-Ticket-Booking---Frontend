@@ -12,7 +12,7 @@ import api from "../api/api";
 export const AuthContext = createContext(null);
 export const useAuth = () => useContext(AuthContext);
 
-/* ---------------- helpers to decode jwt ---------------- */
+/* ---------------- helpers to decode jwt (safe, no atob errors) ---------------- */
 function safeJsonBase64Decode(payload) {
   try {
     const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
@@ -68,9 +68,10 @@ function defaultLandingFor(role) {
   return "/";
 }
 
-/* small storage helpers */
+/* ---------------- small storage helpers ---------------- */
 const LS_KEYS = {
-  token: "token",
+  token: "token",                 // normal user token
+  adminToken: "adminToken",       // admin-only token
   role: "role",
   roles: "roles",
   perms: "perms",
@@ -94,7 +95,10 @@ function readJSON(key, fallback) {
 
 /* ---------------- AuthProvider ---------------- */
 export function AuthProvider({ children }) {
+  // Keep BOTH tokens; prefer adminToken for protected/admin API calls & identity
   const [token, setToken] = useState(() => localStorage.getItem(LS_KEYS.token) || null);
+  const [adminToken, setAdminToken] = useState(() => localStorage.getItem(LS_KEYS.adminToken) || null);
+
   const [role, setRole] = useState(() => normalizeRole(localStorage.getItem(LS_KEYS.role)));
   const [roles, setRoles] = useState(() => {
     const raw = readJSON(LS_KEYS.roles, []);
@@ -108,19 +112,30 @@ export function AuthProvider({ children }) {
 
   const [user, setUser] = useState(() => readJSON(LS_KEYS.user, null));
 
-  /* Sync token -> localStorage + axios header */
+  // Compute the active auth token (admin has priority)
+  const activeToken = adminToken || token || null;
+
+  /* Sync active token -> axios header and localStorage */
   useEffect(() => {
-    if (token) {
-      localStorage.setItem(LS_KEYS.token, token);
-      api.setAuthToken?.(token);
-      // best-effort header if helper not present
-      if (api.defaults) api.defaults.headers.common.Authorization = `Bearer ${token}`;
+    if (activeToken) {
+      api.setAuthToken?.(activeToken);
+      if (api.defaults) api.defaults.headers.common.Authorization = `Bearer ${activeToken}`;
     } else {
-      localStorage.removeItem(LS_KEYS.token);
       api.setAuthToken?.(null);
       if (api.defaults) delete api.defaults.headers.common.Authorization;
     }
+  }, [activeToken]);
+
+  // Persist each token separately
+  useEffect(() => {
+    if (token) localStorage.setItem(LS_KEYS.token, token);
+    else localStorage.removeItem(LS_KEYS.token);
   }, [token]);
+
+  useEffect(() => {
+    if (adminToken) localStorage.setItem(LS_KEYS.adminToken, adminToken);
+    else localStorage.removeItem(LS_KEYS.adminToken);
+  }, [adminToken]);
 
   /* Persist role/roles/perms/user whenever they change */
   useEffect(() => {
@@ -143,7 +158,54 @@ export function AuthProvider({ children }) {
     else localStorage.removeItem(LS_KEYS.user);
   }, [user]);
 
-  /* LOGIN */
+  /* Initialize identity on first load (prefer admin token) */
+  useEffect(() => {
+    const rawAdmin = localStorage.getItem(LS_KEYS.adminToken);
+    const rawUser = localStorage.getItem(LS_KEYS.token);
+
+    if (rawAdmin) {
+      const claims = decodeJwt(rawAdmin) || {};
+      const r = normalizeRole(claims.role);
+      if (r) {
+        setAdminToken(rawAdmin);
+        setToken(null); // ensure clean separation
+        setRole(r);
+        setRoles([r]);
+        setUser({
+          email: claims.email || user?.email || "",
+          role: r,
+          roles: [r],
+          perms: Array.isArray(claims.perms) ? claims.perms : [],
+          theaterId: claims.theatreId || claims.theaterId || user?.theaterId || null,
+        });
+        return;
+      } else {
+        localStorage.removeItem(LS_KEYS.adminToken);
+      }
+    }
+
+    if (rawUser) {
+      const claims = decodeJwt(rawUser) || {};
+      const r = normalizeRole(claims.role);
+      if (r) {
+        setToken(rawUser);
+        setRole(r);
+        setRoles([r]);
+        setUser({
+          email: claims.email || user?.email || "",
+          role: r,
+          roles: [r],
+          perms: Array.isArray(claims.perms) ? claims.perms : [],
+          theaterId: claims.theatreId || claims.theaterId || user?.theaterId || null,
+        });
+      } else {
+        localStorage.removeItem(LS_KEYS.token);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* USER LOGIN (normal site login) */
   const login = useCallback(async (email, password, roleHint) => {
     const res = await api.post("/auth/login", { email, password, roleHint });
     const data = res?.data ?? res;
@@ -179,31 +241,72 @@ export function AuthProvider({ children }) {
       theaterId: claims.theatreId || claims.theaterId || data?.user?.theaterId || null,
     };
 
-    // set state
+    // set state: USER token only, clear admin token if present
+    setAdminToken(null);
     setToken(t);
     setRole(finalRole);
     setRoles(normalizedRoles);
     setPerms(permsArr);
     setUser(finalUser);
 
-    // immediate storage for robustness
+    // storage
     localStorage.setItem(LS_KEYS.token, t);
+    localStorage.removeItem(LS_KEYS.adminToken);
     localStorage.setItem(LS_KEYS.role, finalRole);
     writeJSON(LS_KEYS.roles, normalizedRoles);
     writeJSON(LS_KEYS.perms, permsArr);
     writeJSON(LS_KEYS.user, finalUser);
 
-    // set axios header right away
-    api.setAuthToken?.(t);
-    if (api.defaults) api.defaults.headers.common.Authorization = `Bearer ${t}`;
+    // axios header prefers activeToken automatically via effect
+    setTimeout(() => window.location.replace(defaultLandingFor(finalRole)), 0);
+  }, []);
 
-    // land them by role
+  /* ADMIN LOGIN (SUPER_ADMIN / THEATER_ADMIN ONLY) */
+  const loginAdmin = useCallback(async (email, password) => {
+    const res = await api.post("/auth/admin-login", { email, password });
+    const data = res?.data ?? res;
+    const t = data?.token;
+    if (!t || typeof t !== "string") throw new Error("No admin token returned from server");
+
+    const claims = decodeJwt(t) || {};
+    const finalRole = normalizeRole(claims.role) || normalizeRole(data?.user?.role) || "ADMIN";
+    const permsArr =
+      (Array.isArray(claims.perms) && claims.perms) ||
+      (Array.isArray(data?.user?.perms) && data.user.perms) ||
+      [];
+
+    const finalUser = {
+      ...(data?.user || {}),
+      email: data?.user?.email || claims.email || email,
+      role: finalRole,
+      roles: [finalRole],
+      perms: permsArr,
+      theaterId: claims.theatreId || claims.theaterId || data?.user?.theaterId || null,
+    };
+
+    // set state: ADMIN token only, clear user token if present
+    setToken(null);
+    setAdminToken(t);
+    setRole(finalRole);
+    setRoles([finalRole]);
+    setPerms(permsArr);
+    setUser(finalUser);
+
+    // storage
+    localStorage.setItem(LS_KEYS.adminToken, t);
+    localStorage.removeItem(LS_KEYS.token);
+    localStorage.setItem(LS_KEYS.role, finalRole);
+    writeJSON(LS_KEYS.roles, [finalRole]);
+    writeJSON(LS_KEYS.perms, permsArr);
+    writeJSON(LS_KEYS.user, finalUser);
+
     setTimeout(() => window.location.replace(defaultLandingFor(finalRole)), 0);
   }, []);
 
   /* LOGOUT */
   const logout = useCallback(() => {
     setToken(null);
+    setAdminToken(null);
     setRole(null);
     setRoles([]);
     setPerms([]);
@@ -218,9 +321,10 @@ export function AuthProvider({ children }) {
     setTimeout(() => window.location.replace("/"), 0);
   }, []);
 
-  /* REFRESH PROFILE — stabilized deps */
+  /* REFRESH PROFILE — uses whichever token is active (admin preferred) */
   const refreshProfile = useCallback(async () => {
     try {
+      if (!activeToken) return null;
       const res = await api.get("/auth/me");
       const u = res?.data?.user;
       if (!u) return null;
@@ -258,18 +362,19 @@ export function AuthProvider({ children }) {
       if (err?.response?.status === 401) logout();
       return null;
     }
-  }, [logout, role, perms, user]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeToken, logout, role, perms, user]);
 
   /* Derived flags */
-  const isLoggedIn = !!token;
+  const isLoggedIn = !!activeToken;
   const isSuperAdmin = role === "SUPER_ADMIN";
   const isAdmin = role === "ADMIN" || isSuperAdmin;
   const isTheatreAdmin = role === "THEATER_ADMIN";
   const isUser = role === "USER";
 
-  /* Redirect on load */
+  /* Redirect on load (only when logged in) */
   useEffect(() => {
-    if (isLoggedIn) {
+    if (isLoggedIn && role) {
       const here = window.location.pathname;
       const target = defaultLandingFor(role);
       if ((here === "/" || here === "/login" || here === "/admin") && here !== target) {
@@ -281,15 +386,24 @@ export function AuthProvider({ children }) {
   /* Context value */
   const value = useMemo(
     () => ({
+      // raw tokens for debugging if needed
       token,
+      adminToken,
+
+      // identity
       role,
       roles,
       perms,
       user,
       setUser,
-      login,
+
+      // actions
+      login,        // user login (/auth/login)
+      loginAdmin,   // admin login (/auth/admin-login)
       logout,
       refreshProfile,
+
+      // flags
       isLoggedIn,
       isSuperAdmin,
       isAdmin,
@@ -298,11 +412,13 @@ export function AuthProvider({ children }) {
     }),
     [
       token,
+      adminToken,
       role,
       roles,
       perms,
       user,
       login,
+      loginAdmin,
       logout,
       refreshProfile,
       isLoggedIn,
