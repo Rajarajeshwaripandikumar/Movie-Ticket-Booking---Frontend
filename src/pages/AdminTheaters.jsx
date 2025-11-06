@@ -107,16 +107,29 @@ const normalizeTheater = (t = {}) => ({
   imageUrl: resolveImageUrl(t.imageUrl || t.poster || t.theaterImage || t.image, t.updatedAt),
 });
 
+/* Decode JWT to gate super-only UI */
+function parseJwt(token) {
+  try {
+    const base = token.split(".")[1];
+    return JSON.parse(atob(base.replace(/-/g, "+").replace(/_/g, "/"))) || {};
+  } catch {
+    return {};
+  }
+}
+
 /* -------------------------------------------------------------------------- */
 /* Component                                                                 */
 /* -------------------------------------------------------------------------- */
 export default function AdminTheaters() {
   const { token } = useAuth();
   const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
+  const claims = token ? parseJwt(token) : {};
+  const role = String(claims?.role || "").toUpperCase();
+  const isSuper = role === "SUPER_ADMIN";
 
   const [theaters, setTheaters] = useState([]);
   const [admins, setAdmins] = useState([]);
-  const [adminsEnabled, setAdminsEnabled] = useState(true);
+  const [adminsEnabled, setAdminsEnabled] = useState(false); // derive from role + API success
 
   const [selectedId, setSelectedId] = useState(null);
   const [name, setName] = useState("");
@@ -153,55 +166,37 @@ export default function AdminTheaters() {
     }
   }
 
-  /* Load admins (super-only; fallback route + graceful hide) */
+  /* Load admins (SUPER only) */
   async function loadAdmins() {
+    if (!isSuper) {
+      setAdmins([]);
+      setAdminsEnabled(false);
+      return;
+    }
     try {
-      // primary path
       const res = await api.get("/superadmin/theatre-admins", { headers: authHeaders });
       const arr = res?.data?.data || [];
       setAdmins(arr);
       setAdminsEnabled(true);
-    } catch (err1) {
-      const status1 = err1?.response?.status;
-
-      if (status1 === 404) {
-        // try alternate route naming
-        try {
-          const res2 = await api.get("/super/theatre-admins", { headers: authHeaders });
-          const arr2 = res2?.data?.data || [];
-          setAdmins(arr2);
-          setAdminsEnabled(true);
-          return;
-        } catch (err2) {
-          const status2 = err2?.response?.status;
-          if ([401, 403].includes(status2)) {
-            setAdmins([]);
-            setAdminsEnabled(false);
-            return;
-          }
-          setAdmins([]);
-          setAdminsEnabled(false);
-          return;
-        }
-      }
-
-      if ([401, 403].includes(status1)) {
+    } catch (err) {
+      const status = err?.response?.status;
+      if (status === 401 || status === 403) {
         setAdmins([]);
         setAdminsEnabled(false);
-        return;
+      } else {
+        // keep UI smooth but show a friendly banner
+        setMsg("⚠️ Failed to load theatre admins");
+        setMsgType("error");
+        setAdminsEnabled(false);
       }
-
-      // unknown server error — hide panel to avoid breaking UI
-      setAdmins([]);
-      setAdminsEnabled(false);
     }
   }
 
   useEffect(() => {
     loadTheaters();
-    loadAdmins();
+    loadAdmins(); // will no-op if not super
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isSuper, token]);
 
   /* Select file */
   const onPickFile = (e) => {
@@ -224,7 +219,6 @@ export default function AdminTheaters() {
       let body;
       if (selectedFile) {
         body = new FormData();
-        // NOTE: ensure backend expects field name 'image'. If it's 'poster', change here.
         body.append("image", selectedFile);
         body.append("name", name);
         body.append("city", city);
@@ -324,8 +318,13 @@ export default function AdminTheaters() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
-  /* Reset Theatre Admin Password */
+  /* Reset Theatre Admin Password (SUPER only) */
   async function resetAdminPassword(adminId) {
+    if (!isSuper) {
+      setMsg("🔒 Only Super Admin can reset admin passwords.");
+      setMsgType("error");
+      return;
+    }
     const newPassword = window.prompt("Enter a new password for this admin:");
     if (!newPassword) return;
     try {
@@ -339,8 +338,8 @@ export default function AdminTheaters() {
     } catch (err) {
       const status = err?.response?.status;
       const serverMsg = err?.response?.data?.message || err?.response?.data?.error || "Failed to reset password";
-      if (status === 401) {
-        setMsg("🔑 Session expired. Please log in again.");
+      if (status === 401 || status === 403) {
+        setMsg("🔒 Not authorized to reset passwords.");
       } else {
         setMsg(`❌ ${serverMsg}`);
       }
@@ -348,8 +347,13 @@ export default function AdminTheaters() {
     }
   }
 
-  /* Create Theatre Admin (async + validation) */
+  /* Create Theatre Admin (SUPER only + detailed 409 messaging) */
   async function createTheatreAdmin() {
+    if (!isSuper) {
+      setMsg("🔒 Only Super Admin can create theatre admins.");
+      setMsgType("error");
+      return;
+    }
     if (!selectedId) {
       setMsg("⚠️ Select a theatre first.");
       setMsgType("error");
@@ -374,12 +378,16 @@ export default function AdminTheaters() {
       setMsgType("success");
     } catch (err) {
       const status = err?.response?.status;
+      const code = err?.response?.data?.code;
       const serverMsg = err?.response?.data?.message || err?.response?.data?.error;
-      const fallback = status === 409 ? "Email already exists" : "Failed to create theatre admin";
-      if (status === 401) {
-        setMsg("🔑 Session expired. Please log in again.");
+      if (status === 409 && code === "EMAIL_TAKEN") {
+        setMsg("❌ Email already exists. Use a different email.");
+      } else if (status === 409 && code === "THEATER_ALREADY_HAS_ADMIN") {
+        setMsg("❌ This theatre already has an admin.");
+      } else if (status === 401 || status === 403) {
+        setMsg("🔒 Not authorized to create theatre admins.");
       } else {
-        setMsg(`❌ ${serverMsg || fallback}`);
+        setMsg(`❌ ${serverMsg || "Failed to create theatre admin"}`);
       }
       setMsgType("error");
       console.error("[createTheatreAdmin]", { status, data: err?.response?.data });
@@ -443,8 +451,8 @@ export default function AdminTheaters() {
               )}
             </Card>
 
-            {/* Admins list (only show if super route works) */}
-            {adminsEnabled && (
+            {/* Admins list (SUPER only; shows when API succeeded) */}
+            {isSuper && adminsEnabled && (
               <Card className="p-5">
                 <h2 className="font-extrabold mb-4 flex items-center gap-2 border-b pb-2">
                   <UserRound className="h-5 w-5" /> Theatre Admins
@@ -543,8 +551,8 @@ export default function AdminTheaters() {
           </div>
         </div>
 
-        {/* Create Theatre Admin (show only if super route works) */}
-        {adminsEnabled && (
+        {/* Create Theatre Admin (SUPER only; show only if admins panel enabled) */}
+        {isSuper && adminsEnabled && (
           <Card className="p-5 mt-6">
             <h2 className="font-extrabold text-lg mb-4 flex items-center gap-2 border-b pb-2">
               <UserRound className="h-5 w-5" /> Create Theatre Admin
@@ -556,7 +564,7 @@ export default function AdminTheaters() {
               <Field label="Password" type="password" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} icon={Lock} />
             </div>
 
-            <PrimaryBtn className="mt-4" onClick={createTheatreAdmin} disabled={!selectedId}>
+            <PrimaryBtn className="mt-4" onClick={createTheatreAdmin} disabled={!selectedId || !isSuper}>
               Create Theatre Admin (Select a theatre first)
             </PrimaryBtn>
           </Card>
