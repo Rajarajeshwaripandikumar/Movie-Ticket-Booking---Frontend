@@ -56,6 +56,13 @@ function readCookie(name) {
   }
 }
 
+/**
+ * Attempts to find an auth token + role across common storage locations.
+ * Supports:
+ *   - localStorage/sessionStorage: "auth" JSON { token, role, user:{ role, token } }
+ *   - localStorage/sessionStorage plain keys: token/jwt/accessToken/authToken
+ *   - cookies: token/jwt/accessToken
+ */
 function getAuthFromStorage() {
   try {
     const raw = localStorage.getItem("auth") || sessionStorage.getItem("auth");
@@ -87,13 +94,13 @@ function getAuthFromStorage() {
 
 /* ------------------------------ Axios instance --------------------------- */
 const api = axios.create({
-  baseURL: AXIOS_BASE,
+  baseURL: AXIOS_BASE, // callers must pass paths WITHOUT "/api" (e.g., "/analytics/…")
   timeout: 60000,
   withCredentials: false,
   headers: { Accept: "application/json" },
 });
 
-// keep FormData content-type dynamic
+// keep FormData content-type dynamic (browser will set boundary)
 if (api.defaults && api.defaults.headers) {
   ["post", "put", "patch"].forEach((m) => {
     if (api.defaults.headers[m]) delete api.defaults.headers[m]["Content-Type"];
@@ -101,8 +108,25 @@ if (api.defaults && api.defaults.headers) {
 }
 
 /* ----------------------- Request interceptor (JWT) ------------------------ */
-const API_DEBUG = true; // ⬅️ enable temporarily to see what's happening
+const API_DEBUG = true; // toggle for verbose request logs while diagnosing
+const DEV_TOKEN_FALLBACK =
+  (typeof import.meta !== "undefined" && (import.meta.env?.DEV || import.meta.env?.VITE_DEV_TOKEN_FALLBACK === "true")) ||
+  false;
 
+// manual override (e.g., post-login priming)
+let _manualToken = null;
+
+api.setAuthToken = (token) => {
+  _manualToken = token || null;
+  if (token) {
+    api.defaults.headers.common = api.defaults.headers.common || {};
+    api.defaults.headers.common.Authorization = `Bearer ${token}`;
+  } else if (api.defaults.headers.common) {
+    delete api.defaults.headers.common.Authorization;
+  }
+};
+
+// 1) Attach token from storage (and X-Role) if present
 api.interceptors.request.use((config) => {
   try {
     const { token, role } = getAuthFromStorage();
@@ -115,38 +139,22 @@ api.interceptors.request.use((config) => {
       if (normalizedRole && !config.headers["X-Role"]) {
         config.headers["X-Role"] = normalizedRole;
       }
-      if (API_DEBUG) {
-        // Log for analytics calls specifically
-        if (String(config.url || "").includes("/analytics/")) {
-          console.debug("[api] analytics request with auth →", {
-            url: config.url,
-            hasAuth: !!config.headers.Authorization,
-            role: normalizedRole,
-          });
-        }
+
+      if (API_DEBUG && String(config.url || "").includes("/analytics/")) {
+        console.debug("[api] analytics request with auth →", {
+          url: config.url,
+          hasAuth: !!config.headers.Authorization,
+          role: normalizedRole,
+        });
       }
-    } else if (API_DEBUG) {
-      if (String(config.url || "").includes("/analytics/")) {
-        console.warn("[api] NO TOKEN for analytics request", config.url);
-      }
+    } else if (API_DEBUG && String(config.url || "").includes("/analytics/")) {
+      console.warn("[api] NO TOKEN for analytics request", config.url);
     }
   } catch {}
   return config;
 });
 
-/* ----------------------- Programmatic token setter ------------------------ */
-let _manualToken = null;
-api.setAuthToken = (token) => {
-  _manualToken = token;
-  if (token) {
-    api.defaults.headers.common = api.defaults.headers.common || {};
-    api.defaults.headers.common.Authorization = `Bearer ${token}`;
-  } else if (api.defaults.headers.common) {
-    delete api.defaults.headers.common.Authorization;
-  }
-};
-
-// ensure manual token gets applied if present
+// 2) Ensure manually-set token (via setAuthToken) is honored if header missing
 api.interceptors.request.use((config) => {
   if (_manualToken && !config.headers?.Authorization) {
     config.headers = config.headers || {};
@@ -155,14 +163,14 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-/* ---- DEV-ONLY emergency fallback: add ?token= if header still missing ---- */
-// This uses your backend’s tokenQueryToHeader to avoid 401s while you diagnose.
-// Remove or gate behind an env flag for production if you don't want it.
+// 3) DEV-ONLY emergency fallback: add ?token= if header still missing
+//    Requires backend dev middleware to promote query token -> header.
+//    Disable in production.
 api.interceptors.request.use((config) => {
   try {
     const isAnalytics = String(config.url || "").includes("/analytics/");
     const hasAuth = !!(config.headers && config.headers.Authorization);
-    if (isAnalytics && !hasAuth) {
+    if (DEV_TOKEN_FALLBACK && isAnalytics && !hasAuth) {
       const { token } = getAuthFromStorage();
       if (token) {
         config.params = { ...(config.params || {}), token }; // ⬅️ adds ?token=
@@ -180,6 +188,7 @@ api.interceptors.response.use(
   (res) => res,
   (error) => {
     if (error?.response?.status === 401) {
+      // Let the app react (e.g., show toast, logout, redirect)
       window.dispatchEvent(new CustomEvent("api:unauthorized"));
     }
     return Promise.reject(error);
@@ -217,28 +226,36 @@ export function extractApiError(err) {
   );
 }
 
+/**
+ * Build an absolute API URL (when you genuinely need the raw URL for e.g. iframes).
+ * NOTE: This already prefixes `/api`, so pass paths WITHOUT `/api`.
+ */
 export function apiUrl(path = "") {
   const clean = path.startsWith("/") ? path : `/${path}`;
   return `${BASE_URL}${API_PREFIX}${clean}`;
 }
 
+/**
+ * Convert relative upload paths to absolute URLs.
+ * - `/uploads/...` is served outside `/api`
+ */
 export function makeAbsoluteImageUrl(url) {
   if (!url) return "";
   if (url.startsWith("http://") || url.startsWith("https://")) return url;
   if (url.startsWith("/uploads") || url.includes("/uploads/")) {
-    return `${BASE_URL}${url}`; // uploads live outside /api
+    return `${BASE_URL}${url}`;
   }
   return url;
 }
 
 /* ----------------------------- Post-login hook ---------------------------- */
-// Call this right after a successful login to guarantee future requests are authed.
+/**
+ * Call this right after a successful login to guarantee future requests are authed.
+ * It stores in localStorage and primes the axios default Authorization header.
+ */
 export function primeAuth(token, role) {
   try {
-    const payload = {
-      token,
-      role: role ?? undefined,
-    };
+    const payload = { token, role: role ?? undefined };
     localStorage.setItem("auth", JSON.stringify(payload));
     api.setAuthToken(token); // prime axios instance immediately
     if (API_DEBUG) console.debug("[api] primeAuth set");
@@ -247,5 +264,4 @@ export function primeAuth(token, role) {
   }
 }
 
-/* -------------------------------------------------------------------------- */
 export default api;
