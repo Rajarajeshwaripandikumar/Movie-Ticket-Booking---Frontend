@@ -3,19 +3,10 @@
  *  - token in query string (?token=...); auto-cleans "Bearer ..." and objects
  *  - optional scope (?scope=admin|user)
  *  - auto-reconnect with exponential backoff + jitter
- *  - cancel() to close/stop retries
+ *  - cancel() to close/stop retries (clears pending timers)
  *  - JSON-safe onMessage (falls back to raw text if not JSON)
- *
- * Usage:
- *   const { cancel } = connectSSE({
- *     token,                // string | { token: "..."} | "Bearer ..."
- *     scope: "admin",       // or "user" (default)
- *     onOpen: () => console.log("opened"),
- *     onMessage: (data) => console.log("msg", data),
- *     onError: (err, attempt) => console.warn("err", attempt, err),
- *   });
+ *  - optional pauseWhenHidden (no reconnect spam when tab hidden)
  */
-
 export function connectSSE({
   token,
   scope = "user",
@@ -23,8 +14,9 @@ export function connectSSE({
   onOpen,
   onMessage,
   onError,
-  maxDelayMs = 15000,  // cap for backoff delay
-  withCredentials = false, // EventSource option
+  maxDelayMs = 15000,          // cap for backoff delay
+  withCredentials = false,     // EventSource option (browser support varies)
+  pauseWhenHidden = false,     // pause auto-reconnect on hidden tab
 }) {
   const jwt = toJwtString(token);
   if (!jwt) {
@@ -34,12 +26,35 @@ export function connectSSE({
   let es = null;
   let cancelled = false;
   let attempt = 0;
+  let reconnectTimer = null;
+  let visibilityHandler = null;
+
+  const buildUrl = () =>
+    `${urlBase}?token=${encodeURIComponent(jwt)}&scope=${encodeURIComponent(scope || "user")}`;
+
+  const scheduleReconnect = () => {
+    // Skip reconnects if cancelled or (optionally) tab is hidden
+    if (cancelled) return;
+    if (pauseWhenHidden && document.visibilityState === "hidden") return;
+
+    const delay = Math.min(maxDelayMs, 500 * 2 ** Math.min(attempt, 6));
+    const jitter = Math.floor(Math.random() * 250);
+    const wait = delay + jitter;
+
+    clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      open();
+    }, wait);
+  };
 
   const open = () => {
     if (cancelled) return;
 
-    // Build URL with token + scope
-    const url = `${urlBase}?token=${encodeURIComponent(jwt)}&scope=${encodeURIComponent(scope || "user")}`;
+    // If an instance is still open (rare), don't stack
+    if (es && es.readyState === 1 /* OPEN */) return;
+
+    const url = buildUrl();
     es = new EventSource(url, { withCredentials });
 
     es.onopen = () => {
@@ -47,67 +62,67 @@ export function connectSSE({
       try { onOpen && onOpen(); } catch (e) { console.warn("[sseClient] onOpen handler error:", e); }
     };
 
-    // Default "message" events (server may also send named events we don't bind explicitly)
     es.onmessage = (evt) => {
+      const s = evt?.data ?? "";
+      // Ignore common heartbeat pings to avoid unnecessary work/logs
+      if (s === ":keep-alive" || s === "💓" || s === "ping") return;
+
       try {
-        const payload = evt?.data;
-        const parsed = typeof payload === "string" && payload.length ? safeJson(payload) : null;
-        onMessage && onMessage(parsed ?? payload ?? null, evt?.type || "message");
+        const parsed = (typeof s === "string" && s.length) ? safeJson(s) : null;
+        onMessage && onMessage(parsed ?? s ?? null, evt?.type || "message");
       } catch (e) {
         console.warn("[sseClient] onMessage handler error:", e);
       }
     };
 
-    // Optional: handle common custom events if server emits them
-    es.addEventListener("notification", (evt) => {
-      try {
-        const parsed = safeJson(evt.data) ?? evt.data;
-        onMessage && onMessage(parsed, "notification");
-      } catch (e) {}
-    });
-    es.addEventListener("init", (evt) => {
-      try {
-        const parsed = safeJson(evt.data) ?? evt.data;
-        onMessage && onMessage(parsed, "init");
-      } catch (e) {}
-    });
-    es.addEventListener("connected", (evt) => {
-      try {
-        const parsed = safeJson(evt.data) ?? evt.data;
-        onMessage && onMessage(parsed, "connected");
-      } catch (e) {}
-    });
-    es.addEventListener("error", (evt) => {
-      // Some servers emit an "error" event as a custom event (not only onerror)
+    // Optional: handle named events if your server emits them
+    const pass = (type) => (evt) => {
       try {
         const parsed = evt?.data ? (safeJson(evt.data) ?? evt.data) : null;
-        onMessage && onMessage(parsed, "error");
-      } catch (e) {}
-    });
+        onMessage && onMessage(parsed, type);
+      } catch {}
+    };
+    es.addEventListener("notification", pass("notification"));
+    es.addEventListener("init", pass("init"));
+    es.addEventListener("connected", pass("connected"));
+    es.addEventListener("error", pass("error-event")); // custom "error" event, not the same as onerror
 
     es.onerror = (err) => {
       attempt += 1;
-
       try { onError && onError(err, attempt); } catch (e) { console.warn("[sseClient] onError handler error:", e); }
 
       try { es.close(); } catch {}
       es = null;
-
-      if (cancelled) return;
-
-      // Exponential backoff with jitter
-      const delay = Math.min(maxDelayMs, 500 * 2 ** Math.min(attempt, 6));
-      const jitter = Math.floor(Math.random() * 250);
-      const wait = delay + jitter;
-
-      setTimeout(() => { if (!cancelled) open(); }, wait);
+      scheduleReconnect();
     };
   };
 
+  // Initial open
   open();
+
+  // Optional: pause auto-retry while tab is hidden to avoid reconnect storms
+  if (pauseWhenHidden && typeof document !== "undefined") {
+    visibilityHandler = () => {
+      if (cancelled) return;
+      if (document.visibilityState === "visible" && !es) {
+        // reset attempt so we don't wait max delay after returning
+        attempt = Math.max(0, attempt - 1);
+        scheduleReconnect();
+      }
+    };
+    document.addEventListener("visibilitychange", visibilityHandler);
+  }
 
   const cancel = () => {
     cancelled = true;
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+
+    if (visibilityHandler) {
+      document.removeEventListener("visibilitychange", visibilityHandler);
+      visibilityHandler = null;
+    }
+
     if (es) {
       try { es.close(); } catch {}
       es = null;
@@ -118,7 +133,6 @@ export function connectSSE({
 }
 
 /* ---------------------------- helpers ---------------------------- */
-
 function safeJson(str) {
   try { return JSON.parse(str); } catch { return null; }
 }
