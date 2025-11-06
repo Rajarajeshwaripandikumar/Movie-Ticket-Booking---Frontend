@@ -70,11 +70,11 @@ function MenuItemLink({ to, children, onClick }) {
 /* ------------------------------- Constants ------------------------------ */
 const SUPER_ADMIN_LINKS = [
   { label: "Manage Theaters", to: "/admin/theaters" },
+   { label: "Manage Movies", to: "/admin/movies" },
   { label: "Manage Screens", to: "/admin/screens" },
   { label: "Manage Showtimes", to: "/admin/showtimes" },
   { label: "Update Pricing", to: "/admin/pricing" },
   { label: "Admin Analytics", to: "/admin/analytics" },
-  { label: "Manage Movies", to: "/admin/movies" },
   { label: "Theatre Admins", to: "/super/theatre-admins" },
 ];
 
