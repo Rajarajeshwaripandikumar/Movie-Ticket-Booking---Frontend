@@ -1,6 +1,6 @@
-// src/pages/AdminLogin.jsx — Admin login for SUPER_ADMIN & THEATRE_ADMIN
+// src/pages/AdminLogin.jsx — Admin login for SUPER_ADMIN & THEATER_ADMIN
 import React, { useState } from "react";
-import api from "../api/api";
+import { useAuth } from "../context/AuthContext";
 
 /* --------------------------- Walmart UI bits --------------------------- */
 const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
@@ -45,6 +45,7 @@ function PrimaryBtn({ children, className = "", ...props }) {
 
 /* -------------------------------- Component -------------------------------- */
 export default function AdminLogin() {
+  const { loginAdmin } = useAuth();   // ✅ use the correct login
   const [email, setEmail] = useState("admin@cinema.com");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -53,7 +54,6 @@ export default function AdminLogin() {
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
-
     if (!email || !password) {
       setError("Please enter both email and password.");
       return;
@@ -61,23 +61,7 @@ export default function AdminLogin() {
 
     setBusy(true);
     try {
-      // 🔐 Admin-only endpoint
-      const res = await api.post("/auth/admin-login", { email, password });
-      const { token, user } = res.data || {};
-
-      if (!token || !user) {
-        throw new Error("Invalid admin login response");
-      }
-
-      // Store only admin token; clear any normal user token
-      localStorage.setItem("adminToken", token);
-      localStorage.removeItem("token");
-
-      // Optional: keep a lightweight admin user snapshot (helps Navbar label)
-      localStorage.setItem("adminUser", JSON.stringify(user));
-
-      // Hard redirect to ensure all providers/guards see the new token
-      window.location.replace("/admin");
+      await loginAdmin(email, password); // ✅ THIS DOES EVERYTHING
     } catch (err) {
       const msg = err?.response?.data?.message || err?.message || "Login failed";
       setError(msg);
@@ -87,71 +71,25 @@ export default function AdminLogin() {
   }
 
   return (
-    <main className="min-h-screen w-screen [margin-inline:calc(50%-50vw)] bg-slate-50 text-slate-900 flex items-center justify-center px-6 py-10">
+    <main className="min-h-screen w-screen bg-slate-50 text-slate-900 flex items-center justify-center px-6 py-10">
       <Card className="w-full max-w-md overflow-hidden">
-        {/* Header */}
+
         <div className="px-6 py-5 border-b border-slate-200 bg-white/60 backdrop-blur">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">Cinema Admin</h1>
-              <p className="text-sm text-slate-600">Login as Super Admin or Theatre Admin</p>
-            </div>
-            <div className="rounded-full px-3 py-1 text-xs font-semibold bg-[#E6F0FE] text-[#0654BA] border border-[#C7DCF9]">
-              Admin
-            </div>
-          </div>
+          <h1 className="text-xl sm:text-2xl font-extrabold">Cinema Admin</h1>
+          <p className="text-sm text-slate-600">Super Admin / Theatre Admin Only</p>
         </div>
 
-        {/* Form */}
         <form onSubmit={handleSubmit} className="px-6 py-6 space-y-4">
-          <Field
-            id="admin-email"
-            label="Email"
-            type="email"
-            value={email}
-            onChange={setEmail}
-            placeholder="admin@cinema.com"
-            autoComplete="username"
-          />
+          <Field id="admin-email" label="Email" type="email" value={email} onChange={setEmail} />
+          <Field id="admin-password" label="Password" type="password" value={password} onChange={setPassword} />
 
-          <Field
-            id="admin-password"
-            label="Password"
-            type="password"
-            value={password}
-            onChange={setPassword}
-            placeholder="password"
-            autoComplete="current-password"
-          />
-
-          {error && (
-            <Card className="p-3 bg-rose-50 border-rose-200 text-rose-700 font-semibold">⚠️ {error}</Card>
-          )}
+          {error && <Card className="p-3 bg-rose-50 border-rose-200 text-rose-700 font-semibold">⚠️ {error}</Card>}
 
           <PrimaryBtn type="submit" disabled={busy} className="w-full">
             {busy ? "Logging in…" : "Login"}
           </PrimaryBtn>
-
-          <div className="flex flex-col items-center justify-center text-xs text-slate-700 mt-2">
-            <button
-              type="button"
-              onClick={() => {
-                setEmail("admin@cinema.com");
-                setPassword("");
-                setError("");
-              }}
-              className="inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 font-semibold border border-slate-300 bg-white text-slate-800 hover:bg-slate-50"
-            >
-              Reset
-            </button>
-
-            <p className="text-slate-600 italic text-[13px] text-center mt-2">
-              Only <b>SUPER_ADMIN</b> and <b>THEATRE_ADMIN</b> can sign in here.
-            </p>
-          </div>
         </form>
 
-        {/* Footer */}
         <div className="text-center py-3 border-t border-slate-200 bg-white text-sm font-semibold text-slate-700">
           Admin © {new Date().getFullYear()}
         </div>
