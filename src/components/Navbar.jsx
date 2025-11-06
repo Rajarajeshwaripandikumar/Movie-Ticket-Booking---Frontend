@@ -62,7 +62,7 @@ function MenuItemLink({ to, children, onClick }) {
       type="button"
       onClick={(e) => {
         onClick?.(e);
-        setTimeout(() => navigate(to), 0); // ✅ reliable navigation
+        setTimeout(() => navigate(to), 0); // reliable navigation
       }}
       className="block w-full text-left px-3 py-2 text-sm rounded-xl hover:bg-slate-50 font-semibold"
       role="menuitem"
@@ -73,12 +73,12 @@ function MenuItemLink({ to, children, onClick }) {
 }
 
 /* ------------------------------ Menu Groups ------------------------------ */
+// NOTE: Removed "Admin Profile" from this list to avoid duplicates in the dropdown
 const SUPER_ADMIN_LINKS = [
-  { label: "Admin Profile", to: "/admin/profile" },     // ✅ added
   { label: "Manage Theaters", to: "/admin/theaters" },
   { label: "Manage Movies", to: "/admin/movies" },
-  { label: "Manage Screens", to: "/admin/screens" },    // ✅ correct
-  { label: "Manage Showtimes", to: "/admin/showtimes" },// ✅ correct
+  { label: "Manage Screens", to: "/admin/screens" },
+  { label: "Manage Showtimes", to: "/admin/showtimes" },
   { label: "Update Pricing", to: "/admin/pricing" },
   { label: "Admin Analytics", to: "/admin/analytics" },
   { label: "Theatre Admins", to: "/super/theatre-admins" },
@@ -119,7 +119,9 @@ export default function Navbar() {
       : undefined;
 
   /* ------------------------ Profile Path by Role ------------------------ */
-  const profilePath = isSuperAdmin ? "/admin/profile" : isTheatreAdmin ? "/theatre/profile" : "/profile";
+  // ✅ Any admin (super or theatre) goes to AdminProfile.jsx (/admin/profile).
+  // Non-admin users go to /profile.
+  const profilePath = isAdmin ? "/admin/profile" : "/profile";
 
   return (
     <header className="w-full sticky top-0 z-50">
@@ -175,16 +177,19 @@ export default function Navbar() {
 
                   {adminMenu && (
                     <Card className="absolute right-0 mt-2 w-60 p-1 bg-white">
+                      {/* Single profile entry that routes by role */}
                       <MenuItemLink to={profilePath} onClick={() => setAdminMenu(false)}>
                         Profile
                       </MenuItemLink>
 
+                      {/* User-only */}
                       {!isAdmin && (
                         <MenuItemLink to="/bookings" onClick={() => setAdminMenu(false)}>
                           My Bookings
                         </MenuItemLink>
                       )}
 
+                      {/* Super Admin links */}
                       {isSuperAdmin &&
                         SUPER_ADMIN_LINKS.map((item) => (
                           <MenuItemLink key={item.to} to={item.to} onClick={() => setAdminMenu(false)}>
@@ -192,6 +197,7 @@ export default function Navbar() {
                           </MenuItemLink>
                         ))}
 
+                      {/* Theatre Admin links */}
                       {isTheatreAdmin &&
                         THEATRE_ADMIN_LINKS.map((item) => (
                           <MenuItemLink key={item.to} to={item.to} onClick={() => setAdminMenu(false)}>
