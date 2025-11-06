@@ -74,6 +74,25 @@ const THEATRE_ADMIN_LINKS = [
   { label: "Theatre Reports", to: "/theatre/reports" },
 ];
 
+/* --------------------------- Notifications utils -------------------------- */
+const normalizeNotifications = (raw) => {
+  const arr =
+    Array.isArray(raw) ? raw :
+    Array.isArray(raw?.items) ? raw.items :
+    Array.isArray(raw?.data) ? raw.data :
+    Array.isArray(raw?.content) ? raw.content :
+    Array.isArray(raw?.notifications) ? raw.notifications : [];
+
+  return arr.map((n, i) => ({
+    id: n._id ?? n.id ?? `n-${i}`,
+    type: n.type ?? n.kind ?? "",
+    title: n.title ?? n.subject ?? "Notification",
+    message: n.message ?? n.body ?? n.text ?? "",
+    createdAt: n.createdAt ?? n.timestamp ?? n.time ?? new Date().toISOString(),
+    readAt: n.readAt ?? (n.read === true ? new Date().toISOString() : null),
+  }));
+};
+
 /* -------------------------------------------------------------------------- */
 
 export default function Navbar() {
@@ -92,42 +111,34 @@ export default function Navbar() {
   const [open, setOpen] = useState(false);
   const [adminMenu, setAdminMenu] = useState(false);
 
-  // Notifications state
+  // Notifications
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const notifRef = useRef(null);
 
-  // Prefer token from context; fallback to localStorage
   const token = ctxToken || localStorage.getItem("token") || "";
 
-  // Unread derived from notifications; fallback to user count if present
-  const unread = useMemo(() => {
-    const fromList = notifications.filter((n) => !n.readAt).length;
-    const fromUser = Number(user?.unreadNotifications ?? 0);
-    return fromList || fromUser || 0;
-  }, [notifications, user]);
+  const unread = useMemo(() => notifications.filter((n) => !n.readAt).length, [notifications]);
 
-  // Fetch notifications once when logged in (and when token changes)
   useEffect(() => {
     if (!isLoggedIn || !token) return;
-    let ignore = false;
-    (async () => {
+    let alive = true;
+
+    const load = async () => {
       try {
         const res = await api.get("/notifications", {
           headers: { Authorization: `Bearer ${token}` },
         });
-        const items = Array.isArray(res.data) ? res.data : res.data?.items || [];
-        if (!ignore) setNotifications(items);
-      } catch {
-        // ignore fetch errors
-      }
-    })();
-    return () => {
-      ignore = true;
+        const items = normalizeNotifications(res.data);
+        if (alive) setNotifications(items);
+      } catch {/* ignore */}
     };
+
+    load();
+    const t = setInterval(load, 30000); // optional polling
+    return () => { alive = false; clearInterval(t); };
   }, [isLoggedIn, token]);
 
-  // Close dropdowns on outside click
   useEffect(() => {
     const onDocClick = (e) => {
       if (!notifRef.current) return;
@@ -137,14 +148,12 @@ export default function Navbar() {
     return () => document.removeEventListener("mousedown", onDocClick);
   }, []);
 
-  // Close menus when route changes
   useEffect(() => {
     setNotifOpen(false);
     setAdminMenu(false);
   }, [location.pathname]);
 
-  // Helpers
-  const toKey = (n) => n._id || n.id || `${n.type || "n"}-${n.createdAt || Math.random()}`;
+  const toKey = (n) => n.id || `${n.type || "n"}-${n.createdAt || Math.random()}`;
   const resolveNotificationPath = (n) => {
     const t = (n.type || "").toLowerCase();
     if (t.includes("booking")) return "/bookings";
@@ -155,19 +164,12 @@ export default function Navbar() {
     try {
       await api.post(`/notifications/${id}/read`, {}, { headers: { Authorization: `Bearer ${token}` } });
       setNotifications((prev) =>
-        prev.map((n) =>
-          (n._id === id || n.id === id) ? { ...n, readAt: n.readAt || new Date().toISOString() } : n
-        )
+        prev.map((n) => (n.id === id ? { ...n, readAt: n.readAt || new Date().toISOString() } : n))
       );
-    } catch {
-      // ignore
-    }
+    } catch {/* ignore */}
   };
 
-  // Render Navbar everywhere (including /admin and /theatre)
   const path = location.pathname || "";
-
-  // Role-aware profile link
   const profilePath = isSuperAdmin ? "/admin/profile" : isTheatreAdmin ? "/theatre/profile" : "/profile";
 
   return (
@@ -241,7 +243,7 @@ export default function Navbar() {
                                 setNotifications((prev) =>
                                   prev.map((n) => ({ ...n, readAt: n.readAt || new Date().toISOString() }))
                                 );
-                              } catch { /* ignore */ }
+                              } catch {/* ignore */}
                             }}
                           >
                             Mark all as read
@@ -262,7 +264,7 @@ export default function Navbar() {
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     setNotifOpen(false);
-                                    if ((n._id || n.id) && !n.readAt) markOneRead(n._id || n.id);
+                                    if (n.id && !n.readAt) markOneRead(n.id);
                                     navigate(to);
                                   }}
                                   className={cn(
@@ -274,15 +276,13 @@ export default function Navbar() {
                                   role="menuitem"
                                 >
                                   <div className="flex items-start gap-2">
-                                    {!n.readAt && (
-                                      <span className="mt-1 inline-block w-2 h-2 rounded-full bg-rose-500" />
-                                    )}
+                                    {!n.readAt && <span className="mt-1 inline-block w-2 h-2 rounded-full bg-rose-500" />}
                                     <div className="flex-1">
                                       <div className="text-sm font-extrabold text-slate-900">
                                         {n.title || "Notification"}
                                       </div>
                                       <div className="text-xs text-slate-700 whitespace-pre-line">
-                                        {n.message || n.body || ""}
+                                        {n.message || ""}
                                       </div>
                                       <div className="text-[10px] text-slate-500 mt-1">
                                         {new Date(n.createdAt || Date.now()).toLocaleString()}
@@ -331,19 +331,16 @@ export default function Navbar() {
 
                   {adminMenu && (
                     <Card className="absolute right-0 mt-2 w-64 p-1 bg-white z-50">
-                      {/* Profile routes by role */}
-                      <MenuItemLink to={profilePath} onClick={() => setAdminMenu(false)}>
+                      <MenuItemLink to={isSuperAdmin ? "/admin/profile" : isTheatreAdmin ? "/theatre/profile" : "/profile"} onClick={() => setAdminMenu(false)}>
                         Profile
                       </MenuItemLink>
 
-                      {/* User-only */}
                       {!isAdmin && (
                         <MenuItemLink to="/bookings" onClick={() => setAdminMenu(false)}>
                           My Bookings
                         </MenuItemLink>
                       )}
 
-                      {/* Super Admin links */}
                       {isSuperAdmin &&
                         SUPER_ADMIN_LINKS.map((item) => (
                           <MenuItemLink key={item.to} to={item.to} onClick={() => setAdminMenu(false)}>
@@ -351,7 +348,6 @@ export default function Navbar() {
                           </MenuItemLink>
                         ))}
 
-                      {/* Theatre Admin links */}
                       {isTheatreAdmin &&
                         THEATRE_ADMIN_LINKS.map((item) => (
                           <MenuItemLink key={item.to} to={item.to} onClick={() => setAdminMenu(false)}>
@@ -376,7 +372,7 @@ export default function Navbar() {
                 </div>
               )}
 
-              {/* Mobile Menu Button (icon only; hook up your drawer if needed) */}
+              {/* Mobile Menu Button */}
               <IconBtn className="md:hidden" onClick={() => setOpen((v) => !v)}>
                 {open ? <X /> : <Menu />}
               </IconBtn>
@@ -385,7 +381,7 @@ export default function Navbar() {
         </div>
       </div>
 
-      {/* Optional: spacer so sticky header doesn't cover top content on admin pages */}
+      {/* Spacer in case sticky header overlaps admin pages */}
       {path.startsWith("/admin") || path.startsWith("/theatre") ? <div className="h-0 md:h-0" /> : null}
     </header>
   );
