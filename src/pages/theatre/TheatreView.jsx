@@ -1,4 +1,4 @@
-// src/pages/theatre/TheatreProfile.jsx — unified profile + seat picker (Walmart style)
+// src/pages/theatre/TheatreView.jsx — unified profile + seat picker (Walmart style)
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams, Link, useNavigate, Navigate } from "react-router-dom";
 import api from "../../api/api";
