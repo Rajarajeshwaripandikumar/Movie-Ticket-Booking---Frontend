@@ -1,4 +1,4 @@
-// src/pages/AdminTheaters.jsx — FULL UPDATED FOR BACKEND o1m2
+// src/pages/AdminTheaters.jsx — FULL UPDATED (o1m2 backend + admins table fix)
 
 import { useEffect, useRef, useState } from "react";
 import api from "../api/api";
@@ -107,6 +107,22 @@ const normalizeTheater = (t = {}) => ({
   imageUrl: resolveImageUrl(t.imageUrl || t.poster || t.theaterImage || t.image, t.updatedAt),
 });
 
+// Format "createdAt"
+const formatDate = (iso) => {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleString(undefined, {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
+};
+
 /* Decode JWT to gate super-only UI */
 function parseJwt(token) {
   try {
@@ -129,7 +145,7 @@ export default function AdminTheaters() {
 
   const [theaters, setTheaters] = useState([]);
   const [admins, setAdmins] = useState([]);
-  const [adminsEnabled, setAdminsEnabled] = useState(false); // derive from role + API success
+  const [adminsEnabled, setAdminsEnabled] = useState(false);
 
   const [selectedId, setSelectedId] = useState(null);
   const [name, setName] = useState("");
@@ -184,7 +200,6 @@ export default function AdminTheaters() {
         setAdmins([]);
         setAdminsEnabled(false);
       } else {
-        // keep UI smooth but show a friendly banner
         setMsg("⚠️ Failed to load theatre admins");
         setMsgType("error");
         setAdminsEnabled(false);
@@ -457,34 +472,62 @@ export default function AdminTheaters() {
                 <h2 className="font-extrabold mb-4 flex items-center gap-2 border-b pb-2">
                   <UserRound className="h-5 w-5" /> Theatre Admins
                 </h2>
+
                 {admins.length === 0 ? (
                   <p>No theatre admins yet.</p>
                 ) : (
-                  <ul className="space-y-3 max-h-[40vh] overflow-y-auto">
-                    {admins.map((a) => (
-                      <li key={a._id} className="flex justify-between items-center border rounded-2xl p-3 shadow-sm">
-                        <div className="flex items-center gap-3">
-                          <div className="h-10 w-10 rounded-full bg-slate-200 grid place-items-center font-bold text-slate-600">
-                            {String(a?.name || a?.email || "A").slice(0,1).toUpperCase()}
-                          </div>
-                          <div>
-                            <div className="font-bold">{a.name}</div>
-                            <div className="text-sm text-slate-600 flex items-center gap-2">
-                              <Mail className="h-3 w-3" /> {a.email}
-                            </div>
-                            <div className="text-xs text-slate-500">
-                              Theatre: {a?.theatreId?.name} {a?.theatreId?.city ? `• ${a.theatreId.city}` : ""}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <SecondaryBtn onClick={() => resetAdminPassword(a._id)} className="px-3 py-1 text-xs">
-                            <Lock className="h-3 w-3" /> Reset Password
-                          </SecondaryBtn>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
+                  <div className="overflow-x-auto">
+                    <table className="w-full table-fixed border-separate border-spacing-0">
+                      <colgroup>
+                        <col className="w-[32%]" /> {/* Name */}
+                        <col className="w-[30%]" /> {/* Email */}
+                        <col className="w-[23%]" /> {/* Theatre */}
+                        <col className="w-[15%]" /> {/* Created */}
+                      </colgroup>
+                      <thead>
+                        <tr className="text-left text-slate-600 border-b">
+                          <th className="py-3 px-4 font-medium">Name</th>
+                          <th className="py-3 px-4 font-medium">Email</th>
+                          <th className="py-3 px-4 font-medium">Theatre</th>
+                          <th className="py-3 px-4 font-medium">Created</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {admins.map((a) => (
+                          <tr key={a._id} className="border-b last:border-0">
+                            <td className="py-3 px-4">
+                              <div className="flex items-center gap-3">
+                                <div className="h-9 w-9 rounded-full bg-slate-200 grid place-items-center font-bold text-slate-600 shrink-0">
+                                  {String(a?.name || a?.email || "A").slice(0, 1).toUpperCase()}
+                                </div>
+                                <div className="min-w-0">
+                                  <div className="font-semibold truncate">{a?.name || "—"}</div>
+                                  <div className="text-xs text-slate-500 whitespace-nowrap">{a?.role || "manager"}</div>
+                                </div>
+                              </div>
+                            </td>
+
+                            <td className="py-3 px-4 align-middle">
+                              <div className="truncate" title={a?.email}>{a?.email}</div>
+                            </td>
+
+                            <td className="py-3 px-4 align-middle">
+                              <div
+                                className="truncate whitespace-nowrap"
+                                title={`${a?.theatreId?.name || ""} ${a?.theatreId?.city ? "• " + a.theatreId.city : ""}`}
+                              >
+                                {a?.theatreId?.name || "—"} {a?.theatreId?.city ? `• ${a.theatreId.city}` : ""}
+                              </div>
+                            </td>
+
+                            <td className="py-3 px-4 align-middle whitespace-nowrap">
+                              {formatDate(a?.createdAt)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
               </Card>
             )}
