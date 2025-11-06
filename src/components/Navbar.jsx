@@ -136,14 +136,14 @@ export default function Navbar() {
 
   const unread = useMemo(() => notifications.filter((n) => !n.readAt).length, [notifications]);
 
-  // Load notifications
+  // Load notifications (✅ uses /notifications/mine)
   useEffect(() => {
     if (!isLoggedIn || !token) return;
     let alive = true;
 
     const load = async () => {
       try {
-        const res = await api.get("/notifications", {
+        const res = await api.get("/notifications/mine", {
           headers: { Authorization: `Bearer ${token}` },
         });
         const { items } = normalizeNotifications(res.data);
@@ -195,13 +195,14 @@ export default function Navbar() {
     return "/bookings";
   };
 
+  // ✅ PATCH for read
   const markOneRead = async (id) => {
     try {
-      await api.post(`/notifications/${id}/read`, {}, { headers: { Authorization: `Bearer ${token}` } });
-      setNotifications((prev) =>
-        prev.map((n) => (n.id === id ? { ...n, readAt: n.readAt || new Date().toISOString() } : n))
-      );
+      await api.patch(`/notifications/${id}/read`, {}, { headers: { Authorization: `Bearer ${token}` } });
     } catch { /* ignore */ }
+    setNotifications((prev) =>
+      prev.map((n) => (n.id === id ? { ...n, readAt: n.readAt || new Date().toISOString() } : n))
+    );
   };
 
   const profilePath =
