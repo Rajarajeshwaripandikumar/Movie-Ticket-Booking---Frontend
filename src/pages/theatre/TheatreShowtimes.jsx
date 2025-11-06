@@ -104,7 +104,7 @@ export default function TheatreShowtimes() {
 
   const [theatre, setTheatre] = useState(null);
   const [editId, setEditId] = useState("");
-  the const [editStart, setEditStart] = useState("");
+  const [editStart, setEditStart] = useState("");
 
   const [msg, setMsg] = useState("");
   const [msgType, setMsgType] = useState("info");
