@@ -1,4 +1,4 @@
-// src/pages/AdminTheaters.jsx — CLEAN + API REALIGNED TO /admin/theaters + EDIT/DELETE
+// src/pages/AdminTheaters.jsx — CLEAN + /admin/theaters + Role Guard + Better Errors
 
 import { useEffect, useMemo, useState } from "react";
 import api from "../api/api";
@@ -77,7 +77,10 @@ const normalizeTheater = (t = {}) => ({
 });
 
 export default function AdminTheaters() {
-  const { token } = useAuth() || {};
+  const { token, user } = useAuth() || {};
+  const role = user?.role || user?.data?.role;
+  const isSuperAdmin = role === "SUPER_ADMIN";
+
   const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
   const [theaters, setTheaters] = useState([]);
 
@@ -89,7 +92,6 @@ export default function AdminTheaters() {
   const [amenityInput, setAmenityInput] = useState("");
 
   // (Optional) Poster UI kept for later; backend endpoints below use JSON
-  const [imageFile] = useState(null);
   const [preview, setPreview] = useState("");
   const [previewKey, setPreviewKey] = useState(0);
 
@@ -112,8 +114,8 @@ export default function AdminTheaters() {
       const arr = Array.isArray(data) ? data : (data?.theaters || data?.data || []);
       setTheaters((Array.isArray(arr) ? arr : []).map(normalizeTheater));
       setMsg("");
-    } catch {
-      setMsg("⚠️ Failed to load theaters");
+    } catch (e) {
+      setMsg(e?.response?.data?.message || "⚠️ Failed to load theaters");
       setMsgType("error");
     }
   }
@@ -146,6 +148,11 @@ export default function AdminTheaters() {
       setMsgType("error");
       return;
     }
+    if (!isSuperAdmin) {
+      setMsg("❌ Only SUPER_ADMIN can create theaters");
+      setMsgType("error");
+      return;
+    }
 
     setLoading(true);
     try {
@@ -161,12 +168,15 @@ export default function AdminTheaters() {
       });
 
       const created = Array.isArray(res.data) ? res.data[0] : res.data;
-      setTheaters((t) => [normalizeTheater(created), ...t]);
+      const createdNorm = normalizeTheater(created);
+      setTheaters((t) => [createdNorm, ...t]);
+      // Optional: auto-select and scroll into view
+      // fillFromTheater(createdNorm);
       resetForm();
       setMsg("✅ Theater created!");
       setMsgType("success");
-    } catch {
-      setMsg("❌ Create failed");
+    } catch (e) {
+      setMsg(e?.response?.data?.message || "❌ Create failed");
       setMsgType("error");
     }
     setLoading(false);
@@ -177,6 +187,11 @@ export default function AdminTheaters() {
     if (!selectedId) return;
     if (!name.trim() || !city.trim()) {
       setMsg("⚠️ Name & City required");
+      setMsgType("error");
+      return;
+    }
+    if (!isSuperAdmin) {
+      setMsg("❌ Only SUPER_ADMIN can update theaters");
       setMsgType("error");
       return;
     }
@@ -198,8 +213,8 @@ export default function AdminTheaters() {
       setTheaters((list) => list.map((t) => (t._id === selectedId ? normalizeTheater(updated) : t)));
       setMsg("✅ Updated!");
       setMsgType("success");
-    } catch {
-      setMsg("❌ Update failed");
+    } catch (e) {
+      setMsg(e?.response?.data?.message || "❌ Update failed");
       setMsgType("error");
     }
     setLoading(false);
@@ -207,13 +222,18 @@ export default function AdminTheaters() {
 
   /* Delete → DELETE /admin/theaters/:id */
   async function deleteTheater(id) {
+    if (!isSuperAdmin) {
+      setMsg("❌ Only SUPER_ADMIN can delete theaters");
+      setMsgType("error");
+      return;
+    }
     if (!confirm("Delete this theater?")) return;
     try {
       await api.delete(`/admin/theaters/${id}`, { headers: authHeaders });
       setTheaters((t) => t.filter((x) => x._id !== id));
       if (selectedId === id) resetForm();
-    } catch {
-      setMsg("❌ Delete failed");
+    } catch (e) {
+      setMsg(e?.response?.data?.message || "❌ Delete failed");
       setMsgType("error");
     }
   }
@@ -353,10 +373,14 @@ export default function AdminTheaters() {
               </div>
 
               <div className="flex gap-2">
-                <PrimaryBtn type="submit" disabled={loading}>
+                <PrimaryBtn type="submit" disabled={loading || !isSuperAdmin}>
                   {loading ? "Saving..." : "Create"}
                 </PrimaryBtn>
-                <PrimaryBtn onClick={updateTheaterById} disabled={!selectedId || loading} className="bg-[#0A66C2] hover:bg-[#0956A3]">
+                <PrimaryBtn
+                  onClick={updateTheaterById}
+                  disabled={!selectedId || loading || !isSuperAdmin}
+                  className="bg-[#0A66C2] hover:bg-[#0956A3]"
+                >
                   <PencilLine className="h-4 w-4" /> Update
                 </PrimaryBtn>
                 <SecondaryBtn type="button" onClick={resetForm}>
@@ -397,25 +421,27 @@ export default function AdminTheaters() {
                     </div>
                   </div>
 
-                  {/* Actions: Edit + Delete */}
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      title="Edit"
-                      onClick={() => fillFromTheater(t)}
-                      className="inline-flex items-center justify-center w-9 h-9 rounded-full border border-slate-300 bg-white hover:bg-slate-50"
-                    >
-                      <PencilLine className="h-4 w-4" />
-                    </button>
-                    <button
-                      type="button"
-                      title="Delete"
-                      onClick={() => deleteTheater(t._id)}
-                      className="inline-flex items-center justify-center w-9 h-9 rounded-full border border-rose-300 bg-white hover:bg-rose-50 text-rose-600"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
+                  {/* Actions: Edit + Delete (UI guard) */}
+                  {isSuperAdmin && (
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        title="Edit"
+                        onClick={() => fillFromTheater(t)}
+                        className="inline-flex items-center justify-center w-9 h-9 rounded-full border border-slate-300 bg-white hover:bg-slate-50"
+                      >
+                        <PencilLine className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        title="Delete"
+                        onClick={() => deleteTheater(t._id)}
+                        className="inline-flex items-center justify-center w-9 h-9 rounded-full border border-rose-300 bg-white hover:bg-rose-50 text-rose-600"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>
