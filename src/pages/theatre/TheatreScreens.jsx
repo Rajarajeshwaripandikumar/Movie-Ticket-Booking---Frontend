@@ -2,6 +2,7 @@
 import React, { useEffect, useState } from "react";
 import api from "../../api/api";
 import { useAuth } from "../../context/AuthContext";
+import { Navigate } from "react-router-dom";
 
 const Card = ({ children, className = "" }) => (
   <div className={`bg-white border border-slate-200 rounded-2xl shadow-sm p-4 ${className}`}>{children}</div>
@@ -12,6 +13,14 @@ const A = (x) => (Array.isArray(x) ? x : Array.isArray(x?.items) ? x.items : Arr
 const idOf = (x) => x?._id ?? x?.id ?? x?.uuid ?? "";
 const rowsOf = (x) => x?.rows ?? x?.seatRows ?? x?.numRows ?? "";
 const colsOf = (x) => x?.cols ?? x?.columns ?? x?.seatCols ?? x?.numCols ?? "";
+
+function decodeJwt(t) {
+  try {
+    return JSON.parse(atob(String(t ?? "").split(".")[1])) || {};
+  } catch {
+    return {};
+  }
+}
 
 async function tryGet(endpoints) {
   for (const ep of endpoints.filter(Boolean)) {
@@ -57,9 +66,20 @@ async function tryDelete(endpoints) {
 }
 
 export default function TheatreScreens() {
-  const { token, user, isTheatreAdmin } = useAuth() || {};
+  const { token, adminToken, user, isTheatreAdmin } = useAuth() || {};
+  const activeToken = adminToken || token || null; // ✅ use admin token if present
+
+  const payload = decodeJwt(activeToken);
   const theatreId =
-    user?.theatreId || user?.theaterId || user?.theatre?._id || user?.theater?._id || "";
+    user?.theatreId ||
+    user?.theaterId ||
+    user?.theatre?._id ||
+    user?.theatre?.id ||
+    user?.theater?._id ||
+    user?.theater?.id ||
+    payload?.theatreId ||
+    payload?.theaterId ||
+    "";
 
   const [screens, setScreens] = useState([]);
   const [name, setName] = useState("");
@@ -76,10 +96,10 @@ export default function TheatreScreens() {
   const [msgType, setMsgType] = useState("info");
 
   useEffect(() => {
-    if (!token || !isTheatreAdmin || !theatreId) return;
+    if (!activeToken || !isTheatreAdmin || !theatreId) return;
     loadScreens();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, isTheatreAdmin, theatreId]);
+  }, [activeToken, isTheatreAdmin, theatreId]);
 
   async function loadScreens() {
     setLoading(true);
@@ -120,7 +140,7 @@ export default function TheatreScreens() {
       const body = { name: name.trim(), rows: Number(rows), cols: Number(cols), columns: Number(cols) };
       await tryPost(
         [
-          `/theatre/screens`, // body must include theatreId on some backends
+          `/theatre/screens`, // body may need theatreId on some backends
           `/admin/theaters/${theatreId}/screens`,
           `/theaters/${theatreId}/screens`,
         ],
@@ -204,6 +224,8 @@ export default function TheatreScreens() {
     }
   }
 
+  // ✅ Proper guards
+  if (!activeToken) return <Navigate to="/admin/login" replace />;
   if (!isTheatreAdmin) {
     return <div className="p-8 text-center text-rose-600 font-semibold">Access Denied</div>;
   }
