@@ -41,16 +41,22 @@ function GhostLink({ active, className = "", ...rest }) {
 }
 
 /* -------------------------- Menu Navigation Item -------------------------- */
+/* Changed to imperative navigation so clicks inside popover always work */
 function MenuItemLink({ to, children, onClick }) {
+  const navigate = useNavigate();
   return (
-    <NavLink
-      to={to}
-      onClick={onClick}
+    <button
+      type="button"
+      onClick={(e) => {
+        e.preventDefault();
+        onClick?.();        // close the menu first
+        navigate(to);       // then navigate
+      }}
       className="block w-full text-left px-3 py-2 text-sm rounded-xl hover:bg-slate-50 font-semibold"
       role="menuitem"
     >
       {children}
-    </NavLink>
+    </button>
   );
 }
 
