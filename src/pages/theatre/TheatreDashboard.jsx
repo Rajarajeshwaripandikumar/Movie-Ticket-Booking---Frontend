@@ -3,42 +3,125 @@ import React, { useEffect, useState } from "react";
 import api from "../../api/api";
 import { useAuth } from "../../context/AuthContext";
 import { Monitor, CalendarClock, BarChart3 } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, Navigate } from "react-router-dom";
 
 const Card = ({ children, className = "" }) => (
   <div className={`bg-white border border-slate-200 rounded-2xl shadow-sm p-5 ${className}`}>{children}</div>
 );
 
+/* ------------------------------ helpers ------------------------------ */
+const arr = (x) =>
+  Array.isArray(x) ? x : Array.isArray(x?.items) ? x.items : Array.isArray(x?.data) ? x.data : [];
+const firstObj = (x) => (x && typeof x === "object" ? x : null);
+
+/** Try endpoints in order and return the first successful payload */
+async function tryFetch(candidates = []) {
+  for (const ep of candidates) {
+    try {
+      const res = await api.get(ep);
+      return res?.data ?? res;
+    } catch (_) {
+      /* try next */
+    }
+  }
+  return undefined;
+}
+
 export default function TheatreDashboard() {
-  const { token, user, role } = useAuth();
-  const theatreId = user?.theatreId;
+  const { token, user, isTheatreAdmin } = useAuth() || {};
+  const theatreId = user?.theatreId || user?.theaterId || user?.theatre?.id || user?.theater?.id || "";
+
   const [stats, setStats] = useState({ screens: 0, upcomingShowtimes: 0, bookings: 0 });
   const [theatre, setTheatre] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
 
   useEffect(() => {
-    if (!theatreId || !token) return;
-    (async () => {
-      try {
-        const hdr = { headers: { Authorization: `Bearer ${token}` } };
-        // backend endpoints — adapt if needed
-        const tRes = await api.get(`/theaters/${theatreId}`, hdr);
-        setTheatre(tRes?.data || tRes);
+    document.title = "My Theatre | Cinema";
+  }, []);
 
-        const screensRes = await api.get(`/theaters/${theatreId}/screens`, hdr);
-        const showtimesRes = await api.get(`/showtimes?theatre=${theatreId}&upcoming=true`, hdr);
-        const bookingsRes = await api.get(`/admin/reports?theatre=${theatreId}`, hdr); // backend: reports filter
-        setStats({
-          screens: Array.isArray(screensRes?.data) ? screensRes.data.length : (screensRes?.length || 0),
-          upcomingShowtimes: Array.isArray(showtimesRes?.data) ? showtimesRes.data.length : (showtimesRes?.length || 0),
-          bookings: bookingsRes?.data?.count ?? (bookingsRes?.count || 0),
-        });
-      } catch (err) {
-        console.error("TheatreDashboard load error", err);
+  useEffect(() => {
+    if (!token || !isTheatreAdmin) return;
+    (async () => {
+      setLoading(true);
+      setErr("");
+
+      try {
+        /* ---------- load theatre details ---------- */
+        const tData =
+          (await tryFetch([
+            "/theatre/me",
+            theatreId ? `/theaters/${theatreId}` : "",
+            theatreId ? `/admin/theaters/${theatreId}` : "",
+          ].filter(Boolean))) || {};
+
+        // Normalize various shapes
+        const t =
+          firstObj(tData.theatre) ||
+          firstObj(tData.theater) ||
+          firstObj(tData.data) ||
+          firstObj(tData) ||
+          null;
+
+        setTheatre(t);
+
+        const resolvedTheatreId =
+          theatreId || t?._id || t?.id || t?.theatreId || t?.theaterId || "";
+
+        /* ---------- load screens ---------- */
+        const sData =
+          (await tryFetch(
+            [
+              "/theatre/screens",
+              resolvedTheatreId ? `/theaters/${resolvedTheatreId}/screens` : "",
+              resolvedTheatreId ? `/admin/theaters/${resolvedTheatreId}/screens` : "",
+            ].filter(Boolean)
+          )) || [];
+
+        const screens = arr(sData);
+        const screensCount = screens.length;
+
+        /* ---------- load upcoming showtimes ---------- */
+        const stData =
+          (await tryFetch(
+            [
+              "/theatre/showtimes?upcoming=true",
+              resolvedTheatreId ? `/showtimes?theatre=${resolvedTheatreId}&upcoming=true` : "",
+              resolvedTheatreId ? `/admin/showtimes?theatre=${resolvedTheatreId}&upcoming=true` : "",
+            ].filter(Boolean)
+          )) || [];
+
+        const showtimes = arr(stData);
+        const upcomingShowtimes = showtimes.length;
+
+        /* ---------- load bookings summary ---------- */
+        const bData =
+          (await tryFetch(
+            [
+              "/theatre/reports?summary=true",
+              resolvedTheatreId ? `/theatre/reports?theatre=${resolvedTheatreId}&summary=true` : "",
+              resolvedTheatreId ? `/admin/reports?theatre=${resolvedTheatreId}&summary=true` : "",
+            ].filter(Boolean)
+          )) || {};
+
+        const bookings =
+          bData?.count ??
+          bData?.totalBookings ??
+          (Array.isArray(bData) ? bData.length : 0);
+
+        setStats({ screens: screensCount, upcomingShowtimes, bookings });
+      } catch (e) {
+        console.error("TheatreDashboard load error", e?.response || e);
+        setErr(e?.response?.data?.message || "Failed to load theatre dashboard.");
+      } finally {
+        setLoading(false);
       }
     })();
-  }, [theatreId, token]);
+  }, [token, isTheatreAdmin, theatreId]);
 
-  if (role !== "THEATRE_ADMIN") {
+  // 🔒 Guard using context boolean to avoid role string mismatch
+  if (!token) return <Navigate to="/admin/login" replace />;
+  if (!isTheatreAdmin) {
     return <div className="p-8 text-center text-rose-600 font-semibold">Access Denied</div>;
   }
 
@@ -47,8 +130,18 @@ export default function TheatreDashboard() {
       <div className="max-w-5xl mx-auto px-4 space-y-5">
         <Card>
           <h1 className="text-2xl font-extrabold text-[#0071DC]">My Theatre Dashboard</h1>
-          <p className="text-sm text-slate-600 mt-1">{theatre ? `${theatre.name} — ${theatre.city}` : "Loading theatre..."}</p>
+          <p className="text-sm text-slate-600 mt-1">
+            {loading
+              ? "Loading theatre..."
+              : theatre
+              ? `${theatre.name || "—"}${theatre.city ? " — " + theatre.city : ""}`
+              : "Theatre not found"}
+          </p>
         </Card>
+
+        {err ? (
+          <Card className="bg-rose-50 border-rose-200 text-rose-700 font-semibold">{err}</Card>
+        ) : null}
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <Card className="text-center">
