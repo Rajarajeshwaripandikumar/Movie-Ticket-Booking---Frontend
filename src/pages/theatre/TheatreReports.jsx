@@ -1,22 +1,15 @@
 // src/pages/theatre/TheatreReports.jsx
-import React, { useEffect, useState, useMemo, useRef } from "react";
-import { useParams, Link } from "react-router-dom";
-// removed: import { format } from "date-fns";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
+import api from "../../api/api";
+import { useAuth } from "../../context/AuthContext";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
-/**
- * TheatreReports.jsx (date-fns removed)
- * - Place at: src/pages/theatre/TheatreReports.jsx
- * - Adjust API endpoints: GET /api/theatres/:id/reports
- * - Requires `recharts` installed for chart
- */
-
-/* Small local date formatters to replace date-fns usages */
+/* --- local date formatters (no date-fns) --- */
 function fmtDateShort(d) {
   try {
     const dt = new Date(d);
     if (Number.isNaN(dt.getTime())) return String(d);
-    // e.g. "04 Apr"
     return dt.toLocaleDateString(undefined, { day: "2-digit", month: "short" });
   } catch {
     return String(d);
@@ -26,15 +19,32 @@ function fmtDateLong(d) {
   try {
     const dt = new Date(d);
     if (Number.isNaN(dt.getTime())) return String(d);
-    // e.g. "4 Apr 2025"
     return dt.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
   } catch {
     return String(d);
   }
 }
 
+/* --- helpers --- */
+const A = (x) =>
+  Array.isArray(x) ? x : Array.isArray(x?.items) ? x.items : Array.isArray(x?.data) ? x.data : [];
+
+async function tryGet(endpoints) {
+  for (const ep of endpoints.filter(Boolean)) {
+    try {
+      const res = await api.get(ep);
+      return res?.data ?? res;
+    } catch {
+      /* continue */
+    }
+  }
+  return undefined;
+}
+
 export default function TheatreReports() {
-  const { id } = useParams();
+  const { user, isTheatreAdmin } = useAuth() || {};
+  const theatreId =
+    user?.theatreId || user?.theaterId || user?.theatre?._id || user?.theater?._id || "";
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -63,23 +73,38 @@ export default function TheatreReports() {
   const csvRef = useRef(null);
 
   useEffect(() => {
-    async function loadReports() {
+    document.title = "Theatre Reports | Cinema";
+  }, []);
+
+  useEffect(() => {
+    (async () => {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch(`/api/theatres/${id}/reports?start=${startDate}&end=${endDate}`);
-        if (!res.ok) throw new Error(`Failed to load reports (${res.status})`);
-        const data = await res.json();
+        // Build endpoint candidates that your backend may expose
+        const q = `start=${encodeURIComponent(startDate)}&end=${encodeURIComponent(endDate)}`;
+        const base = theatreId ? `theatre=${encodeURIComponent(theatreId)}&` : "";
+
+        const data =
+          (await tryGet([
+            // Theatre-admin scoped
+            `/theatre/reports?${base}${q}`,
+            // Admin scoped with theatre filter
+            `/admin/reports?${base}${q}`,
+            // Generic reports with theatre filter
+            `/reports?${base}${q}`,
+          ])) || {};
+
         setReports(data);
       } catch (err) {
         console.error(err);
-        setError(err.message || "Failed to load reports");
+        setReports(null);
+        setError(err?.response?.data?.message || err?.message || "Failed to load reports");
       } finally {
         setLoading(false);
       }
-    }
-    loadReports();
-  }, [id, startDate, endDate]);
+    })();
+  }, [startDate, endDate, theatreId]);
 
   const summary = reports?.summary || { revenue: 0, ticketsSold: 0, avgPrice: 0 };
   const salesByDay = reports?.salesByDay || [];
@@ -88,12 +113,15 @@ export default function TheatreReports() {
   const filteredBookings = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return bookings;
-    return bookings.filter((b) => (
-      String(b.id).toLowerCase().includes(q) ||
-      (b.customerName || "").toLowerCase().includes(q) ||
-      (Array.isArray(b.seats) ? b.seats.join(" ") : (b.seats || "")).toLowerCase().includes(q) ||
-      (b.showTitle || "").toLowerCase().includes(q)
-    ));
+    return bookings.filter((b) => {
+      const seatsStr = Array.isArray(b.seats) ? b.seats.join(" ") : (b.seats || "");
+      return (
+        String(b.id).toLowerCase().includes(q) ||
+        (b.customerName || "").toLowerCase().includes(q) ||
+        seatsStr.toLowerCase().includes(q) ||
+        (b.showTitle || "").toLowerCase().includes(q)
+      );
+    });
   }, [bookings, query]);
 
   const totalPages = Math.max(1, Math.ceil(filteredBookings.length / pageSize));
@@ -103,20 +131,20 @@ export default function TheatreReports() {
     const end = new Date();
     const start = new Date();
     start.setDate(end.getDate() - days + 1);
-    const formatYMD = (dt) => {
+    const toYMD = (dt) => {
       const y = dt.getFullYear();
       const m = String(dt.getMonth() + 1).padStart(2, "0");
-      const day = String(dt.getDate()).padStart(2, "0");
-      return `${y}-${m}-${day}`;
+      const d = String(dt.getDate()).padStart(2, "0");
+      return `${y}-${m}-${d}`;
     };
-    setStartDate(formatYMD(start));
-    setEndDate(formatYMD(end));
+    setStartDate(toYMD(start));
+    setEndDate(toYMD(end));
     setPage(1);
   }
 
   function downloadCSV() {
     const rows = [
-      ["Booking ID", "Customer", "Show", "Time", "Seats", "Quantity", "Total (INR)", "Created At"]
+      ["Booking ID", "Customer", "Show", "Time", "Seats", "Quantity", "Total (INR)", "Created At"],
     ];
     for (const b of filteredBookings) {
       rows.push([
@@ -127,15 +155,19 @@ export default function TheatreReports() {
         Array.isArray(b.seats) ? b.seats.join("|") : (b.seats || ""),
         b.quantity || "",
         b.total || "",
-        b.createdAt ? new Date(b.createdAt).toISOString() : ""
+        b.createdAt ? new Date(b.createdAt).toISOString() : "",
       ]);
     }
-    const csv = rows.map(r => r.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const csv = rows
+      .map((r) => r.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `theatre_${id}_bookings_${startDate}_to_${endDate}.csv`;
+    const namePart = reports?.theatreId || theatreId || "theatre";
+    a.download = `${namePart}_bookings_${startDate}_to_${endDate}.csv`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -146,11 +178,11 @@ export default function TheatreReports() {
     return (
       <div className="p-6">
         <div className="max-w-6xl mx-auto">
-          <div className="animate-pulse h-8 bg-gray-200 rounded w-1/4 mb-4"></div>
+          <div className="animate-pulse h-8 bg-gray-200 rounded w-1/4 mb-4" />
           <div className="grid grid-cols-3 gap-4">
-            <div className="h-28 bg-gray-200 rounded"></div>
-            <div className="h-28 bg-gray-200 rounded"></div>
-            <div className="h-28 bg-gray-200 rounded"></div>
+            <div className="h-28 bg-gray-200 rounded" />
+            <div className="h-28 bg-gray-200 rounded" />
+            <div className="h-28 bg-gray-200 rounded" />
           </div>
         </div>
       </div>
@@ -160,11 +192,13 @@ export default function TheatreReports() {
   if (error) {
     return (
       <div className="p-6">
-        <div className="max-w-4xl mx-auto bg-white p-6 rounded shadow">
-          <h2 className="text-xl font-semibold text-red-600">Failed to load reports</h2>
-          <p className="mt-2 text-sm text-gray-700">{error}</p>
+        <div className="max-w-4xl mx-auto bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+          <h2 className="text-xl font-semibold text-rose-600">Failed to load reports</h2>
+          <p className="mt-2 text-sm text-slate-700">{error}</p>
           <div className="mt-4">
-            <Link to="/" className="px-4 py-2 rounded bg-blue-600 text-white">Back home</Link>
+            <Link to="/" className="px-4 py-2 rounded-full bg-[#0071DC] text-white hover:bg-[#0654BA]">
+              Back home
+            </Link>
           </div>
         </div>
       </div>
@@ -172,52 +206,68 @@ export default function TheatreReports() {
   }
 
   return (
-    <div className="p-6">
+    <main className="p-6">
       <div className="max-w-6xl mx-auto space-y-6">
         <header className="flex items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold">Theatre Reports</h1>
-            <p className="text-sm text-gray-600 mt-1">{reports?.theatreName || "—"}</p>
+            <h1 className="text-2xl font-extrabold text-[#111827]">Theatre Reports</h1>
+            <p className="text-sm text-slate-600 mt-1">{reports?.theatreName || "—"}</p>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={() => setRangeDays(7)} className="px-3 py-2 rounded-lg bg-white border">Last 7d</button>
-            <button onClick={() => setRangeDays(30)} className="px-3 py-2 rounded-lg bg-white border">Last 30d</button>
-            <button onClick={() => setRangeDays(90)} className="px-3 py-2 rounded-lg bg-white border">Last 90d</button>
+            <button onClick={() => setRangeDays(7)} className="px-3 py-2 rounded-lg bg-white border">
+              Last 7d
+            </button>
+            <button onClick={() => setRangeDays(30)} className="px-3 py-2 rounded-lg bg-white border">
+              Last 30d
+            </button>
+            <button onClick={() => setRangeDays(90)} className="px-3 py-2 rounded-lg bg-white border">
+              Last 90d
+            </button>
           </div>
         </header>
 
         <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-white p-4 rounded-2xl shadow">
-            <div className="text-xs text-gray-500">Revenue</div>
-            <div className="text-2xl font-semibold mt-1">₹{Number(summary.revenue || 0).toLocaleString()}</div>
-            <div className="text-sm text-gray-500 mt-2">Period: {startDate} → {endDate}</div>
+          <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
+            <div className="text-[11px] text-slate-500">Revenue</div>
+            <div className="text-2xl font-bold mt-1">₹{Number(summary.revenue || 0).toLocaleString()}</div>
+            <div className="text-sm text-slate-500 mt-2">
+              Period: {startDate} → {endDate}
+            </div>
           </div>
 
-          <div className="bg-white p-4 rounded-2xl shadow">
-            <div className="text-xs text-gray-500">Tickets sold</div>
-            <div className="text-2xl font-semibold mt-1">{Number(summary.ticketsSold || 0).toLocaleString()}</div>
-            <div className="text-sm text-gray-500 mt-2">Avg price: ₹{Number(summary.avgPrice || 0).toFixed(2)}</div>
+          <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
+            <div className="text-[11px] text-slate-500">Tickets sold</div>
+            <div className="text-2xl font-bold mt-1">{Number(summary.ticketsSold || 0).toLocaleString()}</div>
+            <div className="text-sm text-slate-500 mt-2">
+              Avg price: ₹{Number(summary.avgPrice || 0).toFixed(2)}
+            </div>
           </div>
 
-          <div className="bg-white p-4 rounded-2xl shadow flex flex-col">
+          <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex flex-col">
             <div className="flex justify-between items-start">
               <div>
-                <div className="text-xs text-gray-500">Conversion</div>
-                <div className="text-2xl font-semibold mt-1">{reports?.conversionRate ? (reports.conversionRate * 100).toFixed(1) + "%" : "—"}</div>
+                <div className="text-[11px] text-slate-500">Conversion</div>
+                <div className="text-2xl font-bold mt-1">
+                  {reports?.conversionRate ? (reports.conversionRate * 100).toFixed(1) + "%" : "—"}
+                </div>
               </div>
               <div>
-                <button onClick={downloadCSV} className="px-3 py-2 rounded bg-yellow-400 text-black">Export CSV</button>
+                <button onClick={downloadCSV} className="px-3 py-2 rounded-full bg-[#FFC220] text-black">
+                  Export CSV
+                </button>
               </div>
             </div>
-            <div className="mt-3 text-sm text-gray-500">Bookings: {bookings.length}</div>
+            <div className="mt-3 text-sm text-slate-600">Bookings: {bookings.length}</div>
           </div>
         </section>
 
         <section className="grid md:grid-cols-2 gap-6">
-          <div className="bg-white p-4 rounded-2xl shadow">
+          <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-medium">Sales by day</h3>
-              <div className="text-xs text-gray-500">{startDate} → {endDate}</div>
+              <h3 className="text-sm font-semibold">Sales by day</h3>
+              <div className="text-xs text-slate-500">
+                {startDate} → {endDate}
+              </div>
             </div>
             <div style={{ height: 260 }} className="mt-4">
               <ResponsiveContainer width="100%" height="100%">
@@ -233,12 +283,20 @@ export default function TheatreReports() {
             </div>
           </div>
 
-          <div className="bg-white p-4 rounded-2xl shadow">
+          <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-medium">Bookings</h3>
+              <h3 className="text-sm font-semibold">Bookings</h3>
               <div className="flex items-center gap-2">
-                <input value={query} onChange={e => { setQuery(e.target.value); setPage(1); }} placeholder="Search bookings..." className="px-3 py-2 border rounded-lg text-sm" />
-                <div className="text-xs text-gray-500">{filteredBookings.length} results</div>
+                <input
+                  value={query}
+                  onChange={(e) => {
+                    setQuery(e.target.value);
+                    setPage(1);
+                  }}
+                  placeholder="Search bookings..."
+                  className="px-3 py-2 border rounded-lg text-sm"
+                />
+                <div className="text-xs text-slate-500">{filteredBookings.length} results</div>
               </div>
             </div>
 
@@ -246,7 +304,7 @@ export default function TheatreReports() {
               <div className="overflow-auto">
                 <table className="min-w-full text-sm">
                   <thead>
-                    <tr className="text-left text-xs text-gray-500 border-b">
+                    <tr className="text-left text-xs text-slate-500 border-b">
                       <th className="py-2">ID</th>
                       <th className="py-2">Customer</th>
                       <th className="py-2">Show</th>
@@ -257,20 +315,26 @@ export default function TheatreReports() {
                     </tr>
                   </thead>
                   <tbody>
-                    {pageItems.map(b => (
+                    {pageItems.map((b) => (
                       <tr key={b.id} className="border-b">
-                        <td className="py-2 text-xs text-gray-700">{b.id}</td>
+                        <td className="py-2 text-xs text-slate-700">{b.id}</td>
                         <td className="py-2">{b.customerName || "—"}</td>
                         <td className="py-2">{b.showTitle || "—"}</td>
-                        <td className="py-2 text-xs">{Array.isArray(b.seats) ? b.seats.join(", ") : b.seats}</td>
+                        <td className="py-2 text-xs">
+                          {Array.isArray(b.seats) ? b.seats.join(", ") : b.seats}
+                        </td>
                         <td className="py-2">{b.quantity}</td>
                         <td className="py-2">₹{b.total}</td>
-                        <td className="py-2 text-xs text-gray-500">{b.createdAt ? fmtDateLong(b.createdAt) : "—"}</td>
+                        <td className="py-2 text-xs text-slate-500">
+                          {b.createdAt ? fmtDateLong(b.createdAt) : "—"}
+                        </td>
                       </tr>
                     ))}
                     {pageItems.length === 0 && (
                       <tr>
-                        <td colSpan={7} className="py-4 text-center text-sm text-gray-500">No bookings found for this range.</td>
+                        <td colSpan={7} className="py-4 text-center text-sm text-slate-500">
+                          No bookings found for this range.
+                        </td>
                       </tr>
                     )}
                   </tbody>
@@ -278,18 +342,28 @@ export default function TheatreReports() {
               </div>
 
               <div className="mt-4 flex items-center justify-between">
-                <div className="text-sm text-gray-600">Page {page} / {totalPages}</div>
+                <div className="text-sm text-slate-600">
+                  Page {page} / {totalPages}
+                </div>
                 <div className="flex items-center gap-2">
-                  <button onClick={() => setPage(p => Math.max(1, p - 1))} className="px-3 py-1 rounded border">Prev</button>
-                  <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} className="px-3 py-1 rounded border">Next</button>
+                  <button
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    className="px-3 py-1 rounded border"
+                  >
+                    Prev
+                  </button>
+                  <button
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    className="px-3 py-1 rounded border"
+                  >
+                    Next
+                  </button>
                 </div>
               </div>
-
             </div>
           </div>
         </section>
-
       </div>
-    </div>
+    </main>
   );
 }
