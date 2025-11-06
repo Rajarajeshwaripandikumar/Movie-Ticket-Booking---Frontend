@@ -14,6 +14,15 @@ const arr = (x) =>
   Array.isArray(x) ? x : Array.isArray(x?.items) ? x.items : Array.isArray(x?.data) ? x.data : [];
 const firstObj = (x) => (x && typeof x === "object" ? x : null);
 
+function decodeJwt(t) {
+  try {
+    const p = JSON.parse(atob(String(t ?? "").split(".")[1]));
+    return p || {};
+  } catch {
+    return {};
+  }
+}
+
 /** Try endpoints in order and return the first successful payload */
 async function tryFetch(candidates = [], signal) {
   for (const ep of candidates) {
@@ -21,9 +30,8 @@ async function tryFetch(candidates = [], signal) {
       const res = await api.get(ep, { signal });
       return res?.data ?? res;
     } catch (e) {
-      // If aborted, stop immediately
-      if (signal?.aborted) throw e;
-      // otherwise try next
+      if (signal?.aborted) throw e; // stop immediately if aborted
+      // otherwise try next candidate
     }
   }
   return undefined;
@@ -31,8 +39,15 @@ async function tryFetch(candidates = [], signal) {
 
 export default function TheatreDashboard() {
   const { token, user, isTheatreAdmin } = useAuth() || {};
+  const payload = token ? decodeJwt(token) : {};
   const theatreIdFromUser =
-    user?.theatreId || user?.theaterId || user?.theatre?.id || user?.theater?.id || "";
+    user?.theatreId ||
+    user?.theaterId ||
+    user?.theatre?.id ||
+    user?.theater?.id ||
+    payload?.theatreId ||
+    payload?.theaterId ||
+    "";
 
   const [stats, setStats] = useState({ screens: 0, upcomingShowtimes: 0, bookings: 0 });
   const [theatre, setTheatre] = useState(null);
@@ -43,6 +58,7 @@ export default function TheatreDashboard() {
   const mountedRef = useRef(false);
   const prevTheatreJson = useRef("");
   const prevStatsJson = useRef("");
+  const tried404Ref = useRef(false); // stop repeating fetches after first 404 until navigation/refresh
 
   useEffect(() => {
     document.title = "My Theatre | Cinema";
@@ -52,14 +68,13 @@ export default function TheatreDashboard() {
     async (signal) => {
       setErr("");
 
-      /* ---------- load theatre details ---------- */
-      // IMPORTANT: prefer /theatre/my (not /theatre/me)
+      /* ---------- load theatre details (prefer by-ID first) ---------- */
       const tData =
         (await tryFetch(
           [
-            "/theatre/my",
             theatreIdFromUser ? `/theaters/${theatreIdFromUser}` : "",
             theatreIdFromUser ? `/admin/theaters/${theatreIdFromUser}` : "",
+            "/theatre/my", // last fallback (often 404 for you)
           ].filter(Boolean),
           signal
         )) || {};
@@ -80,13 +95,13 @@ export default function TheatreDashboard() {
       const resolvedTheatreId =
         theatreIdFromUser || t?._id || t?.id || t?.theatreId || t?.theaterId || "";
 
-      /* ---------- load screens ---------- */
+      /* ---------- load screens (ID-first, then generic) ---------- */
       const sData =
         (await tryFetch(
           [
-            "/theatre/screens",
             resolvedTheatreId ? `/theaters/${resolvedTheatreId}/screens` : "",
             resolvedTheatreId ? `/admin/theaters/${resolvedTheatreId}/screens` : "",
+            "/theatre/screens",
           ].filter(Boolean),
           signal
         )) || [];
@@ -98,9 +113,9 @@ export default function TheatreDashboard() {
       const stData =
         (await tryFetch(
           [
-            "/theatre/showtimes?upcoming=true",
             resolvedTheatreId ? `/showtimes?theatre=${resolvedTheatreId}&upcoming=true` : "",
             resolvedTheatreId ? `/admin/showtimes?theatre=${resolvedTheatreId}&upcoming=true` : "",
+            "/theatre/showtimes?upcoming=true",
           ].filter(Boolean),
           signal
         )) || [];
@@ -112,9 +127,9 @@ export default function TheatreDashboard() {
       const bData =
         (await tryFetch(
           [
-            "/theatre/reports?summary=true",
-            resolvedTheatreId ? `/theatre/reports?theatre=${resolvedTheatreId}&summary=true` : "",
             resolvedTheatreId ? `/admin/reports?theatre=${resolvedTheatreId}&summary=true` : "",
+            resolvedTheatreId ? `/theatre/reports?theatre=${resolvedTheatreId}&summary=true` : "",
+            "/theatre/reports?summary=true",
           ].filter(Boolean),
           signal
         )) || {};
@@ -134,6 +149,8 @@ export default function TheatreDashboard() {
 
   useEffect(() => {
     if (!token || !isTheatreAdmin) return;
+    if (tried404Ref.current) return; // don’t keep retrying after first 404
+
     mountedRef.current = true;
     setLoading(true);
 
@@ -147,8 +164,8 @@ export default function TheatreDashboard() {
           console.error("TheatreDashboard load error", e?.response || e);
           const status = e?.response?.status;
           if (status === 404) {
-            // Stop spinner and show a friendly message (no retry loop)
             setTheatre(null);
+            tried404Ref.current = true; // freeze until user navigates/refreshes
           } else {
             setErr(e?.response?.data?.message || "Failed to load theatre dashboard.");
           }
@@ -209,9 +226,15 @@ export default function TheatreDashboard() {
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <Link to="/theatre/screens"><Card className="text-center">Manage Screens</Card></Link>
-          <Link to="/theatre/showtimes"><Card className="text-center">Manage Showtimes</Card></Link>
-          <Link to="/theatre/reports"><Card className="text-center">Reports</Card></Link>
+          <Link to="/theatre/screens">
+            <Card className="text-center">Manage Screens</Card>
+          </Link>
+          <Link to="/theatre/showtimes">
+            <Card className="text-center">Manage Showtimes</Card>
+          </Link>
+          <Link to="/theatre/reports">
+            <Card className="text-center">Reports</Card>
+          </Link>
         </div>
       </div>
     </main>
