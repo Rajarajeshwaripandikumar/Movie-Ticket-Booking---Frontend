@@ -1,9 +1,8 @@
-// src/components/Navbar.jsx
 import React, { useState } from "react";
 import { Link, NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import Logo from "./Logo";
-import { Bell, ChevronDown, Menu, X, UserRound, Shield, LogOut } from "lucide-react";
+import { ChevronDown, Menu, X, UserRound, Shield, LogOut } from "lucide-react";
 
 /* --------------------------- Walmart primitives --------------------------- */
 const cn = (...xs) => xs.filter(Boolean).join(" ");
@@ -65,24 +64,30 @@ const SUPER_ADMIN_LINKS = [
 ];
 
 const THEATRE_ADMIN_LINKS = [
+  { label: "Dashboard", to: "/theatre" },
   { label: "My Theatre", to: "/theatre/my" },
   { label: "Manage Screens", to: "/theatre/screens" },
   { label: "Manage Showtimes", to: "/theatre/showtimes" },
-  { label: "Update Pricing", to: "/theatre/pricing" }, // ✅ fixed path
+  { label: "Update Pricing", to: "/theatre/pricing" },
   { label: "Theatre Reports", to: "/theatre/reports" },
 ];
 
 /* -------------------------------------------------------------------------- */
 
 export default function Navbar() {
-  const { token, role, user, logout, isAdmin, isSuperAdmin, isTheatreAdmin, isLoggedIn } = useAuth();
+  const { user, logout, isAdmin, isSuperAdmin, isTheatreAdmin, isLoggedIn } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
   const [open, setOpen] = useState(false);
   const [adminMenu, setAdminMenu] = useState(false);
 
-  // ✅ Route to the correct profile per role
+  // Hide public navbar on admin/theatre routes
+  const path = location.pathname || "";
+  const hideNavbar = path.startsWith("/admin") || path.startsWith("/theatre");
+  if (hideNavbar) return null;
+
+  // Role-aware profile link
   const profilePath = isSuperAdmin ? "/admin/profile" : isTheatreAdmin ? "/theatre/profile" : "/profile";
 
   return (
@@ -121,15 +126,22 @@ export default function Navbar() {
 
             {/* Right Controls */}
             <div className="flex items-center gap-3 relative">
-              {/* If not logged in → Admin Login button */}
-              {!isLoggedIn && (
+              {/* Admin access / login */}
+              {!isLoggedIn ? (
                 <button
                   onClick={() => navigate("/admin/login")}
                   className="text-sm font-semibold px-4 py-2 rounded-full border border-[#0071DC]/40 text-[#0071DC] hover:bg-[#E8F1FF]"
                 >
                   <Shield className="w-4 h-4 inline-block" /> Admin
                 </button>
-              )}
+              ) : (isAdmin || isSuperAdmin || isTheatreAdmin) ? (
+                <button
+                  onClick={() => navigate(isSuperAdmin ? "/admin" : "/theatre")}
+                  className="text-sm font-semibold px-4 py-2 rounded-full border border-[#0071DC]/40 text-[#0071DC] hover:bg-[#E8F1FF]"
+                >
+                  <Shield className="w-4 h-4 inline-block" /> Go to Admin
+                </button>
+              ) : null}
 
               {/* Account Menu */}
               {isLoggedIn && (
@@ -189,7 +201,7 @@ export default function Navbar() {
                 </div>
               )}
 
-              {/* Mobile Menu Button */}
+              {/* Mobile Menu Button (icon only; hook up your drawer if needed) */}
               <IconBtn className="md:hidden" onClick={() => setOpen((v) => !v)}>
                 {open ? <X /> : <Menu />}
               </IconBtn>
