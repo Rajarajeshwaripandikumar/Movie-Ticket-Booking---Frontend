@@ -53,8 +53,7 @@ function SecondaryBtn({ children, className = "", ...props }) {
 
 /* --------------------------------- Logic ---------------------------------- */
 export default function AdminShowtimes() {
-  // ✅ Use isSuperAdmin instead of role === 'admin'
-  const { token, isSuperAdmin } = useAuth() || {};
+  const { token } = useAuth() || {};
   const [movies, setMovies] = useState([]);
   const [theaters, setTheaters] = useState([]);
   const [screens, setScreens] = useState([]);
@@ -77,6 +76,7 @@ export default function AdminShowtimes() {
 
   /* Try multiple candidate endpoints and return the first array of items found */
   async function tryFetchCandidates(candidates = []) {
+    let lastErr;
     for (const ep of candidates) {
       try {
         const res = await api.get(ep);
@@ -88,13 +88,18 @@ export default function AdminShowtimes() {
             if (Array.isArray(payload[key])) return payload[key];
           }
         }
-      } catch (_) {}
+      } catch (e) {
+        lastErr = e;
+        const status = e?.response?.status;
+        if (status >= 400) console.warn(`[${status}] GET ${ep}`, e?.response?.data || e.message);
+      }
     }
+    if (lastErr) console.warn("All candidates failed:", candidates);
     return [];
   }
 
   useEffect(() => {
-    if (token && isSuperAdmin) {
+    if (token) {
       loadMovies();
       loadTheaters();
       loadShowtimes();
@@ -102,7 +107,7 @@ export default function AdminShowtimes() {
       setMovies([]); setTheaters([]); setShowtimes([]); setScreens([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, isSuperAdmin]);
+  }, [token]);
 
   async function loadMovies() {
     try {
@@ -146,6 +151,7 @@ export default function AdminShowtimes() {
         `/theaters/${id}/screens?ts=${ts}`,
         `/api/theaters/${id}/screens?ts=${ts}`,
         `/screens?theaterId=${id}&ts=${ts}`,
+        `/screens?theater=${id}&ts=${ts}`, // also try "theater" (no Id)
       ];
       const list = await tryFetchCandidates(candidates);
       setScreens(list);
@@ -214,22 +220,14 @@ export default function AdminShowtimes() {
     setLoading(true);
     try {
       const iso = new Date(startTime).toISOString();
-      // ✅ Send multiple field aliases for compatibility
+      // Send multiple field aliases for compatibility
       const payload = {
-        movieId,                // common
-        theaterId,
-        screenId,
-        movie: movieId,         // alias
-        theater: theaterId,
-        screen: screenId,
+        movieId, theaterId, screenId,
+        movie: movieId, theater: theaterId, screen: screenId,
         city,
-        startAt: iso,           // alias 1
-        startTime: iso,         // alias 2
-        price: Number(basePrice),
-        basePrice: Number(basePrice), // alias
-        amount: Number(basePrice),    // alias
-        rows: rows ?? undefined,
-        cols: cols ?? undefined,
+        startAt: iso, startTime: iso,
+        price: Number(basePrice), basePrice: Number(basePrice), amount: Number(basePrice),
+        rows: rows ?? undefined, cols: cols ?? undefined,
       };
 
       const createCandidates = ["/admin/showtimes", "/showtimes", "/api/showtimes", "/showtimes/admin"];
@@ -239,7 +237,10 @@ export default function AdminShowtimes() {
           await api.post(ep, payload);
           created = true;
           break;
-        } catch (_) {}
+        } catch (e) {
+          const status = e?.response?.status;
+          if (status >= 400) console.warn(`[${status}] POST ${ep}`, e?.response?.data || e.message);
+        }
       }
       if (!created) throw new Error("Create endpoint not found");
 
@@ -272,7 +273,10 @@ export default function AdminShowtimes() {
           await api.patch(ep, body);
           patched = true;
           break;
-        } catch (_) {}
+        } catch (e) {
+          const status = e?.response?.status;
+          if (status >= 400) console.warn(`[${status}] PATCH ${ep}`, e?.response?.data || e.message);
+        }
       }
       if (!patched) throw new Error("Update endpoint not found");
 
@@ -504,7 +508,10 @@ export default function AdminShowtimes() {
                                 await api.delete(ep);
                                 deleted = true;
                                 break;
-                              } catch (_) {}
+                              } catch (e) {
+                                const status = e?.response?.status;
+                                if (status >= 400) console.warn(`[${status}] DELETE ${ep}`, e?.response?.data || e.message);
+                              }
                             }
                             if (!deleted) throw new Error("Delete endpoint not found");
                             setMsg("Showtime deleted"); setMsgType("success");
