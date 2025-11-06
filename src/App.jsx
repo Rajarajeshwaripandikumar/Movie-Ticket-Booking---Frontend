@@ -83,7 +83,27 @@ function canonRole(r) {
   return v;
 }
 
-/** RequireAuth guard */
+/** Read role from the JWT when context/localStorage don't have it */
+function roleFromJwt(token) {
+  try {
+    if (!token) return "";
+    const s = String(token).replace(/^Bearer\s+/i, "");
+    const payload = JSON.parse(
+      atob(s.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))
+    );
+    const r =
+      payload?.role ??
+      (Array.isArray(payload?.roles) ? payload.roles[0] : undefined) ??
+      (Array.isArray(payload?.authorities) ? payload.authorities[0] : undefined) ??
+      payload?.authority ??
+      "";
+    return r;
+  } catch {
+    return "";
+  }
+}
+
+/** RequireAuth guard — reads role from context/localStorage/JWT */
 function RequireAuth({ children, role }) {
   if (process.env.REACT_APP_DEBUG_BYPASS_AUTH === "1") return children;
 
@@ -94,21 +114,25 @@ function RequireAuth({ children, role }) {
     auth.token ||
     (typeof window !== "undefined" && window.localStorage?.getItem("token"));
 
-  const userRoleRaw =
+  const needList = Array.isArray(role) ? role : role ? [role] : [];
+  const need = needList.map(canonRole);
+
+  // derive role from context, localStorage, then JWT payload
+  const storedRole =
     auth.role ??
     (Array.isArray(auth.roles) && auth.roles.length ? auth.roles[0] : undefined) ??
     (typeof window !== "undefined" &&
       (JSON.parse(localStorage.getItem("roles") || "[]")[0] ||
         localStorage.getItem("role")));
 
-  const needList = Array.isArray(role) ? role : role ? [role] : [];
-  const need = needList.map(canonRole);
-  const have = canonRole(userRoleRaw);
+  const jwtRole = roleFromJwt(token);
+  const have = canonRole(storedRole || jwtRole);
 
-  const { search } = location;
-  const urlToken = new URLSearchParams(search).get("token");
+  // allow deep-link with ?token=
+  const urlToken = new URLSearchParams(location.search).get("token");
   if (!token && urlToken) return children;
 
+  // not logged in → send to proper login
   if (!token) {
     const wantsAdmin = need.some((r) => r.includes("ADMIN"));
     return (
@@ -120,14 +144,18 @@ function RequireAuth({ children, role }) {
     );
   }
 
+  // no role needed
   if (!need.length) return children;
 
-  if (need.includes(have)) return children;
+  // role match or SUPER can access THEATER routes
+  if (need.includes(have) || (have === "SUPER_ADMIN" && need.includes("THEATER_ADMIN"))) {
+    return children;
+  }
 
-  if (have === "SUPER_ADMIN" && need.includes("THEATER_ADMIN")) return children;
-
+  // any admin-ish role gets routed to /admin hub
   if (have.includes("ADMIN")) return <Navigate to="/admin" replace />;
 
+  // fallback
   return <Navigate to="/" replace />;
 }
 
@@ -143,10 +171,18 @@ function ScrollToTop() {
 /** Role-aware base routes */
 function AdminIndex() {
   const auth = useAuth() || {};
+  const token =
+    auth.token ||
+    (typeof window !== "undefined" && localStorage.getItem("token"));
+
   const r = canonRole(
-    auth.role ?? (Array.isArray(auth.roles) ? auth.roles[0] : undefined)
+    auth.role ??
+      (Array.isArray(auth.roles) ? auth.roles[0] : undefined) ??
+      roleFromJwt(token)
   );
-  if (r === "SUPER_ADMIN") return <Navigate to="/admin/theaters" replace />;
+
+  // ✅ Change: SUPER_ADMIN goes straight to Admin Dashboard
+  if (r === "SUPER_ADMIN") return <Navigate to="/admin/dashboard" replace />;
   if (r === "THEATER_ADMIN") return <Navigate to="/theatre/my" replace />;
   return <Navigate to="/" replace />;
 }
@@ -254,7 +290,7 @@ export default function App() {
               }
             />
 
-            {/* SUPER_ADMIN actual dashboard (optional) */}
+            {/* SUPER_ADMIN actual dashboard */}
             <Route
               path="/admin/dashboard"
               element={
@@ -389,8 +425,6 @@ export default function App() {
                 </RequireAuth>
               }
             />
-
-            {/* ✅ Correct Theatre Admins route (was pointing to AdminTheaters) */}
             <Route
               path="/super/theatre-admins"
               element={
@@ -399,7 +433,6 @@ export default function App() {
                 </RequireAuth>
               }
             />
-            {/* Optional admin alias */}
             <Route
               path="/admin/theatre-admins"
               element={
@@ -408,7 +441,6 @@ export default function App() {
                 </RequireAuth>
               }
             />
-
             <Route
               path="/super/movies"
               element={
