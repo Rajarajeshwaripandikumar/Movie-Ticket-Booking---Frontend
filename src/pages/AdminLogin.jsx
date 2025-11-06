@@ -45,7 +45,7 @@ function PrimaryBtn({ children, className = "", ...props }) {
 
 /* -------------------------------- Component -------------------------------- */
 export default function AdminLogin() {
-  const { loginAdmin } = useAuth();   // ✅ use the correct login
+  const { loginAdmin } = useAuth();
   const [email, setEmail] = useState("admin@cinema.com");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -54,6 +54,7 @@ export default function AdminLogin() {
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
+
     if (!email || !password) {
       setError("Please enter both email and password.");
       return;
@@ -61,7 +62,7 @@ export default function AdminLogin() {
 
     setBusy(true);
     try {
-      await loginAdmin(email, password); // ✅ THIS DOES EVERYTHING
+      await loginAdmin(email, password);
     } catch (err) {
       const msg = err?.response?.data?.message || err?.message || "Login failed";
       setError(msg);
@@ -71,7 +72,7 @@ export default function AdminLogin() {
   }
 
   return (
-    <main className="min-h-screen w-screen bg-slate-50 text-slate-900 flex items-center justify-center px-6 py-10">
+    <main className="min-h-screen w-full overflow-x-hidden bg-slate-50 text-slate-900 flex items-center justify-center px-6 py-10">
       <Card className="w-full max-w-md overflow-hidden">
 
         <div className="px-6 py-5 border-b border-slate-200 bg-white/60 backdrop-blur">
@@ -83,7 +84,11 @@ export default function AdminLogin() {
           <Field id="admin-email" label="Email" type="email" value={email} onChange={setEmail} />
           <Field id="admin-password" label="Password" type="password" value={password} onChange={setPassword} />
 
-          {error && <Card className="p-3 bg-rose-50 border-rose-200 text-rose-700 font-semibold">⚠️ {error}</Card>}
+          {error && (
+            <Card className="p-3 bg-rose-50 border-rose-200 text-rose-700 font-semibold">
+              ⚠️ {error}
+            </Card>
+          )}
 
           <PrimaryBtn type="submit" disabled={busy} className="w-full">
             {busy ? "Logging in…" : "Login"}
