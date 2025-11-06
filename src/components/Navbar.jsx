@@ -40,7 +40,6 @@ function GhostLink({ active, className = "", ...rest }) {
 }
 
 /* -------------------------- Menu Navigation Item -------------------------- */
-// Uses NavLink so React Router handles navigation reliably.
 function MenuItemLink({ to, children, onClick }) {
   return (
     <NavLink
@@ -55,7 +54,6 @@ function MenuItemLink({ to, children, onClick }) {
 }
 
 /* ------------------------------ Menu Groups ------------------------------ */
-// Super admin menu (no separate Admin Profile here)
 const SUPER_ADMIN_LINKS = [
   { label: "Manage Theaters", to: "/admin/theaters" },
   { label: "Manage Movies", to: "/admin/movies" },
@@ -70,7 +68,7 @@ const THEATRE_ADMIN_LINKS = [
   { label: "My Theatre", to: "/theatre/my" },
   { label: "Manage Screens", to: "/theatre/screens" },
   { label: "Manage Showtimes", to: "/theatre/showtimes" },
-  { label: "Update Pricing", to: "/admin/pricing" },
+  { label: "Update Pricing", to: "/theatre/pricing" }, // ✅ fixed path
   { label: "Theatre Reports", to: "/theatre/reports" },
 ];
 
@@ -84,9 +82,8 @@ export default function Navbar() {
   const [open, setOpen] = useState(false);
   const [adminMenu, setAdminMenu] = useState(false);
 
-  // ✅ Any admin (super or theatre) goes to AdminProfile.jsx (/admin/profile).
-  // Non-admin users go to /profile.
-  const profilePath = isAdmin ? "/admin/profile" : "/profile";
+  // ✅ Route to the correct profile per role
+  const profilePath = isSuperAdmin ? "/admin/profile" : isTheatreAdmin ? "/theatre/profile" : "/profile";
 
   return (
     <header className="w-full sticky top-0 z-50">
@@ -148,7 +145,7 @@ export default function Navbar() {
 
                   {adminMenu && (
                     <Card className="absolute right-0 mt-2 w-60 p-1 bg-white">
-                      {/* Single profile entry that routes by role */}
+                      {/* Profile routes by role */}
                       <MenuItemLink to={profilePath} onClick={() => setAdminMenu(false)}>
                         Profile
                       </MenuItemLink>
