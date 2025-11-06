@@ -16,6 +16,14 @@ const titleOf = (x) => x?.title ?? x?.name ?? x?.movieTitle ?? "Untitled";
 const whenOf = (s) => s?.startsAt || s?.startAt || s?.startTime || s?.time || s?.datetime;
 const priceOf = (s) => s?.basePrice ?? s?.price ?? s?.amount ?? "";
 
+function decodeJwt(t) {
+  try {
+    return JSON.parse(atob(String(t ?? "").split(".")[1])) || {};
+  } catch {
+    return {};
+  }
+}
+
 async function tryGet(endpoints) {
   for (const ep of endpoints.filter(Boolean)) {
     try {
@@ -25,15 +33,14 @@ async function tryGet(endpoints) {
   }
   return undefined;
 }
+
 async function tryPatchPut(endpoints, body) {
   for (const ep of endpoints.filter(Boolean)) {
     try {
-      const r = await api.patch(ep, body);
-      return r?.data ?? r;
+      return (await api.patch(ep, body))?.data;
     } catch {
       try {
-        const r2 = await api.put(ep, body);
-        return r2?.data ?? r2;
+        return (await api.put(ep, body))?.data;
       } catch {}
     }
   }
@@ -41,7 +48,12 @@ async function tryPatchPut(endpoints, body) {
 }
 
 export default function TheatrePricing() {
-  const { user, isTheatreAdmin } = useAuth() || {};
+  const { token, adminToken, user, isTheatreAdmin } = useAuth() || {};
+  const activeToken = adminToken || token || null;                // ✅ use correct token
+
+  const payload = decodeJwt(activeToken);
+
+  // ✅ Unified theatreId resolution (same logic as TheatreDashboard)
   const theatreId =
     user?.theatreId ||
     user?.theaterId ||
@@ -49,6 +61,8 @@ export default function TheatrePricing() {
     user?.theatre?._id ||
     user?.theater?.id ||
     user?.theater?._id ||
+    payload?.theatreId ||
+    payload?.theaterId ||
     "";
 
   const [showtimes, setShowtimes] = useState([]);
@@ -76,18 +90,19 @@ export default function TheatrePricing() {
       setMsg("");
       try {
         const ts = Date.now();
-        // Load showtimes for this theatre
+
         const stData =
           (await tryGet([
             `/theatre/showtimes?theatre=${theatreId}&ts=${ts}`,
             `/admin/showtimes?theatre=${theatreId}&ts=${ts}`,
             `/showtimes?theatre=${theatreId}&ts=${ts}`,
           ])) || [];
+
         if (!mounted) return;
+
         const items = A(stData);
         setShowtimes(items);
 
-        // default selection
         if (items.length) {
           const first = items[0];
           const id = idOf(first);
@@ -123,8 +138,8 @@ export default function TheatrePricing() {
     setMsg("");
     setMsgType("info");
 
-    // optimistic UI
     const prev = [...showtimes];
+
     setShowtimes((xs) =>
       xs.map((x) => ((x._id || x.id) === selectedId ? { ...x, basePrice: Number(price) } : x))
     );
@@ -142,13 +157,16 @@ export default function TheatrePricing() {
       setMsgType("success");
       setMsg("Pricing updated.");
     } catch (e) {
-      // rollback
       setShowtimes(prev);
       setMsgType("error");
       setMsg(e?.response?.data?.message || "Failed to save pricing.");
     }
   };
 
+  // ✅ Correct login guard
+  if (!activeToken) return <Navigate to="/admin/login" replace />;
+
+  // ✅ Correct role guard
   if (!isTheatreAdmin) {
     return <div className="p-8 text-center text-rose-600 font-semibold">Access Denied</div>;
   }
@@ -224,7 +242,7 @@ export default function TheatrePricing() {
           </div>
         </Card>
 
-        {/* quick table view */}
+        {/* Quick table */}
         <Card>
           <h2 className="font-semibold mb-3">Showtimes</h2>
           {loading ? (
