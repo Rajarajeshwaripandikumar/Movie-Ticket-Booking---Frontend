@@ -1,6 +1,6 @@
-// src/pages/AdminTheaters.jsx — CLEAN + API FIXED (o1m2 backend)
+// src/pages/AdminTheaters.jsx — CLEAN + API FIXED + EDIT/DELETE ICONS
 
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import api from "../api/api";
 import { useAuth } from "../context/AuthContext";
 import {
@@ -62,18 +62,19 @@ function SecondaryBtn({ children, className = "", ...props }) {
 /* Helpers */
 const DEFAULT_IMG =
   "data:image/svg+xml;utf8," +
-  encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' width='84' height='84'><rect width='100%' height='100%' fill='#e5e7eb'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' font-family='Arial' font-size='12' fill='#6b7280'>No Image</text></svg>`);
+  encodeURIComponent(
+    `<svg xmlns='http://www.w3.org/2000/svg' width='84' height='84'><rect width='100%' height='100%' fill='#e5e7eb'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' font-family='Arial' font-size='12' fill='#6b7280'>No Image</text></svg>`
+  );
 
 const parseAmenities = (raw) =>
   !raw ? [] : Array.isArray(raw) ? raw : String(raw).split(",").map((s) => s.trim()).filter(Boolean);
 
 const normalizeTheater = (t = {}) => ({
   ...t,
-  amenities: parseAmenities(t.amenities),
+  amenities: [...new Set(parseAmenities(t.amenities))],
   imageUrl: t.imageUrl || t.poster || t.image || "",
 });
 
-/* Component */
 export default function AdminTheaters() {
   const { token } = useAuth() || {};
   const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
@@ -84,8 +85,6 @@ export default function AdminTheaters() {
   const [city, setCity] = useState("");
   const [address, setAddress] = useState("");
   const [amenitiesList, setAmenitiesList] = useState([]);
-  const [originalAmenities, setOriginalAmenities] = useState([]);
-  const [amenitiesDirty, setAmenitiesDirty] = useState(false);
   const [amenityInput, setAmenityInput] = useState("");
 
   const [imageFile, setImageFile] = useState(null);
@@ -98,13 +97,19 @@ export default function AdminTheaters() {
 
   useEffect(() => {
     if (token) loadTheaters();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   async function loadTheaters() {
     try {
-      const { data } = await api.get("/theaters", { params: { ts: Date.now() } });
+      // ✅ include authHeaders; and correct /theaters path (not /theatres)
+      const { data } = await api.get("/theaters", {
+        headers: authHeaders,
+        params: { ts: Date.now() },
+      });
       const arr = data?.theaters || data?.data || data;
       setTheaters((Array.isArray(arr) ? arr : []).map(normalizeTheater));
+      setMsg("");
     } catch {
       setMsg("⚠️ Failed to load theaters");
       setMsgType("error");
@@ -117,8 +122,6 @@ export default function AdminTheaters() {
     setCity("");
     setAddress("");
     setAmenitiesList([]);
-    setOriginalAmenities([]);
-    setAmenitiesDirty(false);
     setAmenityInput("");
     setImageFile(null);
     setPreview("");
@@ -133,10 +136,14 @@ export default function AdminTheaters() {
     setPreviewKey((k) => k + 1);
   }
 
-  /* ✅ FIXED: Create → POST /theaters/admin */
+  /* Create → POST /theaters/admin */
   async function createTheater(e) {
     e.preventDefault();
-    if (!name.trim() || !city.trim()) return setMsg("⚠️ Name & City required"), setMsgType("error");
+    if (!name.trim() || !city.trim()) {
+      setMsg("⚠️ Name & City required");
+      setMsgType("error");
+      return;
+    }
 
     setLoading(true);
     try {
@@ -147,19 +154,21 @@ export default function AdminTheaters() {
       amenitiesList.forEach((a) => fd.append("amenities", a));
       if (imageFile) fd.append("image", imageFile);
 
-      const res = await api.post("/theaters/admin", fd, { headers: { ...authHeaders, "Content-Type": "multipart/form-data" } });
+      const res = await api.post("/theaters/admin", fd, {
+        headers: { ...authHeaders, "Content-Type": "multipart/form-data" },
+      });
       setTheaters((t) => [normalizeTheater(res.data?.data || res.data), ...t]);
       resetForm();
       setMsg("✅ Theater created!");
       setMsgType("success");
-    } catch (err) {
+    } catch {
       setMsg("❌ Create failed");
       setMsgType("error");
     }
     setLoading(false);
   }
 
-  /* ✅ FIXED: Update → PUT /theaters/admin/:id */
+  /* Update → PUT /theaters/admin/:id */
   async function updateTheaterById() {
     if (!selectedId) return;
     setLoading(true);
@@ -171,8 +180,12 @@ export default function AdminTheaters() {
       amenitiesList.forEach((a) => fd.append("amenities", a));
       if (imageFile) fd.append("image", imageFile);
 
-      const res = await api.put(`/theaters/admin/${selectedId}`, fd, { headers: { ...authHeaders, "Content-Type": "multipart/form-data" } });
-      setTheaters((list) => list.map((t) => (t._id === selectedId ? normalizeTheater(res.data?.data || res.data) : t)));
+      const res = await api.put(`/theaters/admin/${selectedId}`, fd, {
+        headers: { ...authHeaders, "Content-Type": "multipart/form-data" },
+      });
+      setTheaters((list) =>
+        list.map((t) => (t._id === selectedId ? normalizeTheater(res.data?.data || res.data) : t))
+      );
       setMsg("✅ Updated!");
       setMsgType("success");
     } catch {
@@ -182,7 +195,7 @@ export default function AdminTheaters() {
     setLoading(false);
   }
 
-  /* ✅ FIXED: Delete → DELETE /theaters/admin/:id */
+  /* Delete → DELETE /theaters/admin/:id */
   async function deleteTheater(id) {
     if (!confirm("Delete this theater?")) return;
     try {
@@ -206,7 +219,6 @@ export default function AdminTheaters() {
     setCity(t.city || "");
     setAddress(t.address || "");
     setAmenitiesList(t.amenities || []);
-    setOriginalAmenities(t.amenities || []);
     setPreview(t.imageUrl || "");
     setImageFile(null);
     setPreviewKey((k) => k + 1);
@@ -216,49 +228,80 @@ export default function AdminTheaters() {
   return (
     <main className="min-h-screen w-full bg-slate-50 py-8 px-4 md:px-6 text-slate-900">
       <div className="max-w-7xl mx-auto space-y-5">
-
         <Card className="p-5 flex justify-between items-center">
-          <h1 className="text-2xl font-extrabold flex gap-2"><Building2 className="h-6 w-6" /> Manage Theaters</h1>
-          <SecondaryBtn onClick={loadTheaters}><RefreshCcw className="h-4 w-4" /> Refresh</SecondaryBtn>
+          <h1 className="text-2xl font-extrabold flex gap-2">
+            <Building2 className="h-6 w-6" /> Manage Theaters
+          </h1>
+          <SecondaryBtn onClick={loadTheaters}>
+            <RefreshCcw className="h-4 w-4" /> Refresh
+          </SecondaryBtn>
         </Card>
 
         {msg && (
-          <Card className={`p-3 font-semibold ${
-            msgType === "success" ? "bg-emerald-50 border-emerald-200 text-emerald-700" :
-            msgType === "error" ? "bg-rose-50 border-rose-200 text-rose-700" :
-            "bg-blue-50 border-blue-200 text-blue-700"
-          }`}>
+          <Card
+            className={`p-3 font-semibold ${
+              msgType === "success"
+                ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                : msgType === "error"
+                ? "bg-rose-50 border-rose-200 text-rose-700"
+                : "bg-blue-50 border-blue-200 text-blue-700"
+            }`}
+          >
             {msg}
           </Card>
         )}
 
         <div className="grid md:grid-cols-2 gap-5">
-
           {/* Form */}
           <Card className="p-5 space-y-4">
-            <h2 className="text-lg font-extrabold border-b pb-2 flex gap-2"><PlusCircle className="h-5 w-5" /> Add / Edit Theater</h2>
+            <h2 className="text-lg font-extrabold border-b pb-2 flex gap-2">
+              <PlusCircle className="h-5 w-5" /> Add / Edit Theater
+            </h2>
 
             <form onSubmit={createTheater} className="space-y-4">
-
               {selectedId && <p className="text-xs text-slate-600">Editing: {selectedId}</p>}
 
-              <Field as="select" label="Select Existing Name" value={names.includes(name) ? name : ""} onChange={(e) => fillFromTheater(theaters.find((t)=>t.name===e.target.value))} icon={Building2}>
+              <Field
+                as="select"
+                label="Select Existing Name"
+                value={names.includes(name) ? name : ""}
+                onChange={(e) => fillFromTheater(theaters.find((t) => t.name === e.target.value))}
+                icon={Building2}
+              >
                 <option value="">—</option>
-                {names.map((n) => <option key={n}>{n}</option>)}
+                {names.map((n) => (
+                  <option key={n}>{n}</option>
+                ))}
               </Field>
 
               <Field label="Theater Name" value={name} onChange={(e) => setName(e.target.value)} icon={Building2} required />
 
-              <Field as="select" label="Select Existing City" value={cities.includes(city) ? city : ""} onChange={(e) => fillFromTheater(theaters.find((t)=>t.city===e.target.value))} icon={MapPin}>
+              <Field
+                as="select"
+                label="Select Existing City"
+                value={cities.includes(city) ? city : ""}
+                onChange={(e) => fillFromTheater(theaters.find((t) => t.city === e.target.value))}
+                icon={MapPin}
+              >
                 <option value="">—</option>
-                {cities.map((c) => <option key={c}>{c}</option>)}
+                {cities.map((c) => (
+                  <option key={c}>{c}</option>
+                ))}
               </Field>
 
               <Field label="City" value={city} onChange={(e) => setCity(e.target.value)} icon={MapPin} required />
 
-              <Field as="select" label="Select Existing Address" value={addresses.includes(address) ? address : ""} onChange={(e) => fillFromTheater(theaters.find((t)=>t.address===e.target.value))} icon={Home}>
+              <Field
+                as="select"
+                label="Select Existing Address"
+                value={addresses.includes(address) ? address : ""}
+                onChange={(e) => fillFromTheater(theaters.find((t) => t.address === e.target.value))}
+                icon={Home}
+              >
                 <option value="">—</option>
-                {addresses.map((a) => <option key={a}>{a}</option>)}
+                {addresses.map((a) => (
+                  <option key={a}>{a}</option>
+                ))}
               </Field>
 
               <Field label="Address" value={address} onChange={(e) => setAddress(e.target.value)} icon={Home} />
@@ -273,51 +316,100 @@ export default function AdminTheaters() {
                 ))}
               </div>
 
-              <Field placeholder="Press Enter to add amenities" value={amenityInput}
+              <Field
+                placeholder="Press Enter to add amenities"
+                value={amenityInput}
                 onChange={(e) => setAmenityInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (amenityInput.trim()) setAmenitiesList([...amenitiesList, amenityInput.trim()]); setAmenityInput(""); } }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    const val = amenityInput.trim();
+                    if (val && !amenitiesList.includes(val)) setAmenitiesList([...amenitiesList, val]);
+                    setAmenityInput("");
+                  }
+                }}
                 icon={ListChecks}
               />
 
               <label className="text-xs font-semibold">Poster</label>
               <div className="flex gap-3 items-center">
                 <img key={previewKey} src={preview || DEFAULT_IMG} className="w-20 h-20 rounded-xl object-cover border" />
-                <input type="file" accept="image/*" className="hidden" id="img" onChange={onPickFile}/>
-                <label htmlFor="img"><SecondaryBtn><ImageIcon className="h-4 w-4" /> Choose</SecondaryBtn></label>
+                <input type="file" accept="image/*" className="hidden" id="img" onChange={onPickFile} />
+                <label htmlFor="img">
+                  <SecondaryBtn>
+                    <ImageIcon className="h-4 w-4" /> Choose
+                  </SecondaryBtn>
+                </label>
               </div>
 
               <div className="flex gap-2">
-                <PrimaryBtn type="submit" disabled={loading}>{loading ? "Saving..." : "Create"}</PrimaryBtn>
-                <PrimaryBtn onClick={updateTheaterById} disabled={!selectedId || loading} className="bg-[#0A66C2] hover:bg-[#0956A3]"><PencilLine className="h-4 w-4" /> Update</PrimaryBtn>
-                <SecondaryBtn onClick={resetForm}>Clear</SecondaryBtn>
+                <PrimaryBtn type="submit" disabled={loading}>
+                  {loading ? "Saving..." : "Create"}
+                </PrimaryBtn>
+                <PrimaryBtn onClick={updateTheaterById} disabled={!selectedId || loading} className="bg-[#0A66C2] hover:bg-[#0956A3]">
+                  <PencilLine className="h-4 w-4" /> Update
+                </PrimaryBtn>
+                <SecondaryBtn type="button" onClick={resetForm}>
+                  Clear
+                </SecondaryBtn>
               </div>
             </form>
           </Card>
 
           {/* List */}
           <Card className="p-5">
-            <h2 className="text-lg font-extrabold border-b pb-2 mb-4 flex gap-2"><Building2 className="h-5 w-5" /> Existing Theaters</h2>
+            <h2 className="text-lg font-extrabold border-b pb-2 mb-4 flex gap-2">
+              <Building2 className="h-5 w-5" /> Existing Theaters
+            </h2>
 
             <ul className="space-y-3 max-h-[60vh] overflow-auto pr-1">
               {theaters.map((t) => (
-                <li key={t._id} className={`flex justify-between items-center border rounded-2xl p-3 shadow-sm ${selectedId === t._id ? "ring-2 ring-[#0071DC]" : ""}`}>
+                <li
+                  key={t._id}
+                  className={`flex justify-between items-center border rounded-2xl p-3 shadow-sm ${
+                    selectedId === t._id ? "ring-2 ring-[#0071DC]" : ""
+                  }`}
+                >
                   <div className="flex items-center gap-3">
-                    <img src={t.imageUrl || DEFAULT_IMG} className="w-14 h-14 rounded-xl object-cover border" />
+                    <img
+                      src={t.imageUrl || DEFAULT_IMG}
+                      onError={(e) => {
+                        e.currentTarget.src = DEFAULT_IMG;
+                      }}
+                      className="w-14 h-14 rounded-xl object-cover border"
+                    />
                     <div>
                       <div className="font-extrabold">{t.name}</div>
-                      <div className="text-sm text-slate-700">{t.city} • {t.address || "—"}</div>
+                      <div className="text-sm text-slate-700">
+                        {t.city} • {t.address || "—"}
+                      </div>
                       <div className="text-xs text-slate-500">{t.amenities?.join(" • ") || "No amenities"}</div>
                     </div>
                   </div>
+
+                  {/* Actions: Edit + Delete */}
                   <div className="flex gap-2">
-                    <PrimaryBtn onClick={() => fillFromTheater(t)} className="px-3 py-1 text-sm">Use</PrimaryBtn>
-                    <SecondaryBtn onClick={() => deleteTheater(t._id)} className="px-3 py-1 text-sm"><Trash2 className="h-4 w-4" /></SecondaryBtn>
+                    <button
+                      type="button"
+                      title="Edit"
+                      onClick={() => fillFromTheater(t)}
+                      className="inline-flex items-center justify-center w-9 h-9 rounded-full border border-slate-300 bg-white hover:bg-slate-50"
+                    >
+                      <PencilLine className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      title="Delete"
+                      onClick={() => deleteTheater(t._id)}
+                      className="inline-flex items-center justify-center w-9 h-9 rounded-full border border-rose-300 bg-white hover:bg-rose-50 text-rose-600"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
                   </div>
                 </li>
               ))}
             </ul>
           </Card>
-
         </div>
       </div>
     </main>
