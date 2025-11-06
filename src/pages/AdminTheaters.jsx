@@ -1,4 +1,4 @@
-// src/pages/AdminTheaters.jsx — CLEAN + API FIXED + EDIT/DELETE ICONS
+// src/pages/AdminTheaters.jsx — CLEAN + API REALIGNED TO /admin/theaters + EDIT/DELETE
 
 import { useEffect, useMemo, useState } from "react";
 import api from "../api/api";
@@ -71,6 +71,7 @@ const parseAmenities = (raw) =>
 
 const normalizeTheater = (t = {}) => ({
   ...t,
+  _id: t._id || t.id,
   amenities: [...new Set(parseAmenities(t.amenities))],
   imageUrl: t.imageUrl || t.poster || t.image || "",
 });
@@ -87,7 +88,8 @@ export default function AdminTheaters() {
   const [amenitiesList, setAmenitiesList] = useState([]);
   const [amenityInput, setAmenityInput] = useState("");
 
-  const [imageFile, setImageFile] = useState(null);
+  // (Optional) Poster UI kept for later; backend endpoints below use JSON
+  const [imageFile] = useState(null);
   const [preview, setPreview] = useState("");
   const [previewKey, setPreviewKey] = useState(0);
 
@@ -102,12 +104,12 @@ export default function AdminTheaters() {
 
   async function loadTheaters() {
     try {
-      // ✅ include authHeaders; and correct /theaters path (not /theatres)
-      const { data } = await api.get("/theaters", {
+      // ✅ use /admin/theaters (matches backend)
+      const { data } = await api.get("/admin/theaters", {
         headers: authHeaders,
         params: { ts: Date.now() },
       });
-      const arr = data?.theaters || data?.data || data;
+      const arr = Array.isArray(data) ? data : (data?.theaters || data?.data || []);
       setTheaters((Array.isArray(arr) ? arr : []).map(normalizeTheater));
       setMsg("");
     } catch {
@@ -123,20 +125,20 @@ export default function AdminTheaters() {
     setAddress("");
     setAmenitiesList([]);
     setAmenityInput("");
-    setImageFile(null);
     setPreview("");
     setPreviewKey((k) => k + 1);
   }
 
+  // (UI only) keep preview responsive if you later wire image upload
   function onPickFile(e) {
     const f = e.target.files?.[0];
     if (!f) return;
-    setImageFile(f);
-    setPreview(URL.createObjectURL(f));
+    const url = URL.createObjectURL(f);
+    setPreview(url);
     setPreviewKey((k) => k + 1);
   }
 
-  /* Create → POST /theaters/admin */
+  /* Create → POST /admin/theaters (JSON) */
   async function createTheater(e) {
     e.preventDefault();
     if (!name.trim() || !city.trim()) {
@@ -147,17 +149,19 @@ export default function AdminTheaters() {
 
     setLoading(true);
     try {
-      const fd = new FormData();
-      fd.append("name", name);
-      fd.append("city", city);
-      fd.append("address", address);
-      amenitiesList.forEach((a) => fd.append("amenities", a));
-      if (imageFile) fd.append("image", imageFile);
+      const payload = {
+        name: name.trim(),
+        city: city.trim(),
+        address: address.trim(),
+        amenities: amenitiesList, // backend may ignore if not in schema
+      };
 
-      const res = await api.post("/theaters/admin", fd, {
-        headers: { ...authHeaders, "Content-Type": "multipart/form-data" },
+      const res = await api.post("/admin/theaters", payload, {
+        headers: { ...authHeaders, "Content-Type": "application/json" },
       });
-      setTheaters((t) => [normalizeTheater(res.data?.data || res.data), ...t]);
+
+      const created = Array.isArray(res.data) ? res.data[0] : res.data;
+      setTheaters((t) => [normalizeTheater(created), ...t]);
       resetForm();
       setMsg("✅ Theater created!");
       setMsgType("success");
@@ -168,24 +172,30 @@ export default function AdminTheaters() {
     setLoading(false);
   }
 
-  /* Update → PUT /theaters/admin/:id */
+  /* Update → PUT /admin/theaters/:id (JSON) */
   async function updateTheaterById() {
     if (!selectedId) return;
+    if (!name.trim() || !city.trim()) {
+      setMsg("⚠️ Name & City required");
+      setMsgType("error");
+      return;
+    }
+
     setLoading(true);
     try {
-      const fd = new FormData();
-      fd.append("name", name);
-      fd.append("city", city);
-      fd.append("address", address);
-      amenitiesList.forEach((a) => fd.append("amenities", a));
-      if (imageFile) fd.append("image", imageFile);
+      const payload = {
+        name: name.trim(),
+        city: city.trim(),
+        address: address.trim(),
+        amenities: amenitiesList,
+      };
 
-      const res = await api.put(`/theaters/admin/${selectedId}`, fd, {
-        headers: { ...authHeaders, "Content-Type": "multipart/form-data" },
+      const res = await api.put(`/admin/theaters/${selectedId}`, payload, {
+        headers: { ...authHeaders, "Content-Type": "application/json" },
       });
-      setTheaters((list) =>
-        list.map((t) => (t._id === selectedId ? normalizeTheater(res.data?.data || res.data) : t))
-      );
+
+      const updated = Array.isArray(res.data) ? res.data[0] : res.data;
+      setTheaters((list) => list.map((t) => (t._id === selectedId ? normalizeTheater(updated) : t)));
       setMsg("✅ Updated!");
       setMsgType("success");
     } catch {
@@ -195,11 +205,11 @@ export default function AdminTheaters() {
     setLoading(false);
   }
 
-  /* Delete → DELETE /theaters/admin/:id */
+  /* Delete → DELETE /admin/theaters/:id */
   async function deleteTheater(id) {
     if (!confirm("Delete this theater?")) return;
     try {
-      await api.delete(`/theaters/admin/${id}`, { headers: authHeaders });
+      await api.delete(`/admin/theaters/${id}`, { headers: authHeaders });
       setTheaters((t) => t.filter((x) => x._id !== id));
       if (selectedId === id) resetForm();
     } catch {
@@ -220,7 +230,6 @@ export default function AdminTheaters() {
     setAddress(t.address || "");
     setAmenitiesList(t.amenities || []);
     setPreview(t.imageUrl || "");
-    setImageFile(null);
     setPreviewKey((k) => k + 1);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -331,7 +340,8 @@ export default function AdminTheaters() {
                 icon={ListChecks}
               />
 
-              <label className="text-xs font-semibold">Poster</label>
+              {/* Poster picker kept for future; not sent to backend in this version */}
+              <label className="text-xs font-semibold">Poster (UI only)</label>
               <div className="flex gap-3 items-center">
                 <img key={previewKey} src={preview || DEFAULT_IMG} className="w-20 h-20 rounded-xl object-cover border" />
                 <input type="file" accept="image/*" className="hidden" id="img" onChange={onPickFile} />
