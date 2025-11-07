@@ -62,15 +62,15 @@ function normalizeRole(raw) {
 function defaultLandingFor(role) {
   const r = normalizeRole(role);
   if (r === "SUPER_ADMIN") return "/admin/dashboard";
-  if (r === "THEATRE_ADMIN") return "/theatre/my";
+  if (r === "THEATRE_ADMIN") return "/admin";       // send theatre admins into admin shell
   if (r === "ADMIN") return "/admin/dashboard";
   return "/";
 }
 
 /* ---------------- small storage helpers ---------------- */
 const LS_KEYS = {
-  token: "token",                 // normal user token
-  adminToken: "adminToken",       // admin-only token
+  token: "token", // normal user token
+  adminToken: "adminToken", // admin-only token
   role: "role",
   roles: "roles",
   perms: "perms",
@@ -378,23 +378,32 @@ export function AuthProvider({ children }) {
   /* Derived flags */
   const isLoggedIn = !!activeToken;
   const isSuperAdmin = role === "SUPER_ADMIN";
-  const isAdmin = role === "ADMIN";                 // keep ADMIN literal only
+  const isAdmin = role === "ADMIN"; // literal ADMIN only
   const isTheatreAdmin = role === "THEATRE_ADMIN";
   const isUser = role === "USER";
+
+  // Any admin-like role (what your guards should use)
+  const isAdminLike = isSuperAdmin || isTheatreAdmin || isAdmin;
 
   /* RBAC helpers */
   const hasRole = useCallback((r) => role === r, [role]);
   const hasAnyRole = useCallback((...rs) => rs.some((r) => r && r === role), [role]);
 
   /* Who can open the admin shell (panel) */
-  const canOpenAdminPanel = isSuperAdmin || isTheatreAdmin;
+  const canOpenAdminPanel = isAdminLike;
 
   /* Redirect on load (only when logged in) */
   useEffect(() => {
     if (isLoggedIn && role) {
       const here = window.location.pathname;
       const target = defaultLandingFor(role);
-      if ((here === "/" || here === "/login" || here === "/admin") && here !== target) {
+      if (
+        (here === "/" ||
+          here === "/login" ||
+          here === "/admin" ||
+          here === "/admin/login") &&
+        here !== target
+      ) {
         window.location.replace(target);
       }
     }
@@ -403,7 +412,7 @@ export function AuthProvider({ children }) {
   /* Context value */
   const value = useMemo(
     () => ({
-      // raw tokens for debugging if needed
+      // raw tokens (optional debugging)
       token,
       adminToken,
 
@@ -415,16 +424,17 @@ export function AuthProvider({ children }) {
       setUser,
 
       // actions
-      login,        // user login (/auth/login)
-      loginAdmin,   // admin login (/auth/admin-login or /auth/admin/login)
+      login, // user login (/auth/login)
+      loginAdmin, // admin login (/auth/admin-login or /auth/admin/login)
       logout,
       refreshProfile,
 
       // flags
       isLoggedIn,
       isSuperAdmin,
-      isAdmin,            // literal ADMIN
+      isAdmin, // literal ADMIN
       isTheatreAdmin,
+      isAdminLike,
       isUser,
       canOpenAdminPanel,
 
@@ -447,6 +457,7 @@ export function AuthProvider({ children }) {
       isSuperAdmin,
       isAdmin,
       isTheatreAdmin,
+      isAdminLike,
       isUser,
       canOpenAdminPanel,
       hasRole,
