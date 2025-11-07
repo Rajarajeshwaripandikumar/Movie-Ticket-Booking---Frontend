@@ -1,20 +1,12 @@
-// src/pages/AdminTheaters.jsx — fully updated & cache-safe
+// src/pages/AdminTheaters.jsx — uses /theaters/admin/theaters first, robust fallbacks
 
 import { useEffect, useMemo, useState } from "react";
 import api from "../api/api";
 import { useAuth } from "../context/AuthContext";
 import {
-  Building2,
-  MapPin,
-  Home,
-  ListChecks,
-  Image as ImageIcon,
-  RefreshCcw,
-  PlusCircle,
-  Trash2,
-  X,
-  Check,
-  PencilLine,
+  Building2, MapPin, Home, ListChecks,
+  Image as ImageIcon, RefreshCcw, PlusCircle,
+  Trash2, X, Check, PencilLine,
 } from "lucide-react";
 
 /* ----------------------------- UI Primitives ------------------------------ */
@@ -109,49 +101,46 @@ export default function AdminTheaters() {
   const [msgType, setMsgType] = useState("info");
   const [loading, setLoading] = useState(false);
 
+  // Try immediately and once more shortly after, because role can hydrate async
   useEffect(() => {
-    if (token) loadTheaters();
-  }, [token, isSuperAdmin]);
+    loadTheaters();
+    const t = setTimeout(loadTheaters, 250);
+    return () => clearTimeout(t);
+  }, [token, role]);
 
   async function loadTheaters() {
     setMsg("");
     setMsgType("info");
     setListLoading(true);
     try {
-      let data;
+      // Prefer the new admin endpoint for both SUPER_ADMIN and THEATRE_ADMIN.
+      // Fall back to legacy routes if needed.
+      const order = [
+        "/theaters/admin/theaters",   // ✅ your new backend list
+        "/theaters/admin/list",       // alias
+        isSuperAdmin ? "/superadmin/theaters" : "/theaters/mine",
+        isSuperAdmin ? "/theaters/mine" : "/superadmin/theaters",
+      ];
 
-      if (isSuperAdmin) {
-        data = await api.getFresh("/superadmin/theaters");
-      } else {
+      let arr = [];
+      for (const path of order) {
         try {
-          data = await api.getFresh("/theaters/mine");
+          const resp = await api.getFresh(path);
+          const tmp =
+            resp?.data?.theaters ??
+            resp?.data ??
+            resp?.theaters ??
+            resp ?? [];
+          if (Array.isArray(tmp) && tmp.length) {
+            arr = tmp;
+            break;
+          }
         } catch {
-          data = await api.getFresh("/superadmin/theaters");
+          // keep trying next option
         }
       }
 
-      // ✅ Correct shape extraction:
-      let arr =
-        data?.data?.theaters ??
-        data?.data ??
-        data?.theaters ??
-        data ??
-        [];
-
-      // Retry once for safety
-      if (!arr.length) {
-        const retryUrl = isSuperAdmin ? "/superadmin/theaters" : "/theaters/mine";
-        const retryData = await api.getFresh(retryUrl);
-        const rArr =
-          retryData?.data?.theaters ??
-          retryData?.data ??
-          retryData?.theaters ??
-          retryData ??
-          [];
-        if (Array.isArray(rArr) && rArr.length) arr = rArr;
-      }
-
-      setTheaters(arr.map(normalizeTheater));
+      setTheaters((arr || []).map(normalizeTheater));
     } catch (e) {
       setMsg(e?.response?.data?.message || "⚠️ Failed to load theaters");
       setMsgType("error");
@@ -185,7 +174,11 @@ export default function AdminTheaters() {
       setMsgType("error");
       return;
     }
-    if (!isSuperAdmin) return;
+    if (!isSuperAdmin) {
+      setMsg("❌ Only SUPER_ADMIN can create theaters");
+      setMsgType("error");
+      return;
+    }
 
     setLoading(true);
     try {
@@ -204,7 +197,12 @@ export default function AdminTheaters() {
   }
 
   async function updateTheaterById() {
-    if (!selectedId || !isSuperAdmin) return;
+    if (!selectedId) return;
+    if (!isSuperAdmin) {
+      setMsg("❌ Only SUPER_ADMIN can update theaters");
+      setMsgType("error");
+      return;
+    }
 
     setLoading(true);
     try {
@@ -222,7 +220,11 @@ export default function AdminTheaters() {
   }
 
   async function deleteTheater(id) {
-    if (!isSuperAdmin) return;
+    if (!isSuperAdmin) {
+      setMsg("❌ Only SUPER_ADMIN can delete theaters");
+      setMsgType("error");
+      return;
+    }
     if (!window.confirm("Delete this theater?")) return;
 
     try {
@@ -239,7 +241,10 @@ export default function AdminTheaters() {
 
   const names = useMemo(() => [...new Set(theaters.map((t) => t.name))], [theaters]);
   const cities = useMemo(() => [...new Set(theaters.map((t) => t.city))], [theaters]);
-  const addresses = useMemo(() => [...new Set(theaters.map((t) => t.address).filter(Boolean))], [theaters]);
+  const addresses = useMemo(
+    () => [...new Set(theaters.map((t) => t.address).filter(Boolean))],
+    [theaters]
+  );
 
   function fillFromTheater(t) {
     t = normalizeTheater(t);
@@ -307,7 +312,13 @@ export default function AdminTheaters() {
                 ))}
               </Field>
 
-              <Field label="Theater Name" value={name} onChange={(e) => setName(e.target.value)} icon={Building2} required />
+              <Field
+                label="Theater Name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                icon={Building2}
+                required
+              />
 
               <Field
                 as="select"
