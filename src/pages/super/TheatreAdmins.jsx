@@ -13,8 +13,8 @@ import {
   Check,
 } from "lucide-react";
 
-/* ---------- Config: flip this if your backend path differs ---------- */
-const BASE = "/superadmin/theatre-admins"; // change to "/admin/theatre-admins" if needed
+/* ---------- Config: backend paths ---------- */
+const BASE = "/superadmin/theater-admins"; // ✅ fixed spelling (theater)
 const THEATERS_LIST = "/admin/theaters";   // used to populate theatre dropdown
 
 /* ---------- Tiny UI ---------- */
@@ -127,12 +127,13 @@ export default function TheatreAdmins() {
     try {
       const payload = { name, theatreId };
       if (password.trim()) payload.password = password.trim(); // optional reset
+
+      // If your backend uses PATCH, change put -> patch:
+      // const { data } = await api.patch(`${BASE}/${editingId}`, payload);
       const { data } = await api.put(`${BASE}/${editingId}`, payload);
 
       // normalize id field from API
-      const updated = data?.id
-        ? { ...data, _id: data.id }
-        : data;
+      const updated = data?.id ? { ...data, _id: data.id } : data;
 
       setAdmins((prev) =>
         prev.map((row) =>
