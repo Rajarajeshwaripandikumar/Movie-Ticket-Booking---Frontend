@@ -1,4 +1,3 @@
-// frontend/src/api/api.js
 import axios from "axios";
 
 /* -------------------------------- BASE URL -------------------------------- */
@@ -128,6 +127,22 @@ function getAuthFromStorage() {
   return { token: null, role: undefined };
 }
 
+/* ------------------------------ Origin helpers --------------------------- */
+function originOf(url) {
+  try {
+    const u = new URL(url);
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return "";
+  }
+}
+const BASE_ORIGIN = originOf(BASE_URL);
+const SELF_ORIGIN = typeof window !== "undefined" ? window.location.origin : "";
+const SAME_ORIGIN = BASE_ORIGIN && SELF_ORIGIN && BASE_ORIGIN === SELF_ORIGIN;
+
+// Feature flag: allow sending the role header even on cross-origin (defaults false)
+const SEND_ROLE_HEADER = String(import.meta.env?.VITE_SEND_ROLE_HEADER || "false").toLowerCase() === "true";
+
 /* ------------------------------ Axios instance --------------------------- */
 const api = axios.create({
   baseURL: AXIOS_BASE, // callers pass paths WITHOUT "/api"
@@ -163,7 +178,7 @@ api.setAuthToken = (token) => {
   }
 };
 
-// 1) Attach token from storage (and X-Role) if present
+// 1) Attach token and (conditionally) x-role if same-origin or opted-in
 api.interceptors.request.use((config) => {
   try {
     const { token, role } = getAuthFromStorage();
@@ -172,16 +187,27 @@ api.interceptors.request.use((config) => {
       if (!config.headers.Authorization)
         config.headers.Authorization = `Bearer ${token}`;
 
+      // Only send role header when safe to do so
       const normalizedRole = canonRole(role);
-      if (normalizedRole && !config.headers["X-Role"]) {
-        config.headers["X-Role"] = normalizedRole;
+      const allowRoleHeader = SAME_ORIGIN || SEND_ROLE_HEADER;
+
+      // Normalize header name to lowercase to minimize CORS issues
+      if (allowRoleHeader && normalizedRole) {
+        // remove any legacy casing, then set lowercase
+        delete config.headers["X-Role"]; 
+        config.headers["x-role"] = normalizedRole;
+      } else {
+        // ensure we DO NOT send the role header on cross-origin requests
+        delete config.headers["X-Role"];
+        delete config.headers["x-role"];
       }
 
       if (API_DEBUG && String(config.url || "").includes("/analytics/")) {
         console.debug("[api] analytics request with auth →", {
           url: config.url,
           hasAuth: !!config.headers.Authorization,
-          role: normalizedRole,
+          role: allowRoleHeader ? normalizedRole : "(suppressed for CORS)",
+          sameOrigin: SAME_ORIGIN,
         });
       }
     } else if (API_DEBUG && String(config.url || "").includes("/analytics/")) {
@@ -293,7 +319,7 @@ export function primeAuth(token, role) {
 
     localStorage.setItem("auth", JSON.stringify({ token, role: canonical || role }));
     api.setAuthToken(token); // prime axios instance immediately
-    if (API_DEBUG) console.debug("[api] primeAuth set", { role: canonical });
+    if (API_DEBUG) console.debug("[api] primeAuth set", { role: canonical, sameOrigin: SAME_ORIGIN });
   } catch (e) {
     console.error("[api] primeAuth failed:", e);
   }
