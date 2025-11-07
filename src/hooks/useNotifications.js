@@ -1,124 +1,141 @@
 // src/hooks/useNotifications.js
 import { useEffect, useRef } from "react";
+import api from "../api/api";
 
 /**
- * Server-Sent Events (SSE) notifications hook
+ * SSE Notifications Hook
  *
- * - Opens EventSource to /api/notifications/stream with ?token=<JWT>[&seed=1]
- * - Listens to the named "notification" event (your backend emits this)
- * - Handles the default message channel as a fallback
- * - Safer reconnect with jitter; pauses when tab hidden
+ * Backend: GET /api/notifications/stream?token=<JWT>&seed=1&limit=20&scope=user|admin
  *
  * Usage:
- *   useNotifications((n) => toast(`${n.title}: ${n.message}`), { seed: true });
+ *   const { close, reconnect } = useNotifications(
+ *     (n) => console.log("notif", n),
+ *     { scope: "user", seed: true, seedLimit: 20 }
+ *   );
  */
 export default function useNotifications(onMessage, options = {}) {
   const {
-    baseUrl = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080",
+    // Prefer same base used by axios client
+    baseUrl =
+      (api?.defaults?.baseURL || import.meta.env.VITE_API_BASE || import.meta.env.VITE_API_BASE_URL || "")
+        .replace(/\/+$/, ""),
+    // Most projects mount router at /api/notifications
     path = "/api/notifications/stream",
-    withCredentials = false, // only for cookie-auth servers
-    seed = true,             // request recent items on connect
+    withCredentials = false,    // set true only if you use cookie auth (not needed when using ?token=)
+    seed = true,                // request recent on connect
+    seedLimit = 20,             // how many to seed
+    scope = "user",             // "user" | "admin"
+    extraQuery = {},            // any extra query params
     onOpen,
     onError,
   } = options;
 
   const esRef = useRef(null);
-  const retryRef = useRef({
-    attempts: 0,
-    closed: false,
-    t: null,
+  const retryRef = useRef({ attempts: 0, closed: false, t: null });
+
+  // Expose simple controls via return value
+  const controlsRef = useRef({
+    close: () => {
+      retryRef.current.closed = true;
+      clearTimeout(retryRef.current.t);
+      try { esRef.current?.close(); } catch {}
+      esRef.current = null;
+    },
+    reconnect: () => {
+      retryRef.current.closed = false;
+      clearTimeout(retryRef.current.t);
+      retryRef.current.attempts = 0;
+      connect();
+    },
+    getEventSource: () => esRef.current,
   });
 
-  useEffect(() => {
+  // Build and memo connect fn without deps (we capture latest via refs)
+  const connect = () => {
     const token = localStorage.getItem("token");
     if (!token) {
-      console.warn("[SSE] No auth token found; skipping notifications.");
+      console.warn("[SSE] No auth token; skipping notifications.");
       return;
     }
+    if (retryRef.current.closed) return;
 
-    const scheduleReconnect = () => {
-      // backoff: 0s, 2s, 4s, 6s ... max 10s + small jitter
-      const baseDelay = Math.min(retryRef.current.attempts * 2000, 10000);
-      const jitter = Math.floor(Math.random() * 400); // 0-400ms
-      const delay = baseDelay + jitter;
-      if (delay) console.log(`[SSE] Reconnecting in ${(delay / 1000).toFixed(1)}s...`);
-      clearTimeout(retryRef.current.t);
-      retryRef.current.t = setTimeout(connect, delay);
+    const qs = new URLSearchParams({
+      token,
+      ...(seed ? { seed: "1" } : {}),
+      ...(seedLimit ? { limit: String(seedLimit) } : {}),
+      ...(scope ? { scope } : {}),
+    });
+
+    for (const [k, v] of Object.entries(extraQuery || {})) {
+      if (v != null) qs.set(k, String(v));
+    }
+
+    const url = `${baseUrl}${path}?${qs.toString()}`;
+    const es = new EventSource(url, { withCredentials });
+    esRef.current = es;
+
+    es.onopen = (e) => {
+      retryRef.current.attempts = 0;
+      onOpen?.(e);
+      // console.log("[SSE] connected");
     };
 
-    const connect = () => {
-      if (retryRef.current.closed) return;
+    // Primary named event
+    const handleEvent = (e) => {
+      if (!e?.data) return;
+      try {
+        onMessage?.(JSON.parse(e.data));
+      } catch {
+        onMessage?.(e.data);
+      }
+    };
 
-      const url = `${baseUrl}${path}?token=${encodeURIComponent(token)}${seed ? "&seed=1" : ""}`;
-      const es = new EventSource(url, { withCredentials });
-      esRef.current = es;
+    es.addEventListener("notification", handleEvent);
+    es.addEventListener("connected", () => {}); // hello event, no-op
+    es.onmessage = handleEvent; // fallback default channel
 
-      es.onopen = (e) => {
-        retryRef.current.attempts = 0;
-        onOpen?.(e);
-        console.log("[SSE] connected");
-      };
+    es.onerror = (e) => {
+      onError?.(e);
+      try { es.close(); } catch {}
+      esRef.current = null;
 
-      // Named "notification" events (primary path)
-      es.addEventListener("notification", (e) => {
-        try {
-          const data = JSON.parse(e.data);
-          onMessage?.(data);
-        } catch {
-          onMessage?.(e.data);
-        }
-      });
+      // Backoff: 1s, 2s, 4s, ... capped at 30s + 0–400ms jitter
+      const next = Math.min(1000 * 2 ** Math.max(0, retryRef.current.attempts), 30000);
+      const jitter = Math.floor(Math.random() * 400);
+      const delay = next + jitter;
 
-      // Optional "connected" hello event
-      es.addEventListener("connected", (e) => {
-        // No-op, but useful for debugging
-        // console.log("[SSE] hello", e.data);
-      });
+      // If hidden, wait until visible to schedule reconnect
+      if (document.visibilityState === "hidden") {
+        const onVisible = () => {
+          document.removeEventListener("visibilitychange", onVisible);
+          if (retryRef.current.closed) return;
+          retryRef.current.attempts++;
+          clearTimeout(retryRef.current.t);
+          retryRef.current.t = setTimeout(connect, delay);
+        };
+        document.addEventListener("visibilitychange", onVisible);
+        return;
+      }
 
-      // Fallback default channel (if server ever sends without event name)
-      es.onmessage = (e) => {
-        try {
-          const data = JSON.parse(e.data);
-          onMessage?.(data);
-        } catch {
-          onMessage?.(e.data);
-        }
-      };
-
-      es.onerror = (e) => {
-        // This fires on any network drop (including server restarts/timeouts)
-        console.warn("[SSE] error", e);
-        onError?.(e);
-
-        // Close and schedule reconnect (EventSource also retries, but we prefer our timing)
-        try { es.close(); } catch {}
-        esRef.current = null;
-
-        // If tab is hidden, don't hammer the server; wait until visible
-        if (document.visibilityState === "hidden") {
-          const onVisible = () => {
-            document.removeEventListener("visibilitychange", onVisible);
-            retryRef.current.attempts++;
-            scheduleReconnect();
-          };
-          document.addEventListener("visibilitychange", onVisible);
-          return;
-        }
-
+      if (!retryRef.current.closed) {
         retryRef.current.attempts++;
-        scheduleReconnect();
-      };
+        clearTimeout(retryRef.current.t);
+        retryRef.current.t = setTimeout(connect, delay);
+      }
     };
+  };
 
+  useEffect(() => {
     connect();
-
     return () => {
       retryRef.current.closed = true;
       clearTimeout(retryRef.current.t);
-      if (esRef.current) {
-        try { esRef.current.close(); } catch {}
-        esRef.current = null;
-      }
+      try { esRef.current?.close(); } catch {}
+      esRef.current = null;
     };
-  }, [onMessage, baseUrl, path, withCredentials, seed, onOpen, onError]);
+    // Deliberately not depending on function refs; options are read once on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return controlsRef.current;
 }
