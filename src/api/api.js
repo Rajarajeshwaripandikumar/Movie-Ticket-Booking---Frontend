@@ -192,22 +192,20 @@ function isNoStoreRequest(config) {
   return NO_STORE_ENDPOINTS.some((re) => re.test(url));
 }
 
-// ⭐ Interceptor to force fresh fetch on no-store endpoints
+// ⭐ Interceptor to keep notifications fresh without custom cache headers
 api.interceptors.request.use((config) => {
   try {
     if (String(config.method || "get").toLowerCase() === "get" && isNoStoreRequest(config)) {
       config.headers = config.headers || {};
-      // Strong signals to avoid cached revalidation responses
-      config.headers["Cache-Control"] = "no-store";
-      config.headers["Pragma"] = "no-cache";
+      // Do NOT send Cache-Control/Pragma from browser (avoids CORS preflight issues)
       // Strip conditional headers that enable 304
       delete config.headers["If-None-Match"];
       delete config.headers["If-Modified-Since"];
-      // Cache-buster
+      // Cache-buster param so we bypass any intermediary cache
       config.params = { ...(config.params || {}), _ts: Date.now() };
 
       if (API_DEBUG) {
-        console.debug("[api] no-store GET →", { url: config.url, params: config.params });
+        console.debug("[api] fresh GET →", { url: config.url, params: config.params });
       }
     }
   } catch {}
@@ -373,7 +371,7 @@ export function primeAuth(token, role) {
 api.getFresh = async (url, cfg = {}) => {
   const res = await api.get(url, {
     ...(cfg || {}),
-    headers: { ...(cfg.headers || {}), "Cache-Control": "no-store", Pragma: "no-cache" },
+    // No custom cache headers here; rely on server no-store + _ts param
     params: { ...(cfg.params || {}), _ts: Date.now() },
   });
   return res.data;
