@@ -30,7 +30,7 @@ import AccountInfo from "./pages/AccountInfo";
 import ProfilePage from "./pages/ProfilePage";
 import MyBookings from "./pages/MyBookings";
 
-// Admin pages (SUPER_ADMIN)
+// Admin pages
 import AdminDashboard from "./pages/AdminDashboard";
 import AdminTheaters from "./pages/AdminTheaters";
 import AdminScreens from "./pages/AdminScreens";
@@ -48,12 +48,13 @@ import TheatreShowtimes from "./pages/theatre/TheatreShowtimes";
 import TheatreProfile from "./pages/theatre/TheatreProfile";
 import TheatreReports from "./pages/theatre/TheatreReports";
 import TheatrePricing from "./pages/theatre/TheatrePricing";
-import TheatreView from "./pages/theatre/TheatreView"; // unified profile + seat picker
+import TheatreView from "./pages/theatre/TheatreView";
 
 // Super-only
 import TheatreAdmins from "./pages/super/TheatreAdmins";
 
-// Helpers
+/* --------------------------------- Helpers -------------------------------- */
+
 function NotFound() {
   return <p className="p-6 text-center text-gray-500">404 — Page not found</p>;
 }
@@ -70,25 +71,29 @@ function RequireAuth({ children, role }) {
   const auth = useAuth();
   const location = useLocation();
 
-  const currentRole = normalizeRole(auth?.role);
-  const adminToken = auth?.adminToken;
-  const userToken = auth?.token;
+  // role from context OR localStorage (fallback)
+  const currentRole =
+    normalizeRole(auth?.role || auth?.user?.role || (typeof window !== "undefined" && localStorage.getItem("role")));
 
-  // No token → send to correct login
-  if (!userToken && !adminToken) {
+  // ✅ consider both context and localStorage tokens
+  const ctxAdmin = auth?.adminToken;
+  const ctxUser = auth?.token;
+  const lsAdmin = typeof window !== "undefined" ? localStorage.getItem("adminToken") : null;
+  const lsUser = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+
+  const hasToken = Boolean(ctxAdmin || ctxUser || lsAdmin || lsUser);
+
+  // No token → decide the right login page based on the required role(s)
+  if (!hasToken) {
     const needsAdmin = Array.isArray(role)
       ? role.map(normalizeRole).some((r) => ["SUPER_ADMIN", "THEATRE_ADMIN", "ADMIN"].includes(r))
       : ["SUPER_ADMIN", "THEATRE_ADMIN", "ADMIN"].includes(normalizeRole(role));
     return (
-      <Navigate
-        to={needsAdmin ? "/admin/login" : "/login"}
-        replace
-        state={{ from: location }}
-      />
+      <Navigate to={needsAdmin ? "/admin/login" : "/login"} replace state={{ from: location }} />
     );
   }
 
-  // Route has no role requirement → allow
+  // If route has no role requirement → allow
   if (!role) return children;
 
   const allowed = Array.isArray(role) ? role.map(normalizeRole) : [normalizeRole(role)];
@@ -113,7 +118,7 @@ function ScrollToTop() {
 
 function AdminIndex() {
   const auth = useAuth();
-  const role = normalizeRole(auth?.role);
+  const role = normalizeRole(auth?.role || (typeof window !== "undefined" && localStorage.getItem("role")));
   if (role === "SUPER_ADMIN" || role === "ADMIN") return <Navigate to="/admin/dashboard" replace />;
   if (role === "THEATRE_ADMIN") return <Navigate to="/theatre/my" replace />;
   return <Navigate to="/" replace />;
@@ -125,13 +130,13 @@ function TheatreIndex() {
 
 function RoleProfileRouter() {
   const { role } = useAuth() || {};
-  const r = normalizeRole(role);
+  const r = normalizeRole(role || (typeof window !== "undefined" && localStorage.getItem("role")));
   if (r === "SUPER_ADMIN" || r === "ADMIN") return <Navigate to="/admin/profile" replace />;
   if (r === "THEATRE_ADMIN") return <Navigate to="/theatre/profile" replace />;
   return <Navigate to="/profile" replace />;
 }
 
-/* ---------------------------------- App ---------------------------------- */
+/* ----------------------------------- App ---------------------------------- */
 
 export default function App() {
   return (
