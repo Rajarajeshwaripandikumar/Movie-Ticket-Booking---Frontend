@@ -59,11 +59,13 @@ function NotFound() {
   return <p className="p-6 text-center text-gray-500">404 — Page not found</p>;
 }
 
-/** Normalize roles and alias US/UK theatre spelling */
+/** Normalize roles; canonical is THEATRE_ADMIN */
 const normalizeRole = (r) => {
   if (!r) return null;
-  const x = String(r).trim().toUpperCase().replace(/\s+/g, "_");
-  if (x === "THEATER_ADMIN") return "THEATRE_ADMIN";
+  let x = String(r).trim().toUpperCase().replace(/\s+/g, "_");
+  if (x.startsWith("ROLE_")) x = x.slice(5);
+  if (x === "THEATER_ADMIN") x = "THEATRE_ADMIN";
+  if (x === "SUPERADMIN") x = "SUPER_ADMIN";
   return x;
 };
 
@@ -80,27 +82,28 @@ function RequireAuth({ children, role }) {
   const auth = useAuth();
   const location = useLocation();
 
-  // Role from context string → fallback to booleans → fallback to localStorage
+  // ✅ Loading gate: do not redirect while hydrating
+  if (auth?.loading) return null; // or a spinner component
+
+  // Current role from ctx → booleans → storage
   const roleFromCtx = normalizeRole(auth?.role || auth?.user?.role) || inferRole(auth);
   const roleFromStorage =
     typeof window !== "undefined" ? normalizeRole(localStorage.getItem("role")) : null;
   const currentRole = normalizeRole(roleFromCtx || roleFromStorage);
 
-  // Consider BOTH context flags and stored tokens
-  const ctxAdmin = auth?.adminToken;
-  const ctxUser = auth?.token;
-  const lsAdmin = typeof window !== "undefined" ? localStorage.getItem("adminToken") : null;
-  const lsUser =
-    typeof window !== "undefined"
-      ? localStorage.getItem("token") ||
+  // Session detection (context signals first, then storage)
+  const hasSession =
+    !!auth?.isAuthenticated ||
+    !!auth?.isLoggedIn ||
+    !!auth?.adminToken ||
+    !!auth?.token ||
+    (typeof window !== "undefined" &&
+      (localStorage.getItem("adminToken") ||
+        localStorage.getItem("token") ||
         localStorage.getItem("accessToken") ||
-        localStorage.getItem("jwt")
-      : null;
+        localStorage.getItem("jwt")));
 
-  // ✅ If context says logged in, trust it
-  const hasSession = Boolean(auth?.isLoggedIn || ctxAdmin || ctxUser || lsAdmin || lsUser);
-
-  // No session → choose the right login page
+  // Not logged in → pick correct login page
   if (!hasSession) {
     const needsAdmin = Array.isArray(role)
       ? role.map(normalizeRole).some((r) => ["SUPER_ADMIN", "THEATRE_ADMIN", "ADMIN"].includes(r))
@@ -114,12 +117,12 @@ function RequireAuth({ children, role }) {
     );
   }
 
-  // If route has no role requirement → allow
+  // No role required → allow
   if (!role) return children;
 
   const allowed = Array.isArray(role) ? role.map(normalizeRole) : [normalizeRole(role)];
 
-  // SUPER_ADMIN always allowed
+  // SUPER_ADMIN override
   if (currentRole === "SUPER_ADMIN") return children;
 
   // Direct match
@@ -292,10 +295,11 @@ export default function App() {
                 </RequireAuth>
               }
             />
+            {/* 🔓 Allow Screens for SUPER_ADMIN, ADMIN, THEATRE_ADMIN */}
             <Route
               path="/admin/screens"
               element={
-                <RequireAuth role="SUPER_ADMIN">
+                <RequireAuth role={["SUPER_ADMIN", "ADMIN", "THEATRE_ADMIN"]}>
                   <AdminShell>
                     <AdminScreens />
                   </AdminShell>
