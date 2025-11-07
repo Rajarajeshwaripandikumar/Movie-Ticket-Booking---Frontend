@@ -120,8 +120,9 @@ function RequireAuth({ children, role }) {
   if (currentRole === "SUPER_ADMIN") return children;
   if (currentRole && allowed.includes(currentRole)) return children;
 
+  // If role blocked for this route, send each role to its home
   if (currentRole === "THEATRE_ADMIN") return <Navigate to="/theatre/my" replace />;
-  if (currentRole === "ADMIN") return <Navigate to="/admin/dashboard" replace />;
+  if (currentRole === "ADMIN") return <Navigate to="/admin/screens" replace />; // ⬅️ fixed
   return <Navigate to="/" replace />;
 }
 
@@ -137,7 +138,8 @@ function AdminIndex() {
     normalizeRole(auth?.role || auth?.user?.role) ||
     inferRole(auth) ||
     (typeof window !== "undefined" && normalizeRole(localStorage.getItem("role")));
-  if (role === "SUPER_ADMIN" || role === "ADMIN") return <Navigate to="/admin/dashboard" replace />;
+  if (role === "SUPER_ADMIN") return <Navigate to="/admin/dashboard" replace />;
+  if (role === "ADMIN") return <Navigate to="/admin/screens" replace />; // ⬅️ fixed
   if (role === "THEATRE_ADMIN") return <Navigate to="/theatre/my" replace />;
   return <Navigate to="/" replace />;
 }
@@ -154,7 +156,8 @@ function RedirectIfAdmin({ children }) {
     inferRole(auth) ||
     (typeof window !== "undefined" && normalizeRole(localStorage.getItem("role")));
 
-  if (role === "SUPER_ADMIN" || role === "ADMIN") return <Navigate to="/admin/dashboard" replace />;
+  if (role === "SUPER_ADMIN") return <Navigate to="/admin/dashboard" replace />;
+  if (role === "ADMIN") return <Navigate to="/admin/screens" replace />; // ⬅️ fixed
   if (role === "THEATRE_ADMIN") return <Navigate to="/theatre/my" replace />;
   return children;
 }
@@ -165,7 +168,8 @@ function RoleProfileRouter() {
     normalizeRole(auth?.role || auth?.user?.role) ||
     inferRole(auth) ||
     (typeof window !== "undefined" && normalizeRole(localStorage.getItem("role")));
-  if (r === "SUPER_ADMIN" || r === "ADMIN") return <Navigate to="/admin/profile" replace />;
+  if (r === "SUPER_ADMIN") return <Navigate to="/admin/dashboard" replace />;
+  if (r === "ADMIN") return <Navigate to="/admin/screens" replace />; // ⬅️ fixed
   if (r === "THEATRE_ADMIN") return <Navigate to="/theatre/profile" replace />;
   return <Navigate to="/profile" replace />;
 }
@@ -191,7 +195,7 @@ export default function App() {
             <Route path="/login" element={<Login role="USER" />} />
             <Route path="/register" element={<Register role="USER" />} />
 
-            {/* IMPORTANT: wrap admin login so authenticated admins can't see it */}
+            {/* Admin login: redirect if already authenticated */}
             <Route
               path="/admin/login"
               element={
@@ -309,7 +313,7 @@ export default function App() {
                 </RequireAuth>
               }
             />
-            {/* 🔓 Allow Screens for SUPER_ADMIN, ADMIN, THEATRE_ADMIN */}
+            {/* 🔓 Screens allowed for SUPER_ADMIN, ADMIN, THEATRE_ADMIN */}
             <Route
               path="/admin/screens"
               element={
@@ -340,7 +344,7 @@ export default function App() {
                 </RequireAuth>
               }
             />
-            {/* OPEN admin profile to SUPER_ADMIN + ADMIN */}
+            {/* Admin profile open to SUPER_ADMIN + ADMIN */}
             <Route
               path="/admin/profile"
               element={
@@ -405,7 +409,6 @@ export default function App() {
                 </RequireAuth>
               }
             />
-            {/* Optional alias */}
             <Route
               path="/theatre/dashboard"
               element={
