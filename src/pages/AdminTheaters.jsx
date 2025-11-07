@@ -1,4 +1,4 @@
-// src/pages/AdminTheaters.jsx — CLEAN + /admin/theaters + Role Guard + Better Errors
+// src/pages/AdminTheaters.jsx — CLEAN + Role-aware Refresh (ALL vs MINE) + Better Errors
 
 import { useEffect, useMemo, useState } from "react";
 import api from "../api/api";
@@ -17,7 +17,7 @@ import {
   PencilLine,
 } from "lucide-react";
 
-/* UI */
+/* ----------------------------- UI Primitives ------------------------------ */
 const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
   <Tag className={`bg-white border border-slate-200 rounded-2xl shadow-sm ${className}`} {...rest}>
     {children}
@@ -59,7 +59,7 @@ function SecondaryBtn({ children, className = "", ...props }) {
   );
 }
 
-/* Helpers */
+/* -------------------------------- Helpers --------------------------------- */
 const DEFAULT_IMG =
   "data:image/svg+xml;utf8," +
   encodeURIComponent(
@@ -76,10 +76,19 @@ const normalizeTheater = (t = {}) => ({
   imageUrl: t.imageUrl || t.poster || t.image || "",
 });
 
+// Safely read role from different shapes the app might use
+const getRole = (u) => u?.role || u?.data?.role || u?.data?.user?.role;
+const ROLE = {
+  SUPER_ADMIN: "SUPER_ADMIN",
+  THEATRE_ADMIN: "THEATRE_ADMIN",
+  ADMIN: "ADMIN",
+  USER: "USER",
+};
+
 export default function AdminTheaters() {
   const { token, user } = useAuth() || {};
-  const role = user?.role || user?.data?.role;
-  const isSuperAdmin = role === "SUPER_ADMIN";
+  const role = getRole(user);
+  const isSuperAdmin = role === ROLE.SUPER_ADMIN;
 
   const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
   const [theaters, setTheaters] = useState([]);
@@ -101,16 +110,42 @@ export default function AdminTheaters() {
 
   useEffect(() => {
     if (token) loadTheaters();
+    // re-run when the role becomes known so SUPER_ADMIN sees ALL on first load
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+  }, [token, isSuperAdmin]);
+
+  // Role-aware URL selection:
+  // - SUPER_ADMIN → all theaters
+  // - others → only their theaters
+  const getFetchUrlAndParams = () => {
+    // Prefer distinct endpoints if your backend has them:
+    //   /theaters                (ALL)  [SUPER_ADMIN only]
+    //   /admin/theaters/mine     (MINE) [THEATRE_ADMIN & SUPER can reuse]
+    // If you only have /admin/theaters, use a scope param.
+    const supportsSeparateEndpoints = true; // flip to false if you don't have /theaters or /admin/theaters/mine
+
+    if (supportsSeparateEndpoints) {
+      return {
+        url: isSuperAdmin ? "/theaters" : "/admin/theaters/mine",
+        params: { ts: Date.now() },
+      };
+    }
+    // Fallback: single endpoint w/ scope
+    return {
+      url: "/admin/theaters",
+      params: { ts: Date.now(), scope: isSuperAdmin ? "all" : "mine" },
+    };
+  };
 
   async function loadTheaters() {
     try {
-      // ✅ use /admin/theaters (matches backend)
-      const { data } = await api.get("/admin/theaters", {
+      const { url, params } = getFetchUrlAndParams();
+
+      const { data } = await api.get(url, {
         headers: authHeaders,
-        params: { ts: Date.now() },
+        params,
       });
+
       const arr = Array.isArray(data) ? data : (data?.theaters || data?.data || []);
       setTheaters((Array.isArray(arr) ? arr : []).map(normalizeTheater));
       setMsg("");
@@ -139,6 +174,8 @@ export default function AdminTheaters() {
     setPreview(url);
     setPreviewKey((k) => k + 1);
   }
+
+  /* ------------------------------ CRUD Actions ----------------------------- */
 
   /* Create → POST /admin/theaters (JSON) */
   async function createTheater(e) {
@@ -170,8 +207,6 @@ export default function AdminTheaters() {
       const created = Array.isArray(res.data) ? res.data[0] : res.data;
       const createdNorm = normalizeTheater(created);
       setTheaters((t) => [createdNorm, ...t]);
-      // Optional: auto-select and scroll into view
-      // fillFromTheater(createdNorm);
       resetForm();
       setMsg("✅ Theater created!");
       setMsgType("success");
@@ -227,7 +262,7 @@ export default function AdminTheaters() {
       setMsgType("error");
       return;
     }
-    if (!confirm("Delete this theater?")) return;
+    if (!window.confirm("Delete this theater?")) return;
     try {
       await api.delete(`/admin/theaters/${id}`, { headers: authHeaders });
       setTheaters((t) => t.filter((x) => x._id !== id));
@@ -238,9 +273,13 @@ export default function AdminTheaters() {
     }
   }
 
+  /* ------------------------------ Derivations ------------------------------ */
   const names = useMemo(() => [...new Set(theaters.map((t) => t.name))], [theaters]);
   const cities = useMemo(() => [...new Set(theaters.map((t) => t.city))], [theaters]);
-  const addresses = useMemo(() => [...new Set(theaters.map((t) => t.address).filter(Boolean))], [theaters]);
+  const addresses = useMemo(
+    () => [...new Set(theaters.map((t) => t.address).filter(Boolean))],
+    [theaters]
+  );
 
   function fillFromTheater(t) {
     t = normalizeTheater(t);
@@ -254,6 +293,7 @@ export default function AdminTheaters() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
+  /* --------------------------------- UI ------------------------------------ */
   return (
     <main className="min-h-screen w-full bg-slate-50 py-8 px-4 md:px-6 text-slate-900">
       <div className="max-w-7xl mx-auto space-y-5">
@@ -261,9 +301,14 @@ export default function AdminTheaters() {
           <h1 className="text-2xl font-extrabold flex gap-2">
             <Building2 className="h-6 w-6" /> Manage Theaters
           </h1>
-          <SecondaryBtn onClick={loadTheaters}>
-            <RefreshCcw className="h-4 w-4" /> Refresh
-          </SecondaryBtn>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-slate-500">
+              Showing: {isSuperAdmin ? "All theaters" : "Your theaters"}
+            </span>
+            <SecondaryBtn onClick={loadTheaters}>
+              <RefreshCcw className="h-4 w-4" /> Refresh
+            </SecondaryBtn>
+          </div>
         </Card>
 
         {msg && (
@@ -303,7 +348,13 @@ export default function AdminTheaters() {
                 ))}
               </Field>
 
-              <Field label="Theater Name" value={name} onChange={(e) => setName(e.target.value)} icon={Building2} required />
+              <Field
+                label="Theater Name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                icon={Building2}
+                required
+              />
 
               <Field
                 as="select"
@@ -340,7 +391,10 @@ export default function AdminTheaters() {
                 {amenitiesList.map((a) => (
                   <span key={a} className="px-2 py-1 text-xs border rounded-full flex items-center gap-1">
                     <Check className="h-3 w-3 text-emerald-600" /> {a}
-                    <X className="h-3 w-3 cursor-pointer" onClick={() => setAmenitiesList(amenitiesList.filter((x) => x !== a))} />
+                    <X
+                      className="h-3 w-3 cursor-pointer"
+                      onClick={() => setAmenitiesList(amenitiesList.filter((x) => x !== a))}
+                    />
                   </span>
                 ))}
               </div>
