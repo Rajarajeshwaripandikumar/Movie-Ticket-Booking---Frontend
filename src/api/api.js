@@ -13,6 +13,7 @@ export const BASE_URL = normalizeHost(RAW_BASE);
 const API_PREFIX = "/api";
 export const AXIOS_BASE = `${BASE_URL}${API_PREFIX}`;
 
+// Heads-up for common typo in the backend hostname (o1m2 vs 0lm2)
 if (RAW_BASE.toLowerCase().includes("-0lm2.")) {
   console.warn(
     "[api] WARNING: VITE_API_BASE looks like '0lm2' (zero + ell). " +
@@ -29,8 +30,8 @@ function canonRole(r) {
   let v = String(raw).toUpperCase().trim().replace(/\s+/g, "_");
   if (v.startsWith("ROLE_")) v = v.slice(5);
 
-  // ✅ DO NOT remap ADMIN → SUPER_ADMIN (bug in old code)
-  // ✅ Canonicalize THEATER/THEATRE to THEATRE_ADMIN (UK spelling used app-wide)
+  // ✅ Do not remap ADMIN → SUPER_ADMIN
+  // ✅ Canonicalize various admin labels to THEATRE_ADMIN (UK spelling used app-wide)
   const map = {
     SUPERADMIN: "SUPER_ADMIN",
     THEATER_ADMIN: "THEATRE_ADMIN",
@@ -59,7 +60,8 @@ function readCookie(name) {
 
 /**
  * Attempts to find an auth token + role across common storage locations.
- * Now checks explicit admin/user keys and top-level role.
+ * Checks explicit admin/user keys, consolidated "auth" JSON, aliases, cookies,
+ * and finally the axios default header as a last resort.
  */
 function getAuthFromStorage() {
   try {
@@ -117,7 +119,7 @@ function getAuthFromStorage() {
       readCookie("accessToken");
     if (cookieToken) return { token: cookieToken, role: topRole || undefined };
 
-    // 5) Last resort: axios default header
+    // 5) Last resort: axios default header (if primed elsewhere)
     const authHeader = api?.defaults?.headers?.common?.Authorization;
     if (typeof authHeader === "string") {
       const m = authHeader.match(/^Bearer\s+(.+)$/i);
@@ -138,20 +140,20 @@ function originOf(url) {
 }
 const BASE_ORIGIN = originOf(BASE_URL);
 const SELF_ORIGIN = typeof window !== "undefined" ? window.location.origin : "";
-const SAME_ORIGIN = BASE_ORIGIN && SELF_ORIGIN && BASE_ORIGIN === SELF_ORIGIN;
+export const SAME_ORIGIN = BASE_ORIGIN && SELF_ORIGIN && BASE_ORIGIN === SELF_ORIGIN;
 
 // Feature flag: allow sending the role header even on cross-origin (defaults false)
 const SEND_ROLE_HEADER = String(import.meta.env?.VITE_SEND_ROLE_HEADER || "false").toLowerCase() === "true";
 
 /* ------------------------------ Axios instance --------------------------- */
 const api = axios.create({
-  baseURL: AXIOS_BASE, // callers pass paths WITHOUT "/api"
+  baseURL: AXIOS_BASE, // callers pass paths WITHOUT "/api" (e.g., "/admin/me")
   timeout: 60000,
   withCredentials: false,
   headers: { Accept: "application/json" },
 });
 
-// keep FormData content-type dynamic
+// Keep FormData content-type dynamic; let browser set boundaries
 if (api.defaults && api.defaults.headers) {
   ["post", "put", "patch"].forEach((m) => {
     if (api.defaults.headers[m]) delete api.defaults.headers[m]["Content-Type"];
@@ -159,7 +161,7 @@ if (api.defaults && api.defaults.headers) {
 }
 
 /* ----------------------- Request interceptor (JWT) ------------------------ */
-const API_DEBUG = true;
+export const API_DEBUG = true;
 const DEV_TOKEN_FALLBACK =
   (typeof import.meta !== "undefined" &&
     (import.meta.env?.DEV || import.meta.env?.VITE_DEV_TOKEN_FALLBACK === "true")) ||
@@ -193,8 +195,7 @@ api.interceptors.request.use((config) => {
 
       // Normalize header name to lowercase to minimize CORS issues
       if (allowRoleHeader && normalizedRole) {
-        // remove any legacy casing, then set lowercase
-        delete config.headers["X-Role"]; 
+        delete config.headers["X-Role"]; // remove any legacy casing
         config.headers["x-role"] = normalizedRole;
       } else {
         // ensure we DO NOT send the role header on cross-origin requests
@@ -335,3 +336,4 @@ export function primeAuth(token, role) {
 })();
 
 export default api;
+export { canonRole, getAuthFromStorage };
