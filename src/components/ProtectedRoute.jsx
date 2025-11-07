@@ -3,56 +3,54 @@ import React, { useMemo } from "react";
 import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
-/** Map role aliases to canonical values */
+/* -------------------------------- Roles ---------------------------------- */
+/** Canonical role is THEATRE_ADMIN (UK spelling), but accept common aliases */
 const ROLE_ALIASES = {
-  THEATRE_ADMIN: "THEATER_ADMIN", // spelling fix (British -> American)
-  MANAGER: "THEATER_ADMIN",       // generic manager
-  PVR_MANAGER: "THEATER_ADMIN",   // your case
-  PVR_ADMIN: "THEATER_ADMIN",
+  THEATER_ADMIN: "THEATRE_ADMIN", // US -> canonical
+  MANAGER: "THEATRE_ADMIN",
+  PVR_MANAGER: "THEATRE_ADMIN",
+  PVR_ADMIN: "THEATRE_ADMIN",
+  SUPERADMIN: "SUPER_ADMIN",
 };
 
-/** Normalize a single role value to CANONICAL STRING */
 function normRole(r) {
   if (r == null) return null;
-  try {
-    const v = String(r).trim().toUpperCase().replace(/\s+/g, "_");
-    return ROLE_ALIASES[v] || v;
-  } catch {
-    return null;
-  }
+  let v = String(r).trim().toUpperCase().replace(/\s+/g, "_");
+  if (v.startsWith("ROLE_")) v = v.slice(5);
+  return ROLE_ALIASES[v] || v;
 }
 
-/** Normalize a list of roles (string or array) to a Set of canonical roles */
 function normWanted(roles) {
   if (!roles) return new Set();
-  if (Array.isArray(roles)) return new Set(roles.map(normRole).filter(Boolean));
-  return new Set([normRole(roles)].filter(Boolean));
+  const arr = Array.isArray(roles) ? roles : [roles];
+  return new Set(arr.map(normRole).filter(Boolean));
 }
 
+/* ------------------------------ Guard ------------------------------------ */
 export default function ProtectedRoute({
   children,
   roles,                       // string | string[]
-  requireAuth = true,          // if true, block unauthenticated even when roles not provided
-  superOverrides = true,       // allow SUPER_ADMIN into any admin-only route
+  requireAuth = true,          // block unauthenticated when true
+  superOverrides = true,       // SUPER_ADMIN can pass any admin route
   loginPath = "/login",
   adminLoginPath = "/admin/login",
   adminHome = "/admin",
   publicHome = "/",
 }) {
-  const { token, role, roles: userRoles } = useAuth();
+  const { token, role, roles: userRoles, loading, isAuthenticated } = useAuth();
   const location = useLocation();
 
   const wanted = useMemo(() => normWanted(roles), [roles]);
-
-  // Admin area detection: check both spellings
-  const ADMIN_HINTS = ["ADMIN", "MANAGER", "THEATER", "THEATRE"];
   const wantsAdmin =
-    wanted.size > 0
-      ? Array.from(wanted).some((r) => ADMIN_HINTS.some((h) => r?.includes(h)))
-      : false;
+    wanted.size > 0 &&
+    Array.from(wanted).some((r) => /ADMIN|MANAGER|THEATRE|THEATER/.test(r || ""));
 
-  // Not logged in
-  if (!token) {
+  /* ✅ Do nothing while auth is hydrating to avoid false redirects */
+  if (loading) return null; // or a Spinner component
+
+  /* Not logged in (after hydration) */
+  const authed = !!token || !!isAuthenticated;
+  if (!authed) {
     if (!requireAuth && wanted.size === 0) return children ?? <Outlet />;
     return (
       <Navigate
@@ -63,45 +61,36 @@ export default function ProtectedRoute({
     );
   }
 
-  // Roles the user has (support single role or array)
+  /* Normalize user roles */
   const haveList =
-    Array.isArray(userRoles) && userRoles.length > 0
-      ? userRoles
-      : role
-      ? [role]
-      : [];
+    Array.isArray(userRoles) && userRoles.length > 0 ? userRoles : role ? [role] : [];
   const have = useMemo(() => new Set(haveList.map(normRole).filter(Boolean)), [haveList]);
 
-  // If no specific roles required, but auth required, allow through
+  /* No specific roles required -> allow */
   if (wanted.size === 0) return children ?? <Outlet />;
 
-  // SUPER_ADMIN override
+  /* SUPER_ADMIN override for admin routes */
   if (superOverrides && have.has("SUPER_ADMIN")) {
     if (wantsAdmin) return children ?? <Outlet />;
   }
 
-  // Regular role match
+  /* Regular role check */
   const canAccess = Array.from(wanted).some((w) => have.has(w));
   if (canAccess) return children ?? <Outlet />;
 
-  // Deny: route them sensibly
-  if (Array.from(have).some((r) => r.includes("ADMIN") || r.includes("THEATER") || r.includes("THEATRE"))) {
-    return <Navigate to={adminHome} replace />;
-  }
-  return <Navigate to={publicHome} replace />;
+  /* Deny: route sensibly based on whether user is some kind of admin */
+  const isSomeAdmin = Array.from(have).some((r) => /ADMIN|THEAT(RE|ER)/.test(r));
+  return <Navigate to={isSomeAdmin ? adminHome : publicHome} replace />;
 }
 
-/* ---------- Convenience wrappers (nice DX) ---------- */
-
-// Example:
-// <AdminOnly><AdminShell /></AdminOnly>
-// <TheatreAdminOnly><TheatreShell /></TheatreAdminOnly>
+/* ----------------------- Convenience wrappers ---------------------------- */
 
 export function AdminOnly(props) {
+  // Admin pages: allow ADMIN and SUPER_ADMIN
   return <ProtectedRoute roles={["ADMIN", "SUPER_ADMIN"]} {...props} />;
 }
 
 export function TheatreAdminOnly(props) {
-  // allow SUPER_ADMIN to view theatre admin routes too
-  return <ProtectedRoute roles={["THEATER_ADMIN", "SUPER_ADMIN"]} {...props} />;
+  // Theatre-admin pages: allow THEATRE_ADMIN and SUPER_ADMIN
+  return <ProtectedRoute roles={["THEATRE_ADMIN", "SUPER_ADMIN"]} {...props} />;
 }
