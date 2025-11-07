@@ -153,6 +153,12 @@ const api = axios.create({
   headers: { Accept: "application/json" },
 });
 
+// ⭐ Endpoints that must NEVER be served from cache
+const NO_STORE_ENDPOINTS = [
+  /\/notifications\/mine(?:$|\?)/,       // GET list
+  /\/notifications\/\w+\/read(?:$|\?)/,  // read/ack (defensive)
+];
+
 // Keep FormData content-type dynamic; let browser set boundaries
 if (api.defaults && api.defaults.headers) {
   ["post", "put", "patch"].forEach((m) => {
@@ -179,6 +185,34 @@ api.setAuthToken = (token) => {
     delete api.defaults.headers.common.Authorization;
   }
 };
+
+// ⭐ Helper: detect if this request should bypass caches
+function isNoStoreRequest(config) {
+  const url = String(config?.url || "");
+  return NO_STORE_ENDPOINTS.some((re) => re.test(url));
+}
+
+// ⭐ Interceptor to force fresh fetch on no-store endpoints
+api.interceptors.request.use((config) => {
+  try {
+    if (String(config.method || "get").toLowerCase() === "get" && isNoStoreRequest(config)) {
+      config.headers = config.headers || {};
+      // Strong signals to avoid cached revalidation responses
+      config.headers["Cache-Control"] = "no-store";
+      config.headers["Pragma"] = "no-cache";
+      // Strip conditional headers that enable 304
+      delete config.headers["If-None-Match"];
+      delete config.headers["If-Modified-Since"];
+      // Cache-buster
+      config.params = { ...(config.params || {}), _ts: Date.now() };
+
+      if (API_DEBUG) {
+        console.debug("[api] no-store GET →", { url: config.url, params: config.params });
+      }
+    }
+  } catch {}
+  return config;
+});
 
 // 1) Attach token and (conditionally) x-role if same-origin or opted-in
 api.interceptors.request.use((config) => {
@@ -334,6 +368,16 @@ export function primeAuth(token, role) {
     if (token) api.setAuthToken(token);
   } catch {}
 })();
+
+/* ------------------------ Always-fresh GET convenience -------------------- */
+api.getFresh = async (url, cfg = {}) => {
+  const res = await api.get(url, {
+    ...(cfg || {}),
+    headers: { ...(cfg.headers || {}), "Cache-Control": "no-store", Pragma: "no-cache" },
+    params: { ...(cfg.params || {}), _ts: Date.now() },
+  });
+  return res.data;
+};
 
 export default api;
 export { canonRole, getAuthFromStorage };
