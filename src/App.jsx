@@ -53,7 +53,7 @@ import TheatreView from "./pages/theatre/TheatreView";
 // Super-only
 import TheatreAdmins from "./pages/super/TheatreAdmins";
 
-/* --------------------------------- Helpers -------------------------------- */
+/* ------------------------------- Helpers ---------------------------------- */
 
 function NotFound() {
   return <p className="p-6 text-center text-gray-500">404 — Page not found</p>;
@@ -63,33 +63,54 @@ function NotFound() {
 const normalizeRole = (r) => {
   if (!r) return null;
   const x = String(r).trim().toUpperCase().replace(/\s+/g, "_");
-  if (x === "THEATER_ADMIN") return "THEATRE_ADMIN"; // alias to canonical
+  if (x === "THEATER_ADMIN") return "THEATRE_ADMIN";
   return x;
+};
+
+/** Infer role if string missing but booleans exist in context */
+const inferRole = (auth) => {
+  if (!auth) return null;
+  if (auth.isSuperAdmin) return "SUPER_ADMIN";
+  if (auth.isAdmin) return "ADMIN";
+  if (auth.isTheatreAdmin || auth.isTheaterAdmin) return "THEATRE_ADMIN";
+  return null;
 };
 
 function RequireAuth({ children, role }) {
   const auth = useAuth();
   const location = useLocation();
 
-  // role from context OR localStorage (fallback)
-  const currentRole =
-    normalizeRole(auth?.role || auth?.user?.role || (typeof window !== "undefined" && localStorage.getItem("role")));
+  // Role from context string → fallback to booleans → fallback to localStorage
+  const roleFromCtx = normalizeRole(auth?.role || auth?.user?.role) || inferRole(auth);
+  const roleFromStorage =
+    typeof window !== "undefined" ? normalizeRole(localStorage.getItem("role")) : null;
+  const currentRole = normalizeRole(roleFromCtx || roleFromStorage);
 
-  // ✅ consider both context and localStorage tokens
+  // Consider BOTH context flags and stored tokens
   const ctxAdmin = auth?.adminToken;
   const ctxUser = auth?.token;
   const lsAdmin = typeof window !== "undefined" ? localStorage.getItem("adminToken") : null;
-  const lsUser = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+  const lsUser =
+    typeof window !== "undefined"
+      ? localStorage.getItem("token") ||
+        localStorage.getItem("accessToken") ||
+        localStorage.getItem("jwt")
+      : null;
 
-  const hasToken = Boolean(ctxAdmin || ctxUser || lsAdmin || lsUser);
+  // ✅ If context says logged in, trust it
+  const hasSession = Boolean(auth?.isLoggedIn || ctxAdmin || ctxUser || lsAdmin || lsUser);
 
-  // No token → decide the right login page based on the required role(s)
-  if (!hasToken) {
+  // No session → choose the right login page
+  if (!hasSession) {
     const needsAdmin = Array.isArray(role)
       ? role.map(normalizeRole).some((r) => ["SUPER_ADMIN", "THEATRE_ADMIN", "ADMIN"].includes(r))
       : ["SUPER_ADMIN", "THEATRE_ADMIN", "ADMIN"].includes(normalizeRole(role));
     return (
-      <Navigate to={needsAdmin ? "/admin/login" : "/login"} replace state={{ from: location }} />
+      <Navigate
+        to={needsAdmin ? "/admin/login" : "/login"}
+        replace
+        state={{ from: location }}
+      />
     );
   }
 
@@ -102,7 +123,7 @@ function RequireAuth({ children, role }) {
   if (currentRole === "SUPER_ADMIN") return children;
 
   // Direct match
-  if (allowed.includes(currentRole)) return children;
+  if (currentRole && allowed.includes(currentRole)) return children;
 
   // Wrong role → send to each role's home
   if (currentRole === "THEATRE_ADMIN") return <Navigate to="/theatre/my" replace />;
@@ -118,7 +139,10 @@ function ScrollToTop() {
 
 function AdminIndex() {
   const auth = useAuth();
-  const role = normalizeRole(auth?.role || (typeof window !== "undefined" && localStorage.getItem("role")));
+  const role =
+    normalizeRole(auth?.role || auth?.user?.role) ||
+    inferRole(auth) ||
+    (typeof window !== "undefined" && normalizeRole(localStorage.getItem("role")));
   if (role === "SUPER_ADMIN" || role === "ADMIN") return <Navigate to="/admin/dashboard" replace />;
   if (role === "THEATRE_ADMIN") return <Navigate to="/theatre/my" replace />;
   return <Navigate to="/" replace />;
@@ -129,8 +153,11 @@ function TheatreIndex() {
 }
 
 function RoleProfileRouter() {
-  const { role } = useAuth() || {};
-  const r = normalizeRole(role || (typeof window !== "undefined" && localStorage.getItem("role")));
+  const auth = useAuth();
+  const r =
+    normalizeRole(auth?.role || auth?.user?.role) ||
+    inferRole(auth) ||
+    (typeof window !== "undefined" && normalizeRole(localStorage.getItem("role")));
   if (r === "SUPER_ADMIN" || r === "ADMIN") return <Navigate to="/admin/profile" replace />;
   if (r === "THEATRE_ADMIN") return <Navigate to="/theatre/profile" replace />;
   return <Navigate to="/profile" replace />;
