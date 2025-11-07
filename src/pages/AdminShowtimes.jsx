@@ -112,7 +112,11 @@ export default function AdminShowtimes() {
   async function loadMovies() {
     try {
       const ts = Date.now();
-      const candidates = [`/admin/movies?ts=${ts}`, `/movies?ts=${ts}`, `/api/movies?ts=${ts}`, `/movies/admin/list?ts=${ts}`];
+      const candidates = [
+        `/api/movies?status=active&ts=${ts}`,
+        `/api/movies?ts=${ts}`,
+        `/movies?ts=${ts}`,
+      ];
       const list = await tryFetchCandidates(candidates);
       setMovies(list);
       if (list?.length) setMovieId((p) => p || list[0]._id || list[0].id || "");
@@ -125,14 +129,17 @@ export default function AdminShowtimes() {
   async function loadTheaters() {
     try {
       const ts = Date.now();
-      const candidates = [`/admin/theaters?ts=${ts}`, `/theaters?ts=${ts}`, `/api/theaters?ts=${ts}`, `/theaters/admin/list?ts=${ts}`];
+      const candidates = [
+        `/api/theatre/me?ts=${ts}`,
+        `/theatre/me?ts=${ts}`,
+      ];
       const list = await tryFetchCandidates(candidates);
       setTheaters(list);
       if (list?.length) {
         const first = list[0];
         const firstId = first._id || first.id || "";
         setTheaterId((p) => p || firstId);
-        setCity((p) => p || first.city || first.location || "");
+        setCity((p) => p || first.city || "");
         if (firstId) await loadScreensForTheater(firstId);
       }
     } catch (err) {
@@ -147,11 +154,8 @@ export default function AdminShowtimes() {
     try {
       const ts = Date.now();
       const candidates = [
-        `/admin/theaters/${id}/screens?ts=${ts}`,
-        `/theaters/${id}/screens?ts=${ts}`,
-        `/api/theaters/${id}/screens?ts=${ts}`,
-        `/screens?theaterId=${id}&ts=${ts}`,
-        `/screens?theater=${id}&ts=${ts}`, // also try "theater" (no Id)
+        `/api/screens/by-theatre/${id}?ts=${ts}`,
+        `/screens/by-theatre/${id}?ts=${ts}`,
       ];
       const list = await tryFetchCandidates(candidates);
       setScreens(list);
@@ -176,7 +180,10 @@ export default function AdminShowtimes() {
   async function loadShowtimes() {
     try {
       const ts = Date.now();
-      const candidates = [`/admin/showtimes?ts=${ts}`, `/showtimes?ts=${ts}`, `/api/showtimes?ts=${ts}`, `/showtimes/admin/list?ts=${ts}`];
+      const candidates = [
+        `/api/showtimes?ts=${ts}`,
+        `/showtimes?ts=${ts}`,
+      ];
       const list = await tryFetchCandidates(candidates);
       setShowtimes(list);
       if (list?.length) {
@@ -230,7 +237,7 @@ export default function AdminShowtimes() {
         rows: rows ?? undefined, cols: cols ?? undefined,
       };
 
-      const createCandidates = ["/admin/showtimes", "/showtimes", "/api/showtimes", "/showtimes/admin"];
+      const createCandidates = ["/api/showtimes", "/showtimes"];
       let created = false;
       for (const ep of createCandidates) {
         try {
@@ -263,9 +270,8 @@ export default function AdminShowtimes() {
       const iso = new Date(startTime).toISOString();
       const body = { startAt: iso, startTime: iso }; // send both
       const candidates = [
-        `/admin/showtimes/${showtimeId}`,
-        `/showtimes/${showtimeId}`,
         `/api/showtimes/${showtimeId}`,
+        `/showtimes/${showtimeId}`,
       ];
       let patched = false;
       for (const ep of candidates) {
@@ -293,7 +299,7 @@ export default function AdminShowtimes() {
   function handleTheaterChange(id) {
     setTheaterId(id);
     const th = theaters.find((t) => String(t._id || t.id) === String(id));
-    setCity(th?.city || th?.location || "");
+    setCity(th?.city || "");
     loadScreensForTheater(id);
   }
 
@@ -368,7 +374,7 @@ export default function AdminShowtimes() {
               {Array.isArray(theaters) &&
                 theaters.map((t) => (
                   <option key={t._id || t.id} value={t._id || t.id}>
-                    {t.name} — {t.city || t.location || ""}
+                    {t.name} — {t.city || ""}
                   </option>
                 ))}
             </Field>
@@ -501,7 +507,7 @@ export default function AdminShowtimes() {
                           if (!window.confirm("Delete this showtime?")) return;
                           try {
                             const id = s._id || s.id;
-                            const candidates = [`/admin/showtimes/${id}`, `/showtimes/${id}`, `/api/showtimes/${id}`];
+                            const candidates = [`/api/showtimes/${id}`, `/showtimes/${id}`];
                             let deleted = false;
                             for (const ep of candidates) {
                               try {
