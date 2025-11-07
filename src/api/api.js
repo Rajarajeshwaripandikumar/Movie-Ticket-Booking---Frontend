@@ -29,15 +29,17 @@ function canonRole(r) {
     typeof r === "object" && r !== null ? r.authority ?? r.value ?? r.name ?? "" : r;
   let v = String(raw).toUpperCase().trim().replace(/\s+/g, "_");
   if (v.startsWith("ROLE_")) v = v.slice(5);
+
+  // ✅ DO NOT remap ADMIN → SUPER_ADMIN (bug in old code)
+  // ✅ Canonicalize THEATER/THEATRE to THEATRE_ADMIN (UK spelling used app-wide)
   const map = {
-    ADMIN: "SUPER_ADMIN",
     SUPERADMIN: "SUPER_ADMIN",
-    THEATRE_ADMIN: "THEATER_ADMIN",
-    THEATRE_MANAGER: "THEATER_ADMIN",
-    THEATER_MANAGER: "THEATER_ADMIN",
-    PVR_MANAGER: "THEATER_ADMIN",
-    PVR_ADMIN: "THEATER_ADMIN",
-    MANAGER: "THEATER_ADMIN",
+    THEATER_ADMIN: "THEATRE_ADMIN",
+    THEATRE_MANAGER: "THEATRE_ADMIN",
+    THEATER_MANAGER: "THEATRE_ADMIN",
+    PVR_MANAGER: "THEATRE_ADMIN",
+    PVR_ADMIN: "THEATRE_ADMIN",
+    MANAGER: "THEATRE_ADMIN",
   };
   return map[v] ?? v;
 }
@@ -58,9 +60,26 @@ function readCookie(name) {
 
 /**
  * Attempts to find an auth token + role across common storage locations.
+ * Now checks explicit admin/user keys and top-level role.
  */
 function getAuthFromStorage() {
   try {
+    // 1) Explicit keys set by our AuthContext / backend responses
+    const adminToken =
+      localStorage.getItem("adminToken") ||
+      sessionStorage.getItem("adminToken");
+    const userToken =
+      localStorage.getItem("token") ||
+      sessionStorage.getItem("token");
+    const topRole =
+      localStorage.getItem("role") ||
+      sessionStorage.getItem("role");
+
+    if (adminToken || userToken) {
+      return { token: adminToken || userToken, role: topRole };
+    }
+
+    // 2) Consolidated "auth" JSON used elsewhere
     const raw = localStorage.getItem("auth") || sessionStorage.getItem("auth");
     if (raw) {
       try {
@@ -77,8 +96,9 @@ function getAuthFromStorage() {
         if (token) return { token, role };
       } catch {}
     }
+
+    // 3) Other token aliases
     for (const k of [
-      "token",
       "jwt",
       "accessToken",
       "authToken",
@@ -87,17 +107,22 @@ function getAuthFromStorage() {
       "bearer",
     ]) {
       const v = localStorage.getItem(k) || sessionStorage.getItem(k);
-      if (v) return { token: v, role: undefined };
+      if (v) return { token: v, role: topRole || undefined };
     }
-    const cookieToken =
-      readCookie("token") || readCookie("jwt") || readCookie("accessToken");
-    if (cookieToken) return { token: cookieToken, role: undefined };
 
-    // final fallback: reuse axios default Authorization if present
+    // 4) Cookie fallbacks
+    const cookieToken =
+      readCookie("adminToken") ||
+      readCookie("token") ||
+      readCookie("jwt") ||
+      readCookie("accessToken");
+    if (cookieToken) return { token: cookieToken, role: topRole || undefined };
+
+    // 5) Last resort: axios default header
     const authHeader = api?.defaults?.headers?.common?.Authorization;
     if (typeof authHeader === "string") {
       const m = authHeader.match(/^Bearer\s+(.+)$/i);
-      if (m) return { token: m[1], role: undefined };
+      if (m) return { token: m[1], role: topRole || undefined };
     }
   } catch {}
   return { token: null, role: undefined };
@@ -175,8 +200,7 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// 3) Rescue: if analytics call still lacks Authorization, pick `?token=` from page URL.
-//    (Useful for the very first paint before auth context/primeAuth runs.)
+// 3) Rescue analytics first paint: use ?token= fallback or DEV param attach
 api.interceptors.request.use((config) => {
   try {
     const isAnalytics = String(config.url || "").includes("/analytics/");
@@ -241,19 +265,11 @@ export function extractApiError(err) {
   );
 }
 
-/**
- * Build an absolute API URL (when you genuinely need the raw URL for e.g. iframes).
- * NOTE: This already prefixes `/api`, so pass paths WITHOUT `/api`.
- */
 export function apiUrl(path = "") {
   const clean = path.startsWith("/") ? path : `/${path}`;
   return `${BASE_URL}${API_PREFIX}${clean}`;
 }
 
-/**
- * Convert relative upload paths to absolute URLs.
- * - `/uploads/...` is served outside `/api`
- */
 export function makeAbsoluteImageUrl(url) {
   if (!url) return "";
   if (url.startsWith("http://") || url.startsWith("https://")) return url;
@@ -264,12 +280,20 @@ export function makeAbsoluteImageUrl(url) {
 }
 
 /* ----------------------------- Post-login hook ---------------------------- */
+// Smarter priming: set the correct storage keys so guards & Navbar agree
 export function primeAuth(token, role) {
   try {
-    const payload = { token, role: role ?? undefined };
-    localStorage.setItem("auth", JSON.stringify(payload));
+    const canonical = canonRole(role);
+    if (canonical === "SUPER_ADMIN" || canonical === "ADMIN" || canonical === "THEATRE_ADMIN") {
+      localStorage.setItem("adminToken", token);
+    } else {
+      localStorage.setItem("token", token);
+    }
+    if (canonical) localStorage.setItem("role", canonical);
+
+    localStorage.setItem("auth", JSON.stringify({ token, role: canonical || role }));
     api.setAuthToken(token); // prime axios instance immediately
-    if (API_DEBUG) console.debug("[api] primeAuth set");
+    if (API_DEBUG) console.debug("[api] primeAuth set", { role: canonical });
   } catch (e) {
     console.error("[api] primeAuth failed:", e);
   }
