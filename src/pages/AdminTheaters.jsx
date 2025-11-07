@@ -1,4 +1,4 @@
-// src/pages/AdminTheaters.jsx — CLEAN + Role-aware Refresh (ALL vs MINE) + Better Errors
+// src/pages/AdminTheaters.jsx — wired to /superadmin/theaters (CRUD) + role-aware fetch
 
 import { useEffect, useMemo, useState } from "react";
 import api from "../api/api";
@@ -90,7 +90,6 @@ export default function AdminTheaters() {
   const role = getRole(user);
   const isSuperAdmin = role === ROLE.SUPER_ADMIN;
 
-  const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
   const [theaters, setTheaters] = useState([]);
 
   const [selectedId, setSelectedId] = useState(null);
@@ -100,7 +99,6 @@ export default function AdminTheaters() {
   const [amenitiesList, setAmenitiesList] = useState([]);
   const [amenityInput, setAmenityInput] = useState("");
 
-  // (Optional) Poster UI kept for later; backend endpoints below use JSON
   const [preview, setPreview] = useState("");
   const [previewKey, setPreviewKey] = useState(0);
 
@@ -110,47 +108,37 @@ export default function AdminTheaters() {
 
   useEffect(() => {
     if (token) loadTheaters();
-    // re-run when the role becomes known so SUPER_ADMIN sees ALL on first load
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, isSuperAdmin]);
 
-  // Role-aware URL selection:
-  // - SUPER_ADMIN → all theaters
-  // - others → only their theaters
-  const getFetchUrlAndParams = () => {
-    // Prefer distinct endpoints if your backend has them:
-    //   /theaters                (ALL)  [SUPER_ADMIN only]
-    //   /admin/theaters/mine     (MINE) [THEATRE_ADMIN & SUPER can reuse]
-    // If you only have /admin/theaters, use a scope param.
-    const supportsSeparateEndpoints = true; // flip to false if you don't have /theaters or /admin/theaters/mine
-
-    if (supportsSeparateEndpoints) {
-      return {
-        url: isSuperAdmin ? "/theaters" : "/admin/theaters/mine",
-        params: { ts: Date.now() },
-      };
-    }
-    // Fallback: single endpoint w/ scope
-    return {
-      url: "/admin/theaters",
-      params: { ts: Date.now(), scope: isSuperAdmin ? "all" : "mine" },
-    };
-  };
-
+  // Role-aware load with safe fallback:
+  // - SUPER_ADMIN → /superadmin/theaters
+  // - THEATRE_ADMIN/others → try /theaters/mine, fallback to /superadmin/theaters if 404 (in case mine isn't implemented)
   async function loadTheaters() {
+    setMsg("");
+    setMsgType("info");
     try {
-      const { url, params } = getFetchUrlAndParams();
+      let data;
 
-      const { data } = await api.get(url, {
-        headers: authHeaders,
-        params,
-      });
+      if (isSuperAdmin) {
+        const res = await api.get("/superadmin/theaters", { params: { ts: Date.now() } });
+        data = res.data;
+      } else {
+        try {
+          const resMine = await api.get("/theaters/mine", { params: { ts: Date.now() } });
+          data = resMine.data;
+        } catch (err) {
+          // Fallback: some backends don’t implement /theaters/mine; try superadmin list (will 403 if protected)
+          const resAll = await api.get("/superadmin/theaters", { params: { ts: Date.now() } });
+          data = resAll.data;
+        }
+      }
 
       const arr = Array.isArray(data) ? data : (data?.theaters || data?.data || []);
       setTheaters((Array.isArray(arr) ? arr : []).map(normalizeTheater));
-      setMsg("");
     } catch (e) {
-      setMsg(e?.response?.data?.message || "⚠️ Failed to load theaters");
+      const m = e?.response?.data?.message || e?.message || "⚠️ Failed to load theaters";
+      setMsg(m);
       setMsgType("error");
     }
   }
@@ -166,7 +154,6 @@ export default function AdminTheaters() {
     setPreviewKey((k) => k + 1);
   }
 
-  // (UI only) keep preview responsive if you later wire image upload
   function onPickFile(e) {
     const f = e.target.files?.[0];
     if (!f) return;
@@ -176,8 +163,8 @@ export default function AdminTheaters() {
   }
 
   /* ------------------------------ CRUD Actions ----------------------------- */
+  // NOTE: CRUD is restricted to SUPER_ADMIN and uses /superadmin/theaters endpoints
 
-  /* Create → POST /admin/theaters (JSON) */
   async function createTheater(e) {
     e.preventDefault();
     if (!name.trim() || !city.trim()) {
@@ -200,11 +187,8 @@ export default function AdminTheaters() {
         amenities: amenitiesList, // backend may ignore if not in schema
       };
 
-      const res = await api.post("/admin/theaters", payload, {
-        headers: { ...authHeaders, "Content-Type": "application/json" },
-      });
-
-      const created = Array.isArray(res.data) ? res.data[0] : res.data;
+      const res = await api.post("/superadmin/theaters", payload);
+      const created = res.data?.theater || res.data;
       const createdNorm = normalizeTheater(created);
       setTheaters((t) => [createdNorm, ...t]);
       resetForm();
@@ -217,7 +201,6 @@ export default function AdminTheaters() {
     setLoading(false);
   }
 
-  /* Update → PUT /admin/theaters/:id (JSON) */
   async function updateTheaterById() {
     if (!selectedId) return;
     if (!name.trim() || !city.trim()) {
@@ -240,11 +223,8 @@ export default function AdminTheaters() {
         amenities: amenitiesList,
       };
 
-      const res = await api.put(`/admin/theaters/${selectedId}`, payload, {
-        headers: { ...authHeaders, "Content-Type": "application/json" },
-      });
-
-      const updated = Array.isArray(res.data) ? res.data[0] : res.data;
+      const res = await api.put(`/superadmin/theaters/${selectedId}`, payload);
+      const updated = res.data?.theater || res.data;
       setTheaters((list) => list.map((t) => (t._id === selectedId ? normalizeTheater(updated) : t)));
       setMsg("✅ Updated!");
       setMsgType("success");
@@ -255,7 +235,6 @@ export default function AdminTheaters() {
     setLoading(false);
   }
 
-  /* Delete → DELETE /admin/theaters/:id */
   async function deleteTheater(id) {
     if (!isSuperAdmin) {
       setMsg("❌ Only SUPER_ADMIN can delete theaters");
@@ -264,9 +243,11 @@ export default function AdminTheaters() {
     }
     if (!window.confirm("Delete this theater?")) return;
     try {
-      await api.delete(`/admin/theaters/${id}`, { headers: authHeaders });
+      await api.delete(`/superadmin/theaters/${id}`);
       setTheaters((t) => t.filter((x) => x._id !== id));
       if (selectedId === id) resetForm();
+      setMsg("🗑️ Deleted");
+      setMsgType("success");
     } catch (e) {
       setMsg(e?.response?.data?.message || "❌ Delete failed");
       setMsgType("error");
