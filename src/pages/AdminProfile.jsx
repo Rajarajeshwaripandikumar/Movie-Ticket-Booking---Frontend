@@ -11,7 +11,7 @@ const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
   </Tag>
 );
 
-function Field({ label, type = "text", value, onChange, placeholder, autoComplete }) {
+function Field({ label, type = "text", value, onChange, placeholder, autoComplete, readOnly }) {
   return (
     <div>
       {label && (
@@ -23,9 +23,10 @@ function Field({ label, type = "text", value, onChange, placeholder, autoComplet
         <input
           type={type}
           value={value}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => onChange?.(e.target.value)}
           placeholder={placeholder}
           autoComplete={autoComplete}
+          readOnly={readOnly}
           className="w-full outline-none bg-transparent text-sm sm:text-base text-slate-900 placeholder:text-slate-400"
         />
       </div>
@@ -57,8 +58,18 @@ function SecondaryBtn({ children, className = "", ...props }) {
 
 /* -------------------------------- Component -------------------------------- */
 export default function AdminProfile() {
-  const { token, role } = useAuth() || {};
-  const isAdmin = String(role || "").toUpperCase() === "ADMIN";
+  const { adminToken, token, role } = useAuth() || {};
+  const sessionToken = adminToken || token || null;
+
+  const r = String(role || "").toUpperCase();
+  const isSuper = r === "SUPER_ADMIN";
+  const isAdmin = r === "ADMIN";
+  const isTheatre = r === "THEATRE_ADMIN";
+
+  // 🔒 Route gating
+  if (!sessionToken) return <Navigate to="/admin/login" replace />;
+  if (isTheatre) return <Navigate to="/theatre/profile" replace />;
+  if (!isSuper && !isAdmin) return <Navigate to="/" replace />;
 
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -71,10 +82,6 @@ export default function AdminProfile() {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
 
-  // 🔒 Route gating
-  if (!token) return <Navigate to="/admin/login" replace />;
-  if (!isAdmin) return <Navigate to="/" replace />;
-
   useEffect(() => {
     fetchProfile();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -82,7 +89,8 @@ export default function AdminProfile() {
 
   async function fetchProfile() {
     try {
-      const { data } = await api.get("/admin/me"); // admin endpoint
+      // ✅ backend exposes /api/auth/me (not /admin/me)
+      const { data } = await api.get("/auth/me");
       const u = data.user || data;
       setUser(u);
       setName(u.name || "");
@@ -91,7 +99,7 @@ export default function AdminProfile() {
     } catch (e) {
       console.error("fetchProfile error", e?.response || e);
       setMsgType("error");
-      setMsg(e?.response?.data?.message || "Failed to fetch admin profile");
+      setMsg(e?.response?.data?.message || "Failed to fetch profile");
     }
   }
 
@@ -100,14 +108,29 @@ export default function AdminProfile() {
     setLoading(true);
     setMsg("");
     try {
-      const { data } = await api.put("/admin/profile", { name, email }); // admin endpoint
-      setUser(data.user || data);
+      // Your backend does not currently expose an update-profile endpoint.
+      // Try a likely path first, then fallback, else inform user.
+      let res;
+      try {
+        res = await api.put("/auth/profile", { name, email });
+      } catch (err1) {
+        if (err1?.response?.status === 404) {
+          // not implemented on backend; surface a friendly message
+          setMsgType("info");
+          setMsg("Profile update is not available yet. Ask the super admin to enable it.");
+          setLoading(false);
+          return;
+        }
+        throw err1;
+      }
+      const data = res?.data || {};
+      setUser(data.user || { ...(user || {}), name, email });
       setMsgType("success");
-      setMsg(data.message || "Admin profile updated");
+      setMsg(data.message || "Profile updated");
     } catch (e) {
       console.error("saveProfile err", e?.response || e);
       setMsgType("error");
-      setMsg(e?.response?.data?.message || "Failed to update admin profile");
+      setMsg(e?.response?.data?.message || "Failed to update profile");
     } finally {
       setLoading(false);
     }
@@ -118,10 +141,11 @@ export default function AdminProfile() {
     setLoading(true);
     setMsg("");
     try {
-      const { data } = await api.post("/admin/change-password", {
+      // ✅ backend route exists: /api/auth/change-password
+      const { data } = await api.post("/auth/change-password", {
         currentPassword,
         newPassword,
-      }); // admin endpoint
+      });
       setMsgType("success");
       setMsg(data.message || "Password changed");
       setCurrentPassword("");
@@ -151,7 +175,9 @@ export default function AdminProfile() {
           <div className="flex items-center justify-between gap-3">
             <div>
               <h2 className="text-2xl font-extrabold tracking-tight">Admin Profile</h2>
-              <p className="text-sm text-slate-600">Update your profile and password.</p>
+              <p className="text-sm text-slate-600">
+                {isSuper ? "Super Admin" : "Admin"} — update your password and details.
+              </p>
             </div>
             <div className="w-12 h-12 rounded-full border border-slate-200 bg-slate-50 grid place-items-center shadow-sm text-sm font-extrabold text-slate-800">
               {initials}
@@ -195,6 +221,9 @@ export default function AdminProfile() {
               </PrimaryBtn>
             </div>
           </form>
+          <p className="text-[11px] text-slate-500 mt-2">
+            If saving profile shows “not available”, ask backend to add <code>PUT /api/auth/profile</code>.
+          </p>
         </Card>
 
         {/* Password form */}
