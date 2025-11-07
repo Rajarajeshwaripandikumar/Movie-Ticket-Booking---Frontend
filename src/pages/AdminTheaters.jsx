@@ -111,7 +111,6 @@ export default function AdminTheaters() {
 
   useEffect(() => {
     if (token) loadTheaters();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, isSuperAdmin]);
 
   async function loadTheaters() {
@@ -131,16 +130,25 @@ export default function AdminTheaters() {
         }
       }
 
-      let arr = Array.isArray(data) ? data : (data?.theaters || data?.data || []);
+      // ✅ Correct shape extraction:
+      let arr =
+        data?.data?.theaters ??
+        data?.data ??
+        data?.theaters ??
+        data ??
+        [];
 
-      // Retry once if empty due to cache race
+      // Retry once for safety
       if (!arr.length) {
         const retryUrl = isSuperAdmin ? "/superadmin/theaters" : "/theaters/mine";
-        try {
-          const retryData = await api.getFresh(retryUrl);
-          const rArr = Array.isArray(retryData) ? retryData : (retryData?.theaters || retryData?.data || []);
-          if (Array.isArray(rArr) && rArr.length) arr = rArr;
-        } catch {}
+        const retryData = await api.getFresh(retryUrl);
+        const rArr =
+          retryData?.data?.theaters ??
+          retryData?.data ??
+          retryData?.theaters ??
+          retryData ??
+          [];
+        if (Array.isArray(rArr) && rArr.length) arr = rArr;
       }
 
       setTheaters(arr.map(normalizeTheater));
@@ -177,42 +185,37 @@ export default function AdminTheaters() {
       setMsgType("error");
       return;
     }
-    if (!isSuperAdmin) {
-      setMsg("❌ Only SUPER_ADMIN can create theaters");
-      setMsgType("error");
-      return;
-    }
+    if (!isSuperAdmin) return;
 
     setLoading(true);
     try {
       const payload = { name, city, address, amenities: amenitiesList };
-      const created = await api.post("/superadmin/theaters", payload);
-      const createdNorm = normalizeTheater(created.data?.theater || created.data);
-      setTheaters((t) => [createdNorm, ...t]);
+      const res = await api.post("/superadmin/theaters", payload);
+      const created = normalizeTheater(res.data?.theater || res.data);
+      setTheaters((t) => [created, ...t]);
       resetForm();
       setMsg("✅ Theater created!");
       setMsgType("success");
-    } catch (e) {
-      setMsg(e?.response?.data?.message || "❌ Create failed");
+    } catch {
+      setMsg("❌ Create failed");
       setMsgType("error");
     }
     setLoading(false);
   }
 
   async function updateTheaterById() {
-    if (!selectedId) return;
-    if (!isSuperAdmin) return;
+    if (!selectedId || !isSuperAdmin) return;
 
     setLoading(true);
     try {
       const payload = { name, city, address, amenities: amenitiesList };
-      const updated = await api.put(`/superadmin/theaters/${selectedId}`, payload);
-      const upd = normalizeTheater(updated.data?.theater || updated.data);
+      const res = await api.put(`/superadmin/theaters/${selectedId}`, payload);
+      const upd = normalizeTheater(res.data?.theater || res.data);
       setTheaters((t) => t.map((x) => (x._id === selectedId ? upd : x)));
       setMsg("✅ Updated!");
       setMsgType("success");
-    } catch (e) {
-      setMsg(e?.response?.data?.message || "❌ Update failed");
+    } catch {
+      setMsg("❌ Update failed");
       setMsgType("error");
     }
     setLoading(false);
@@ -221,19 +224,19 @@ export default function AdminTheaters() {
   async function deleteTheater(id) {
     if (!isSuperAdmin) return;
     if (!window.confirm("Delete this theater?")) return;
+
     try {
       await api.delete(`/superadmin/theaters/${id}`);
       setTheaters((t) => t.filter((x) => x._id !== id));
       if (selectedId === id) resetForm();
       setMsg("🗑️ Deleted");
       setMsgType("success");
-    } catch (e) {
-      setMsg(e?.response?.data?.message || "❌ Delete failed");
+    } catch {
+      setMsg("❌ Delete failed");
       setMsgType("error");
     }
   }
 
-  /* ------------------------------ UI maps ------------------------------ */
   const names = useMemo(() => [...new Set(theaters.map((t) => t.name))], [theaters]);
   const cities = useMemo(() => [...new Set(theaters.map((t) => t.city))], [theaters]);
   const addresses = useMemo(() => [...new Set(theaters.map((t) => t.address).filter(Boolean))], [theaters]);
@@ -250,7 +253,6 @@ export default function AdminTheaters() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  /* ------------------------------ RENDER ------------------------------ */
   return (
     <main className="min-h-screen w-full bg-slate-50 py-8 px-4 md:px-6 text-slate-900">
       <div className="max-w-7xl mx-auto space-y-5">
