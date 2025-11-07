@@ -144,7 +144,7 @@ export default function AdminShowtimes() {
         setCity((p) => p || first.city || "");
         if (firstId) await loadScreensForTheater(firstId);
         // Load only my theatre's upcoming showtimes
-        await loadShowtimesMyTheatre();
+        await loadShowtimesMyTheatre(firstId);
       } else {
         setMsg("No theatre linked to this account."); setMsgType("error");
       }
@@ -184,13 +184,14 @@ export default function AdminShowtimes() {
     setRows(r); setCols(c);
   }
 
-  async function loadShowtimesMyTheatre() {
+  async function loadShowtimesMyTheatre(thId = theaterId) {
     try {
       const ts = Date.now();
       // Returns ONLY the logged-in manager’s theatre shows
       const candidates = [
-        `/api/showtimes/my-theatre?ts=${ts}`, // ✅ backend route added
-      ];
+        `/api/showtimes/my-theatre?ts=${ts}`,                 // preferred
+        thId ? `/api/showtimes?theaterId=${thId}&ts=${ts}` : null, // fallback
+      ].filter(Boolean);
       const list = await tryFetchCandidates(candidates);
       setShowtimes(list);
       if (list?.length) {
@@ -216,7 +217,8 @@ export default function AdminShowtimes() {
     const st = showtimes.find((s) => s._id === id || s.id === id);
     if (st) {
       setStartTime(toLocalDatetimeInputValue(st.startTime ?? st.startAt ?? st.date ?? st.datetime));
-      setBasePrice(st.basePrice ?? s.price ?? s.amount ?? 200);
+      // 🐛 fixed: use `st` (not `s`)
+      setBasePrice(st.basePrice ?? st.price ?? st.amount ?? 200);
       setCity(st.theater?.city ?? st.city ?? "");
       if (st.screen) setScreenId(st.screen._id ?? st.screen);
       if (st.theater) setTheaterId(st.theater._id ?? st.theater);
@@ -307,6 +309,7 @@ export default function AdminShowtimes() {
     const th = theaters.find((t) => String(t._id || t.id) === String(id));
     setCity(th?.city || "");
     loadScreensForTheater(id);
+    loadShowtimesMyTheatre(id);
   }
 
   function handleScreenChange(id) {
@@ -333,7 +336,7 @@ export default function AdminShowtimes() {
             </h1>
             <p className="text-sm text-slate-600 mt-1">Create, update, and organize theater schedules.</p>
           </div>
-          <SecondaryBtn onClick={loadShowtimesMyTheatre}>
+          <SecondaryBtn onClick={() => loadShowtimesMyTheatre()}>
             <RefreshCcw className="h-4 w-4" /> Refresh
           </SecondaryBtn>
         </Card>
@@ -439,7 +442,7 @@ export default function AdminShowtimes() {
             <PencilLine className="h-5 w-5" /> Update Showtime
           </h2>
 
-          <form onSubmit={patchShowtime} className="space-y-3">
+        <form onSubmit={patchShowtime} className="space-y-3">
             <Field
               as="select"
               value={showtimeId}
