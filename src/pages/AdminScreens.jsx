@@ -1,5 +1,5 @@
 // src/pages/AdminScreens.jsx — Walmart Style (clean, rounded, blue accents)
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import api from "../api/api";
 import { useAuth } from "../context/AuthContext";
 import { Navigate } from "react-router-dom";
@@ -91,10 +91,48 @@ async function updateScreenApi(theaterId, screenId, body) {
   }
 }
 
+/* Canonical role helper (match api.js: THEATRE_ADMIN is canonical) */
+const canonRole = (r) => {
+  if (r == null) return null;
+  let v = String(r).trim().toUpperCase().replace(/\s+/g, "_");
+  if (v.startsWith("ROLE_")) v = v.slice(5);
+  const map = {
+    THEATER_ADMIN: "THEATRE_ADMIN",
+    THEATRE_MANAGER: "THEATRE_ADMIN",
+    THEATER_MANAGER: "THEATRE_ADMIN",
+    PVR_MANAGER: "THEATRE_ADMIN",
+    PVR_ADMIN: "THEATRE_ADMIN",
+    SUPERADMIN: "SUPER_ADMIN",
+  };
+  return map[v] ?? v;
+};
+
 /* ------------------------------- page ------------------------------- */
 export default function AdminScreens() {
-  const { token, role } = useAuth() || {};
-  const isAdmin = String(role || "").toUpperCase() === "ADMIN";
+  const { token, role, roles: userRoles, user, loading, isAuthenticated } = useAuth() || {};
+
+  // ✅ Wait for hydration; don't decide until auth state is ready
+  if (loading) return null;
+
+  const rolesList = useMemo(() => {
+    const arr = Array.isArray(userRoles) && userRoles.length ? userRoles : role ? [role] : [];
+    return arr.map(canonRole).filter(Boolean);
+  }, [role, userRoles]);
+
+  const isSomeAdmin = rolesList.some((r) =>
+    /^(SUPER_ADMIN|ADMIN|THEATRE_ADMIN)$/.test(r || "")
+  );
+
+  // Final gating (after hydration)
+  if (!token && !isAuthenticated) return <Navigate to="/admin/login" replace />;
+  if (!isSomeAdmin) return <Navigate to="/" replace />;
+
+  const isSuper = rolesList.includes("SUPER_ADMIN");
+  const isTheatreAdmin = rolesList.includes("THEATRE_ADMIN");
+
+  // Default theatre for theatre admins from JWT (supports multiple shapes)
+  const jwtTheatreId =
+    user?.theatreId || user?.theaterId || user?.theatre?.id || user?.theater?.id || "";
 
   const [theaters, setTheaters] = useState([]);
   const [selectedTheater, setSelectedTheater] = useState("");
@@ -103,34 +141,37 @@ export default function AdminScreens() {
   const [screenName, setScreenName] = useState("");
   const [rows, setRows] = useState("");
   const [cols, setCols] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loadingAction, setLoadingAction] = useState(false);
   const [loadingScreens, setLoadingScreens] = useState(false);
   const [msg, setMsg] = useState("");
   const [msgType, setMsgType] = useState("info");
 
-  // 🔒 Route gating
-  if (!token) return <Navigate to="/admin/login" replace />;
-  if (!isAdmin) return <Navigate to="/" replace />;
-
+  // Hydrate default theatre for theatre admins
   useEffect(() => {
-    if (token && isAdmin) loadTheaters();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, isAdmin]);
-
-  async function loadTheaters() {
-    try {
-      const { data } = await api.get(`/admin/theaters?ts=${Date.now()}`);
-      // Backend returns { ok, theaters, ... }
-      const list = Array.isArray(data) ? data : (data?.theaters || data?.data || []);
-      setTheaters(Array.isArray(list) ? list : []);
-      setMsg("");
-    } catch (err) {
-      setMsgType("error");
-      setMsg("Failed to load theaters.");
-      setTheaters([]);
+    if (isTheatreAdmin && jwtTheatreId && !selectedTheater) {
+      setSelectedTheater(jwtTheatreId);
     }
-  }
+  }, [isTheatreAdmin, jwtTheatreId, selectedTheater]);
 
+  // Load theatres (SUPER_ADMIN sees list; theatre admin may still call to show the list)
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const { data } = await api.get(`/admin/theaters?ts=${Date.now()}`);
+        const list = Array.isArray(data) ? data : (data?.theaters || data?.data || []);
+        setTheaters(Array.isArray(list) ? list : []);
+        setMsg("");
+      } catch (err) {
+        setMsgType("error");
+        setMsg("Failed to load theaters.");
+        setTheaters([]);
+      }
+    };
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Load screens for selected theatre
   useEffect(() => {
     if (!selectedTheater) {
       setScreens([]);
@@ -159,6 +200,7 @@ export default function AdminScreens() {
     })();
   }, [selectedTheater]);
 
+  // When screen selection changes, fill form
   useEffect(() => {
     if (selectedScreen === NEW) {
       setScreenName("");
@@ -191,7 +233,7 @@ export default function AdminScreens() {
       return;
     }
 
-    setLoading(true);
+    setLoadingAction(true);
     setMsg("");
     const body = { name: screenName.trim(), rows: r, columns: c, cols: c };
 
@@ -226,7 +268,6 @@ export default function AdminScreens() {
           const list = await fetchScreensForTheater(selectedTheater);
           setScreens(list);
         }
-        await loadTheaters();
         setMsgType("success");
         setMsg("Screen updated successfully!");
       }
@@ -234,7 +275,7 @@ export default function AdminScreens() {
       setMsgType("error");
       setMsg("Failed to save screen.");
     } finally {
-      setLoading(false);
+      setLoadingAction(false);
     }
   }
 
@@ -271,7 +312,25 @@ export default function AdminScreens() {
               </h1>
               <p className="text-sm text-slate-600 mt-1">Add or update screens under each theater.</p>
             </div>
-            <SecondaryBtn onClick={loadTheaters} className="text-sm">
+            <SecondaryBtn onClick={() => {
+              // Reload theaters and current theatre's screens without changing selection
+              (async () => {
+                try {
+                  const { data } = await api.get(`/admin/theaters?ts=${Date.now()}`);
+                  const list = Array.isArray(data) ? data : (data?.theaters || data?.data || []);
+                  setTheaters(Array.isArray(list) ? list : []);
+                } catch {}
+                if (selectedTheater) {
+                  setLoadingScreens(true);
+                  try {
+                    const list = await fetchScreensForTheater(selectedTheater);
+                    setScreens(list);
+                  } finally {
+                    setLoadingScreens(false);
+                  }
+                }
+              })();
+            }} className="text-sm">
               <RefreshCcw className="h-4 w-4" /> Refresh
             </SecondaryBtn>
           </div>
@@ -304,6 +363,7 @@ export default function AdminScreens() {
                 label="Select Theater"
                 value={selectedTheater}
                 onChange={(e) => setSelectedTheater(e.target.value)}
+                disabled={isTheatreAdmin && !!jwtTheatreId} // theatre admins locked to their theatre
               >
                 <option value="">-- Choose a theater --</option>
                 {(Array.isArray(theaters) ? theaters : []).map((t) => (
@@ -369,8 +429,8 @@ export default function AdminScreens() {
             </div>
 
             <div className="flex items-center justify-between pt-1">
-              <PrimaryBtn disabled={loading} type="submit">
-                {loading ? "Saving…" : selectedScreen === NEW ? (
+              <PrimaryBtn disabled={loadingAction} type="submit">
+                {loadingAction ? "Saving…" : selectedScreen === NEW ? (
                   <>
                     <PlusCircle className="h-4 w-4" /> Create Screen
                   </>
@@ -381,7 +441,7 @@ export default function AdminScreens() {
               <SecondaryBtn
                 type="button"
                 onClick={() => {
-                  setSelectedTheater("");
+                  setSelectedTheater(isTheatreAdmin ? (jwtTheatreId || "") : "");
                   setSelectedScreen(NEW);
                   setScreenName("");
                   setRows("");
