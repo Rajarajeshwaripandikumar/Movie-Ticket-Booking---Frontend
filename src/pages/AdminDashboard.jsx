@@ -15,8 +15,8 @@ import api from "../api/api";
 import { useAuth } from "../context/AuthContext";
 
 /* ----------------------------- API endpoints ----------------------------- */
-const LIST_THEATRES = "/theatres";                      // GET
-const CREATE_THEATRE_ADMIN = "/superadmin/theatre-admins"; // POST { name,email,password,theatreId }
+const LIST_THEATRES = "/theatres";                           // GET
+const CREATE_THEATRE_ADMIN = "/superadmin/theatre-admins";   // POST { name,email,password,theatreId }
 
 /* ----------------------------- Walmart primitives ---------------------------- */
 const Card = ({ children, className = "" }) => (
@@ -69,12 +69,12 @@ export default function AdminDashboard() {
   const { isSuperAdmin, isAdmin, isTheatreAdmin } = useAuth();
 
   // Role gates must mirror your App.jsx route guards
-  const canScreens   = isSuperAdmin || isAdmin || isTheatreAdmin; // /admin/screens
-  const canShowtimes = isSuperAdmin;                               // /admin/showtimes
-  const canTheaters  = isSuperAdmin;                               // /admin/theaters
-  const canMovies    = isSuperAdmin;                               // /admin/movies
-  const canPricing   = isSuperAdmin || isTheatreAdmin;             // /admin/pricing
-  const canAnalytics = isSuperAdmin;                               // /admin/analytics
+  const canScreens   = isSuperAdmin || isAdmin || isTheatreAdmin;      // /admin/screens
+  const canShowtimes = isSuperAdmin || isTheatreAdmin;                 // /admin/showtimes (updated)
+  const canTheaters  = isSuperAdmin;                                   // /admin/theaters
+  const canMovies    = isSuperAdmin;                                   // /admin/movies
+  const canPricing   = isSuperAdmin || isTheatreAdmin;                 // /admin/pricing
+  const canAnalytics = isSuperAdmin;                                   // /admin/analytics
 
   const links = [
     { to: "/admin/theaters",  label: "Manage Theaters",  desc: "Add or edit theaters",        icon: Building2,     show: canTheaters },
@@ -212,7 +212,7 @@ export default function AdminDashboard() {
                   className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#0071DC]"
                   placeholder="e.g. PVR Manager"
                   value={aName}
-                  onChange={(e) => setAName(e.target value)}
+                  onChange={(e) => setAName(e.target.value)}   // fixed typo
                   required
                 />
               </div>
