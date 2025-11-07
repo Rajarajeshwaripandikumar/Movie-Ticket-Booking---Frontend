@@ -1,4 +1,4 @@
-// src/pages/AdminShowtimes.jsx — vertical stack enforced with local CSS override
+// src/pages/AdminShowtimes.jsx — vertical stack enforced with local CSS override (FIXED)
 import { useEffect, useState } from "react";
 import api from "../api/api";
 import { useAuth } from "../context/AuthContext";
@@ -87,6 +87,8 @@ export default function AdminShowtimes() {
           for (const key of Object.keys(payload)) {
             if (Array.isArray(payload[key])) return payload[key];
           }
+          // 🔁 normalize single-object responses to array
+          if (payload._id) return [payload];
         }
       } catch (e) {
         lastErr = e;
@@ -102,7 +104,6 @@ export default function AdminShowtimes() {
     if (token) {
       loadMovies();
       loadTheaters();
-      loadShowtimes();
     } else {
       setMovies([]); setTheaters([]); setShowtimes([]); setScreens([]);
     }
@@ -113,8 +114,8 @@ export default function AdminShowtimes() {
     try {
       const ts = Date.now();
       const candidates = [
-        `/api/movies?status=active&ts=${ts}`,
-        `/api/movies?ts=${ts}`,
+        `/api/movies/admin/list?ts=${ts}`, // full list if authed
+        `/api/movies?ts=${ts}`,            // public fallback
         `/movies?ts=${ts}`,
       ];
       const list = await tryFetchCandidates(candidates);
@@ -130,17 +131,22 @@ export default function AdminShowtimes() {
     try {
       const ts = Date.now();
       const candidates = [
-        `/api/theatre/me?ts=${ts}`,
-        `/theatre/me?ts=${ts}`,
+        `/api/theaters/me?ts=${ts}`,                    // ✅ correct singular object
+        `/api/theaters/admin/theaters/mine?ts=${ts}`,   // {data:[...] }
+        `/api/theatres/me?ts=${ts}`,                    // alias (UK spelling)
       ];
       const list = await tryFetchCandidates(candidates);
       setTheaters(list);
-      if (list?.length) {
-        const first = list[0];
+      const first = Array.isArray(list) && list.length ? list[0] : null;
+      if (first) {
         const firstId = first._id || first.id || "";
         setTheaterId((p) => p || firstId);
         setCity((p) => p || first.city || "");
         if (firstId) await loadScreensForTheater(firstId);
+        // Load only my theatre's upcoming showtimes
+        await loadShowtimesMyTheatre();
+      } else {
+        setMsg("No theatre linked to this account."); setMsgType("error");
       }
     } catch (err) {
       console.error("loadTheaters error", err);
@@ -154,8 +160,9 @@ export default function AdminShowtimes() {
     try {
       const ts = Date.now();
       const candidates = [
-        `/api/screens/by-theatre/${id}?ts=${ts}`,
+        `/api/screens/by-theatre/${id}?ts=${ts}`, // ✅ our alias returns raw array
         `/screens/by-theatre/${id}?ts=${ts}`,
+        `/api/theaters/${id}/screens?ts=${ts}`,   // standard public shape: {ok:true,data:[...]}
       ];
       const list = await tryFetchCandidates(candidates);
       setScreens(list);
@@ -177,12 +184,12 @@ export default function AdminShowtimes() {
     setRows(r); setCols(c);
   }
 
-  async function loadShowtimes() {
+  async function loadShowtimesMyTheatre() {
     try {
       const ts = Date.now();
+      // Returns ONLY the logged-in manager’s theatre shows
       const candidates = [
-        `/api/showtimes?ts=${ts}`,
-        `/showtimes?ts=${ts}`,
+        `/api/showtimes/my-theatre?ts=${ts}`, // ✅ backend route added
       ];
       const list = await tryFetchCandidates(candidates);
       setShowtimes(list);
@@ -192,7 +199,7 @@ export default function AdminShowtimes() {
         if (st) setStartTime(toLocalDatetimeInputValue(st));
       }
     } catch (err) {
-      console.error("loadShowtimes error", err);
+      console.error("loadShowtimesMyTheatre error", err);
       setMsg("Failed to load showtimes."); setMsgType("error");
     }
   }
@@ -209,7 +216,7 @@ export default function AdminShowtimes() {
     const st = showtimes.find((s) => s._id === id || s.id === id);
     if (st) {
       setStartTime(toLocalDatetimeInputValue(st.startTime ?? st.startAt ?? st.date ?? st.datetime));
-      setBasePrice(st.basePrice ?? st.price ?? st.amount ?? 200);
+      setBasePrice(st.basePrice ?? s.price ?? s.amount ?? 200);
       setCity(st.theater?.city ?? st.city ?? "");
       if (st.screen) setScreenId(st.screen._id ?? st.screen);
       if (st.theater) setTheaterId(st.theater._id ?? st.theater);
@@ -227,7 +234,6 @@ export default function AdminShowtimes() {
     setLoading(true);
     try {
       const iso = new Date(startTime).toISOString();
-      // Send multiple field aliases for compatibility
       const payload = {
         movieId, theaterId, screenId,
         movie: movieId, theater: theaterId, screen: screenId,
@@ -253,7 +259,7 @@ export default function AdminShowtimes() {
 
       setMsg("Showtime created successfully!"); setMsgType("success");
       setStartTime("");
-      await loadShowtimes();
+      await loadShowtimesMyTheatre();
     } catch (err) {
       console.error("createShowtime error", err);
       setMsg(err?.response?.data?.message || "Failed to create showtime"); setMsgType("error");
@@ -287,7 +293,7 @@ export default function AdminShowtimes() {
       if (!patched) throw new Error("Update endpoint not found");
 
       setMsg("Showtime updated successfully!"); setMsgType("success");
-      await loadShowtimes();
+      await loadShowtimesMyTheatre();
     } catch (err) {
       console.error("patchShowtime error", err);
       setMsg(err?.response?.data?.message || "Failed to update showtime"); setMsgType("error");
@@ -327,7 +333,7 @@ export default function AdminShowtimes() {
             </h1>
             <p className="text-sm text-slate-600 mt-1">Create, update, and organize theater schedules.</p>
           </div>
-          <SecondaryBtn onClick={loadShowtimes}>
+          <SecondaryBtn onClick={loadShowtimesMyTheatre}>
             <RefreshCcw className="h-4 w-4" /> Refresh
           </SecondaryBtn>
         </Card>
@@ -521,7 +527,7 @@ export default function AdminShowtimes() {
                             }
                             if (!deleted) throw new Error("Delete endpoint not found");
                             setMsg("Showtime deleted"); setMsgType("success");
-                            await loadShowtimes();
+                            await loadShowtimesMyTheatre();
                           } catch (err) {
                             console.error("delete showtime error", err);
                             setMsg("Delete failed"); setMsgType("error");
