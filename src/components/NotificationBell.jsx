@@ -54,24 +54,46 @@ export default function NotificationBell() {
     );
   }, []);
 
-  /* --------- Routing logic --------- */
-  function resolvePath(n) {
-    const t = String(n?.type || "").toUpperCase();
-    const bookingId = n?.data?.bookingId || n?.bookingId || n?.data?._id || n?.entityId;
-    const showtimeId = n?.data?.showtimeId || n?.showtimeId;
+  /* --------- Routing helpers --------- */
+  const isAdmin = (role || "").toLowerCase() === "admin";
+
+  function derivePathFromDoc(doc) {
+    // Highest priority: explicit link from backend
+    if (doc?.link) return doc.link;
+
+    const t = String(doc?.type || doc?.entityType || "").toUpperCase();
+    const bookingId =
+      doc?.entityId ||
+      doc?.bookingId ||
+      doc?.data?.bookingId ||
+      doc?.data?._id;
+    const showtimeId = doc?.showtimeId || doc?.data?.showtimeId;
+
     if (bookingId && (t.includes("BOOKING") || t.includes("TICKET"))) {
-      return role?.toLowerCase() === "admin"
-        ? `/admin/bookings/${bookingId}`
-        : `/bookings/${bookingId}`;
+      return isAdmin ? `/admin/bookings/${bookingId}` : `/bookings/${bookingId}`;
     }
-    if (showtimeId) {
-      return role?.toLowerCase() === "admin"
-        ? `/admin/showtimes/${showtimeId}`
-        : `/showtimes/${showtimeId}`;
+    if (showtimeId || t.includes("SHOWTIME")) {
+      const id = showtimeId || doc?.entityId || doc?.data?.id;
+      if (id) return isAdmin ? `/admin/showtimes/${id}` : `/showtimes/${id}`;
     }
-    return role?.toLowerCase() === "admin"
-      ? "/admin/notifications"
-      : "/bookings";
+    // Fallbacks
+    return isAdmin ? "/admin/notifications" : "/notifications";
+  }
+
+  // For initial list (we may not have full doc yet)
+  function resolvePath(n) {
+    if (n?.link) return n.link;
+    const t = String(n?.type || "").toUpperCase();
+    const bookingId = n?.data?.bookingId || n?.bookingId || n?.entityId || n?.data?._id;
+    const showtimeId = n?.data?.showtimeId || n?.showtimeId || n?.entityId;
+    if (bookingId && (t.includes("BOOKING") || t.includes("TICKET"))) {
+      return isAdmin ? `/admin/bookings/${bookingId}` : `/bookings/${bookingId}`;
+    }
+    if (showtimeId || t.includes("SHOWTIME")) {
+      const id = showtimeId || n?.entityId;
+      if (id) return isAdmin ? `/admin/showtimes/${id}` : `/showtimes/${id}`;
+    }
+    return isAdmin ? "/admin/notifications" : "/bookings"; // legacy fallback
   }
 
   const pickIcon = (type) => {
@@ -83,20 +105,25 @@ export default function NotificationBell() {
     return <BellRing className="h-4 w-4 text-slate-600" />;
   };
 
-  async function markOneRead(id) {
-    if (!token || !id) return;
-    try {
-      await api.patch(`/notifications/${id}/read`, {}, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      setItems((prev) =>
-        prev.map((n) =>
-          String(n._id) === String(id)
-            ? { ...n, readAt: n.readAt || new Date().toISOString() }
-            : n
-        )
-      );
-    } catch {}
+  async function openAndNavigate(n, fallbackTo) {
+    // Prefer server "open": marks read + returns full doc with link/entity hints
+    if (token && n?._id) {
+      try {
+        const { data: doc } = await api.post(`/notifications/${n._id}/open`, {}, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        // reflect read locally
+        setItems((prev) =>
+          prev.map((x) => (String(x._id) === String(doc._id) ? { ...x, readAt: doc.readAt || new Date().toISOString(), readBy: doc.readBy || x.readBy } : x))
+        );
+        navigate(derivePathFromDoc(doc));
+        return;
+      } catch (e) {
+        // fall through to client-side path if server call fails
+        console.warn("open failed, using fallback route", e?.message || e);
+      }
+    }
+    navigate(fallbackTo || resolvePath(n));
   }
 
   /* --------- Initial Fetch --------- */
@@ -111,14 +138,8 @@ export default function NotificationBell() {
           headers: { Authorization: `Bearer ${token}` },
         });
         const raw = res?.data;
-        const list = Array.isArray(raw)
-          ? raw
-          : Array.isArray(raw?.data)
-          ? raw.data
-          : [];
-        const normalized = list.map((n) =>
-          n && n._id ? n : { ...n, clientKey: makeId() }
-        );
+        const list = Array.isArray(raw) ? raw : Array.isArray(raw?.data) ? raw.data : [];
+        const normalized = list.map((n) => (n && n._id ? n : { ...n, clientKey: makeId() }));
         setItems((prev) => merge(prev, normalized).slice(0, 50));
       } catch {
         setItems([]);
@@ -132,7 +153,7 @@ export default function NotificationBell() {
     if (!token) return;
     let closed = false;
     let backoff = 1000;
-    const url = `${API_BASE}/notifications/stream?token=${encodeURIComponent(token)}`;
+    const url = `${API_BASE}/notifications/stream?token=${encodeURIComponent(token)}&seed=1`;
 
     const connect = () => {
       if (closed) return;
@@ -142,8 +163,7 @@ export default function NotificationBell() {
       const handleMsg = (ev) => {
         if (!ev.data) return;
         try {
-          const msg = JSON.parse(ev.data);
-          const payload = msg?.payload || msg;
+          const payload = JSON.parse(ev.data); // server sends doc as data
           const item = {
             _id: payload._id,
             clientKey: payload._id ? undefined : makeId(),
@@ -151,8 +171,11 @@ export default function NotificationBell() {
             message: payload.message || payload.body || "",
             createdAt: payload.createdAt || new Date().toISOString(),
             readAt: payload.readAt,
-            type: payload.type,
+            type: payload.type || payload.entityType,
             data: payload.data,
+            link: payload.link,
+            entityType: payload.entityType,
+            entityId: payload.entityId,
           };
           setItems((prev) => merge(prev, [item]).slice(0, 50));
         } catch {}
@@ -197,9 +220,7 @@ export default function NotificationBell() {
       await api.post("/notifications/read-all", {}, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      setItems((prev) =>
-        prev.map((n) => ({ ...n, readAt: n.readAt || new Date().toISOString() }))
-      );
+      setItems((prev) => prev.map((n) => ({ ...n, readAt: n.readAt || new Date().toISOString() })));
     } finally {
       setBusyAll(false);
     }
@@ -260,18 +281,22 @@ export default function NotificationBell() {
                 const isUnread = !n.readAt;
                 return (
                   <li key={toKey(n)}>
+                    {/* Keep a Link for middle-click/right-click; override left-click to use openAndNavigate */}
                     <Link
                       to={to}
                       onClick={(e) => {
-                        e.stopPropagation();
-                        setOpen(false);
-                        if (n._id && !n.readAt) markOneRead(n._id);
+                        if (e.button === 0) { // left click
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setOpen(false);
+                          openAndNavigate(n, to);
+                        }
                       }}
                       className={`flex items-start gap-2 rounded-xl px-3 py-2 border border-transparent hover:bg-slate-50 transition ${
                         isUnread ? "bg-blue-50" : ""
                       }`}
                     >
-                      <div className="mt-1">{pickIcon(n.type)}</div>
+                      <div className="mt-1">{pickIcon(n.type || n.entityType)}</div>
                       <div className="flex-1">
                         <div className="text-sm font-semibold text-slate-900">
                           {n.title || "Notification"}
@@ -295,7 +320,7 @@ export default function NotificationBell() {
           {/* Footer */}
           <div className="sticky bottom-0 bg-white border-t border-slate-200 p-2 text-right rounded-b-2xl">
             <Link
-              to={role?.toLowerCase() === "admin" ? "/admin/notifications" : "/bookings"}
+              to={isAdmin ? "/admin/notifications" : "/notifications"}
               onClick={() => setOpen(false)}
               className="text-xs font-semibold text-[#0071DC] hover:text-[#0654BA] underline underline-offset-4"
             >
