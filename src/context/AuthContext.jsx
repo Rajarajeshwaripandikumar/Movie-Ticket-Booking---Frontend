@@ -32,7 +32,7 @@ function decodeJwt(token) {
   return safeJsonBase64Decode(parts[1]);
 }
 
-/* ---------------- normalize role helper ---------------- */
+/* ---------------- normalize role helper (canonical: THEATRE_ADMIN) ---------------- */
 function normalizeRole(raw) {
   if (raw === undefined || raw === null) return null;
   try {
@@ -46,12 +46,10 @@ function normalizeRole(raw) {
     // strip Spring prefix
     if (v.startsWith("ROLE_")) v = v.slice(5);
 
-    // map managers to theatre admin
-    if (/_MANAGER$/.test(v)) v = "THEATER_ADMIN";
-
-    // British/American + owner variants
-    if (["THEATRE_ADMIN", "THEATRE_OWNER", "THEATER_OWNER"].includes(v))
-      v = "THEATER_ADMIN";
+    // Map managers/owners and US spelling to canonical UK spelling
+    if (/_MANAGER$/.test(v)) v = "THEATRE_ADMIN";
+    if (["THEATER_ADMIN", "THEATRE_OWNER", "THEATER_OWNER"].includes(v))
+      v = "THEATRE_ADMIN";
 
     if (v === "SUPERADMIN") v = "SUPER_ADMIN";
 
@@ -64,8 +62,8 @@ function normalizeRole(raw) {
 function defaultLandingFor(role) {
   const r = normalizeRole(role);
   if (r === "SUPER_ADMIN") return "/admin/dashboard";
-  if (r === "THEATER_ADMIN") return "/admin/my-theatre";
-  if (r === "ADMIN") return "/admin/dashboard"; // only if you actually use ADMIN
+  if (r === "THEATRE_ADMIN") return "/theatre/my";
+  if (r === "ADMIN") return "/admin/dashboard";
   return "/";
 }
 
@@ -262,15 +260,26 @@ export function AuthProvider({ children }) {
     setTimeout(() => window.location.replace(defaultLandingFor(finalRole)), 0);
   }, []);
 
-  /* ADMIN LOGIN (SUPER_ADMIN / THEATER_ADMIN ONLY) */
+  /* ADMIN LOGIN (SUPER_ADMIN / THEATRE_ADMIN / ADMIN) */
   const loginAdmin = useCallback(async (email, password) => {
-    const res = await api.post("/auth/admin-login", { email, password });
+    // Try slash route first, then hyphen fallback
+    let res;
+    try {
+      res = await api.post("/auth/admin/login", { email, password });
+    } catch {
+      res = await api.post("/auth/admin-login", { email, password });
+    }
     const data = res?.data ?? res;
-    const t = data?.token;
+    const t = data?.adminToken || data?.token;
     if (!t || typeof t !== "string") throw new Error("No admin token returned from server");
 
     const claims = decodeJwt(t) || {};
-    const finalRole = normalizeRole(claims.role) || normalizeRole(data?.user?.role) || "ADMIN";
+    const finalRole =
+      normalizeRole(claims.role) ||
+      normalizeRole(data?.role) ||
+      normalizeRole(data?.user?.role) ||
+      "ADMIN";
+
     const permsArr =
       (Array.isArray(claims.perms) && claims.perms) ||
       (Array.isArray(data?.user?.perms) && data.user.perms) ||
@@ -370,7 +379,7 @@ export function AuthProvider({ children }) {
   const isLoggedIn = !!activeToken;
   const isSuperAdmin = role === "SUPER_ADMIN";
   const isAdmin = role === "ADMIN";                 // keep ADMIN literal only
-  const isTheatreAdmin = role === "THEATER_ADMIN";
+  const isTheatreAdmin = role === "THEATRE_ADMIN";
   const isUser = role === "USER";
 
   /* RBAC helpers */
@@ -407,7 +416,7 @@ export function AuthProvider({ children }) {
 
       // actions
       login,        // user login (/auth/login)
-      loginAdmin,   // admin login (/auth/admin-login)
+      loginAdmin,   // admin login (/auth/admin-login or /auth/admin/login)
       logout,
       refreshProfile,
 
