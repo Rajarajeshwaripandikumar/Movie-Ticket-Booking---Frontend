@@ -1,4 +1,4 @@
-// src/pages/AdminTheaters.jsx — wired to /superadmin/theaters (CRUD) + role-aware fetch
+// src/pages/AdminTheaters.jsx — fully updated & cache-safe
 
 import { useEffect, useMemo, useState } from "react";
 import api from "../api/api";
@@ -76,8 +76,6 @@ const normalizeTheater = (t = {}) => ({
   imageUrl: t.imageUrl || t.poster || t.image || "",
 });
 
-// Safely read role from different shapes the app might use
-const getRole = (u) => u?.role || u?.data?.role || u?.data?.user?.role;
 const ROLE = {
   SUPER_ADMIN: "SUPER_ADMIN",
   THEATRE_ADMIN: "THEATRE_ADMIN",
@@ -85,12 +83,17 @@ const ROLE = {
   USER: "USER",
 };
 
+const getRole = (u) => u?.role || u?.data?.role || u?.data?.user?.role;
+
+/* ========================================================================= */
+
 export default function AdminTheaters() {
   const { token, user } = useAuth() || {};
   const role = getRole(user);
   const isSuperAdmin = role === ROLE.SUPER_ADMIN;
 
   const [theaters, setTheaters] = useState([]);
+  const [listLoading, setListLoading] = useState(false);
 
   const [selectedId, setSelectedId] = useState(null);
   const [name, setName] = useState("");
@@ -111,36 +114,41 @@ export default function AdminTheaters() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, isSuperAdmin]);
 
-  // Role-aware load with safe fallback:
-  // - SUPER_ADMIN → /superadmin/theaters
-  // - THEATRE_ADMIN/others → try /theaters/mine, fallback to /superadmin/theaters if 404 (in case mine isn't implemented)
   async function loadTheaters() {
     setMsg("");
     setMsgType("info");
+    setListLoading(true);
     try {
       let data;
 
       if (isSuperAdmin) {
-        const res = await api.get("/superadmin/theaters", { params: { ts: Date.now() } });
-        data = res.data;
+        data = await api.getFresh("/superadmin/theaters");
       } else {
         try {
-          const resMine = await api.get("/theaters/mine", { params: { ts: Date.now() } });
-          data = resMine.data;
-        } catch (err) {
-          // Fallback: some backends don’t implement /theaters/mine; try superadmin list (will 403 if protected)
-          const resAll = await api.get("/superadmin/theaters", { params: { ts: Date.now() } });
-          data = resAll.data;
+          data = await api.getFresh("/theaters/mine");
+        } catch {
+          data = await api.getFresh("/superadmin/theaters");
         }
       }
 
-      const arr = Array.isArray(data) ? data : (data?.theaters || data?.data || []);
-      setTheaters((Array.isArray(arr) ? arr : []).map(normalizeTheater));
+      let arr = Array.isArray(data) ? data : (data?.theaters || data?.data || []);
+
+      // Retry once if empty due to cache race
+      if (!arr.length) {
+        const retryUrl = isSuperAdmin ? "/superadmin/theaters" : "/theaters/mine";
+        try {
+          const retryData = await api.getFresh(retryUrl);
+          const rArr = Array.isArray(retryData) ? retryData : (retryData?.theaters || retryData?.data || []);
+          if (Array.isArray(rArr) && rArr.length) arr = rArr;
+        } catch {}
+      }
+
+      setTheaters(arr.map(normalizeTheater));
     } catch (e) {
-      const m = e?.response?.data?.message || e?.message || "⚠️ Failed to load theaters";
-      setMsg(m);
+      setMsg(e?.response?.data?.message || "⚠️ Failed to load theaters");
       setMsgType("error");
     }
+    setListLoading(false);
   }
 
   function resetForm() {
@@ -157,14 +165,11 @@ export default function AdminTheaters() {
   function onPickFile(e) {
     const f = e.target.files?.[0];
     if (!f) return;
-    const url = URL.createObjectURL(f);
-    setPreview(url);
+    setPreview(URL.createObjectURL(f));
     setPreviewKey((k) => k + 1);
   }
 
-  /* ------------------------------ CRUD Actions ----------------------------- */
-  // NOTE: CRUD is restricted to SUPER_ADMIN and uses /superadmin/theaters endpoints
-
+  /* ------------------------------ CRUD ------------------------------ */
   async function createTheater(e) {
     e.preventDefault();
     if (!name.trim() || !city.trim()) {
@@ -180,16 +185,9 @@ export default function AdminTheaters() {
 
     setLoading(true);
     try {
-      const payload = {
-        name: name.trim(),
-        city: city.trim(),
-        address: address.trim(),
-        amenities: amenitiesList, // backend may ignore if not in schema
-      };
-
-      const res = await api.post("/superadmin/theaters", payload);
-      const created = res.data?.theater || res.data;
-      const createdNorm = normalizeTheater(created);
+      const payload = { name, city, address, amenities: amenitiesList };
+      const created = await api.post("/superadmin/theaters", payload);
+      const createdNorm = normalizeTheater(created.data?.theater || created.data);
       setTheaters((t) => [createdNorm, ...t]);
       resetForm();
       setMsg("✅ Theater created!");
@@ -203,29 +201,14 @@ export default function AdminTheaters() {
 
   async function updateTheaterById() {
     if (!selectedId) return;
-    if (!name.trim() || !city.trim()) {
-      setMsg("⚠️ Name & City required");
-      setMsgType("error");
-      return;
-    }
-    if (!isSuperAdmin) {
-      setMsg("❌ Only SUPER_ADMIN can update theaters");
-      setMsgType("error");
-      return;
-    }
+    if (!isSuperAdmin) return;
 
     setLoading(true);
     try {
-      const payload = {
-        name: name.trim(),
-        city: city.trim(),
-        address: address.trim(),
-        amenities: amenitiesList,
-      };
-
-      const res = await api.put(`/superadmin/theaters/${selectedId}`, payload);
-      const updated = res.data?.theater || res.data;
-      setTheaters((list) => list.map((t) => (t._id === selectedId ? normalizeTheater(updated) : t)));
+      const payload = { name, city, address, amenities: amenitiesList };
+      const updated = await api.put(`/superadmin/theaters/${selectedId}`, payload);
+      const upd = normalizeTheater(updated.data?.theater || updated.data);
+      setTheaters((t) => t.map((x) => (x._id === selectedId ? upd : x)));
       setMsg("✅ Updated!");
       setMsgType("success");
     } catch (e) {
@@ -236,11 +219,7 @@ export default function AdminTheaters() {
   }
 
   async function deleteTheater(id) {
-    if (!isSuperAdmin) {
-      setMsg("❌ Only SUPER_ADMIN can delete theaters");
-      setMsgType("error");
-      return;
-    }
+    if (!isSuperAdmin) return;
     if (!window.confirm("Delete this theater?")) return;
     try {
       await api.delete(`/superadmin/theaters/${id}`);
@@ -254,13 +233,10 @@ export default function AdminTheaters() {
     }
   }
 
-  /* ------------------------------ Derivations ------------------------------ */
+  /* ------------------------------ UI maps ------------------------------ */
   const names = useMemo(() => [...new Set(theaters.map((t) => t.name))], [theaters]);
   const cities = useMemo(() => [...new Set(theaters.map((t) => t.city))], [theaters]);
-  const addresses = useMemo(
-    () => [...new Set(theaters.map((t) => t.address).filter(Boolean))],
-    [theaters]
-  );
+  const addresses = useMemo(() => [...new Set(theaters.map((t) => t.address).filter(Boolean))], [theaters]);
 
   function fillFromTheater(t) {
     t = normalizeTheater(t);
@@ -274,7 +250,7 @@ export default function AdminTheaters() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  /* --------------------------------- UI ------------------------------------ */
+  /* ------------------------------ RENDER ------------------------------ */
   return (
     <main className="min-h-screen w-full bg-slate-50 py-8 px-4 md:px-6 text-slate-900">
       <div className="max-w-7xl mx-auto space-y-5">
@@ -329,13 +305,7 @@ export default function AdminTheaters() {
                 ))}
               </Field>
 
-              <Field
-                label="Theater Name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                icon={Building2}
-                required
-              />
+              <Field label="Theater Name" value={name} onChange={(e) => setName(e.target.value)} icon={Building2} required />
 
               <Field
                 as="select"
@@ -372,10 +342,7 @@ export default function AdminTheaters() {
                 {amenitiesList.map((a) => (
                   <span key={a} className="px-2 py-1 text-xs border rounded-full flex items-center gap-1">
                     <Check className="h-3 w-3 text-emerald-600" /> {a}
-                    <X
-                      className="h-3 w-3 cursor-pointer"
-                      onClick={() => setAmenitiesList(amenitiesList.filter((x) => x !== a))}
-                    />
+                    <X className="h-3 w-3 cursor-pointer" onClick={() => setAmenitiesList(amenitiesList.filter((x) => x !== a))} />
                   </span>
                 ))}
               </div>
@@ -395,7 +362,6 @@ export default function AdminTheaters() {
                 icon={ListChecks}
               />
 
-              {/* Poster picker kept for future; not sent to backend in this version */}
               <label className="text-xs font-semibold">Poster (UI only)</label>
               <div className="flex gap-3 items-center">
                 <img key={previewKey} src={preview || DEFAULT_IMG} className="w-20 h-20 rounded-xl object-cover border" />
@@ -431,55 +397,58 @@ export default function AdminTheaters() {
               <Building2 className="h-5 w-5" /> Existing Theaters
             </h2>
 
-            <ul className="space-y-3 max-h-[60vh] overflow-auto pr-1">
-              {theaters.map((t) => (
-                <li
-                  key={t._id}
-                  className={`flex justify-between items-center border rounded-2xl p-3 shadow-sm ${
-                    selectedId === t._id ? "ring-2 ring-[#0071DC]" : ""
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <img
-                      src={t.imageUrl || DEFAULT_IMG}
-                      onError={(e) => {
-                        e.currentTarget.src = DEFAULT_IMG;
-                      }}
-                      className="w-14 h-14 rounded-xl object-cover border"
-                    />
-                    <div>
-                      <div className="font-extrabold">{t.name}</div>
-                      <div className="text-sm text-slate-700">
-                        {t.city} • {t.address || "—"}
+            {listLoading ? (
+              <div className="text-sm text-slate-500">Loading theaters…</div>
+            ) : theaters.length === 0 ? (
+              <div className="text-sm text-slate-500">No theaters found.</div>
+            ) : (
+              <ul className="space-y-3 max-h-[60vh] overflow-auto pr-1">
+                {theaters.map((t) => (
+                  <li
+                    key={t._id}
+                    className={`flex justify-between items-center border rounded-2xl p-3 shadow-sm ${
+                      selectedId === t._id ? "ring-2 ring-[#0071DC]" : ""
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <img
+                        src={t.imageUrl || DEFAULT_IMG}
+                        onError={(e) => (e.currentTarget.src = DEFAULT_IMG)}
+                        className="w-14 h-14 rounded-xl object-cover border"
+                      />
+                      <div>
+                        <div className="font-extrabold">{t.name}</div>
+                        <div className="text-sm text-slate-700">
+                          {t.city} • {t.address || "—"}
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          {t.amenities?.join(" • ") || "No amenities"}
+                        </div>
                       </div>
-                      <div className="text-xs text-slate-500">{t.amenities?.join(" • ") || "No amenities"}</div>
                     </div>
-                  </div>
 
-                  {/* Actions: Edit + Delete (UI guard) */}
-                  {isSuperAdmin && (
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        title="Edit"
-                        onClick={() => fillFromTheater(t)}
-                        className="inline-flex items-center justify-center w-9 h-9 rounded-full border border-slate-300 bg-white hover:bg-slate-50"
-                      >
-                        <PencilLine className="h-4 w-4" />
-                      </button>
-                      <button
-                        type="button"
-                        title="Delete"
-                        onClick={() => deleteTheater(t._id)}
-                        className="inline-flex items-center justify-center w-9 h-9 rounded-full border border-rose-300 bg-white hover:bg-rose-50 text-rose-600"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </div>
-                  )}
-                </li>
-              ))}
-            </ul>
+                    {isSuperAdmin && (
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => fillFromTheater(t)}
+                          className="inline-flex items-center justify-center w-9 h-9 rounded-full border border-slate-300 bg-white hover:bg-slate-50"
+                        >
+                          <PencilLine className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => deleteTheater(t._id)}
+                          className="inline-flex items-center justify-center w-9 h-9 rounded-full border border-rose-300 bg-white hover:bg-rose-50 text-rose-600"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
           </Card>
         </div>
       </div>
