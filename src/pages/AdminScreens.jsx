@@ -75,7 +75,7 @@ const normalizeScreen = (s = {}) => {
 
 async function fetchScreensForTheater(theaterId) {
   const ts = Date.now();
-  // ✅ this one is correct against screens.routes.js
+  // ✅ matches backend screens.routes mount under /api
   const { data } = await api.get(`/admin/theaters/${theaterId}/screens?ts=${ts}`);
   const arr = Array.isArray(data) ? data : (data?.data || []);
   return arr.filter(Boolean).map(normalizeScreen);
@@ -92,7 +92,7 @@ async function updateScreenApi(theaterId, screenId, body) {
   }
 }
 
-/* Canonical role helper (match api.js: THEATRE_ADMIN is canonical) */
+/* Canonical role helper (THEATRE_ADMIN is canonical) */
 const canonRole = (r) => {
   if (r == null) return null;
   let v = String(r).trim().toUpperCase().replace(/\s+/g, "_");
@@ -126,7 +126,6 @@ export default function AdminScreens() {
   if (!token && !isAuthenticated) return <Navigate to="/admin/login" replace />;
   if (!isSomeAdmin) return <Navigate to="/" replace />;
 
-  const isSuper = rolesList.includes("SUPER_ADMIN");
   const isTheatreAdmin = rolesList.includes("THEATRE_ADMIN");
 
   const jwtTheatreId =
@@ -150,14 +149,11 @@ export default function AdminScreens() {
     }
   }, [isTheatreAdmin, jwtTheatreId, selectedTheater]);
 
-  // 🔧 FIX: use /theaters/admin/theaters[(/mine)]
+  // ✅ Use canonical list endpoint: /admin/theaters
   useEffect(() => {
     const load = async () => {
       try {
-        const url = isTheatreAdmin
-          ? `/theaters/admin/theaters/mine?ts=${Date.now()}`
-          : `/theaters/admin/theaters?ts=${Date.now()}`;
-        const { data } = await api.get(url);
+        const { data } = await api.get(`/admin/theaters?ts=${Date.now()}`);
         const list = Array.isArray(data) ? data : (data?.theaters || data?.data || []);
         setTheaters(Array.isArray(list) ? list : []);
         setMsg("");
@@ -276,11 +272,11 @@ export default function AdminScreens() {
     }
   }
 
-  // 🔧 FIX: delete endpoint lives under /theaters/admin/:id (or .../theaters/:id)
+  // ✅ Delete via canonical admin route
   async function deleteTheater(id) {
     if (!confirm("Delete this theater and its screens?")) return;
     try {
-      await api.delete(`/theaters/admin/${id}`);
+      await api.delete(`/admin/theaters/${id}`);
       setTheaters((prev) => prev.filter((t) => t._id !== id));
       if (selectedTheater === id) {
         setSelectedTheater("");
@@ -313,10 +309,7 @@ export default function AdminScreens() {
             <SecondaryBtn onClick={() => {
               (async () => {
                 try {
-                  const url = isTheatreAdmin
-                    ? `/theaters/admin/theaters/mine?ts=${Date.now()}`
-                    : `/theaters/admin/theaters?ts=${Date.now()}`;
-                  const { data } = await api.get(url);
+                  const { data } = await api.get(`/admin/theaters?ts=${Date.now()}`);
                   const list = Array.isArray(data) ? data : (data?.theaters || data?.data || []);
                   setTheaters(Array.isArray(list) ? list : []);
                 } catch {}
@@ -461,7 +454,7 @@ export default function AdminScreens() {
             <Building2 className="h-5 w-5 text-[#0654BA]" /> Available Theaters
           </h2>
 
-          {(!theaters || theaters.length === 0) ? (
+        {(!theaters || theaters.length === 0) ? (
             <p className="text-sm text-slate-600">No theaters found.</p>
           ) : (
             <ul className="grid gap-4 sm:grid-cols-2">
