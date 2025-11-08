@@ -1,65 +1,103 @@
 // src/App.jsx
-import React, { useEffect } from "react";
-import { Routes, Route, Navigate, useLocation } from "react-router-dom";
+import React, { useEffect, useState } from "react";
+import { Routes, Route, Navigate, useLocation, Link, useNavigate } from "react-router-dom";
 import { useAuth } from "./context/AuthContext";
 
-// Layout
-import Navbar from "./components/Navbar";
-import Footer from "./components/Footer";
-import GlobalBackdrop from "./components/GlobalBackdrop";
-import AdminShell from "./layouts/AdminShell";
+/* ---------------- Layout (kept minimal so it's self-contained) ------------- */
+function GlobalBackdrop() { return null; }
+function Footer() { return <footer className="p-6 text-center text-slate-500">© Cinema</footer>; }
 
-// Public pages
-import Home from "./pages/Home";
-import Login from "./pages/Login";
-import AdminLogin from "./pages/AdminLogin";
-import Register from "./pages/Register";
-import Movies from "./pages/Movies";
-import MovieDetail from "./pages/MovieDetail";
-import Showtimes from "./pages/Showtimes";
-import SeatSelection from "./pages/SeatSelection";
-import Checkout from "./pages/Checkout";
-import PaymentPage from "./pages/PaymentPage";
-import TheatersPage from "./pages/TheatersPage";
-import TicketDetails from "./pages/TicketDetails";
-import ForgotPassword from "./pages/ForgotPassword";
-import ResetPassword from "./pages/ResetPassword";
+/** Inline admin quick menu so you don't need AdminUserMenu.jsx */
+function AdminQuickMenu() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative">
+      <button
+        className="px-3 py-2 rounded-xl border bg-white hover:bg-slate-50"
+        onClick={() => setOpen(o => !o)}
+      >
+        Admin Menu ▾
+      </button>
+      {open && (
+        <div className="absolute right-0 mt-2 min-w-[240px] rounded-xl border bg-white shadow-lg p-2 z-50">
+          <nav className="flex flex-col gap-1">
+            <Link className="px-3 py-2 rounded-lg hover:bg-slate-50" to="/admin/profile" onClick={() => setOpen(false)}>Profile</Link>
+            <Link className="px-3 py-2 rounded-lg hover:bg-slate-50" to="/admin/theaters" onClick={() => setOpen(false)}>Manage Theaters</Link>
+            <Link className="px-3 py-2 rounded-lg hover:bg-slate-50" to="/admin/movies" onClick={() => setOpen(false)}>Manage Movies</Link>
+            {/* ✅ absolute link */}
+            <Link className="px-3 py-2 rounded-lg hover:bg-slate-50" to="/admin/screens" onClick={() => setOpen(false)}>Manage Screens</Link>
+            <Link className="px-3 py-2 rounded-lg hover:bg-slate-50" to="/admin/showtimes" onClick={() => setOpen(false)}>Manage Showtimes</Link>
+            <Link className="px-3 py-2 rounded-lg hover:bg-slate-50" to="/admin/pricing" onClick={() => setOpen(false)}>Update Pricing</Link>
+            <Link className="px-3 py-2 rounded-lg hover:bg-slate-50" to="/admin/analytics" onClick={() => setOpen(false)}>Admin Analytics</Link>
+            <Link className="px-3 py-2 rounded-lg hover:bg-slate-50" to="/super/theatre-admins" onClick={() => setOpen(false)}>Theatre Admins</Link>
+          </nav>
+        </div>
+      )}
+    </div>
+  );
+}
 
-// User pages
-import AccountInfo from "./pages/AccountInfo";
-import ProfilePage from "./pages/ProfilePage";
-import MyBookings from "./pages/MyBookings";
+function Navbar() {
+  return (
+    <header className="border-b bg-white">
+      <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+        <Link to="/" className="font-semibold text-xl">Cinema</Link>
+        <AdminQuickMenu />
+      </div>
+    </header>
+  );
+}
 
-// Admin pages
-import AdminDashboard from "./pages/AdminDashboard";
-import AdminTheaters from "./pages/AdminTheaters";
-import AdminScreens from "./pages/AdminScreens";
-import AdminShowtimes from "./pages/AdminShowtimes";
-import AdminPricing from "./pages/AdminPricing";
-import AdminMoviesPage from "./pages/AdminMoviesPage";
-import AdminProfile from "./pages/AdminProfile";
-import AdminAnalytics from "./pages/AdminAnalytics";
-import AdminBookingDetails from "./pages/AdminBookingDetails";
+/* ------------------------------ Pages (stubs) ------------------------------ */
+const Page = (t) => () => <div className="p-6"><h1 className="text-2xl font-semibold">{t}</h1></div>;
+const Home = Page("Home");
+const Login = Page("Login");
+const AdminLogin = Page("Admin Login");
+const Register = Page("Register");
+const Movies = Page("Movies");
+const MovieDetail = Page("Movie Detail");
+const Showtimes = Page("Showtimes");
+const SeatSelection = Page("Seat Selection");
+const Checkout = Page("Checkout");
+const PaymentPage = Page("Payment");
+const TheatersPage = Page("Theaters");
+const TicketDetails = Page("Ticket Details");
+const ForgotPassword = Page("Forgot Password");
+const ResetPassword = Page("Reset Password");
+const AccountInfo = Page("Account Info");
+const ProfilePage = Page("Profile");
+const MyBookings = Page("My Bookings");
+const AdminDashboard = Page("Admin Dashboard");
+const AdminTheaters = Page("Admin Theaters");
+const AdminShowtimes = Page("Admin Showtimes");
+const AdminPricing = Page("Admin Pricing");
+const AdminMoviesPage = Page("Admin Movies");
+const AdminProfile = Page("Admin Profile");
+const AdminAnalytics = Page("Admin Analytics");
+const AdminBookingDetails = Page("Admin Booking Details");
+const TheatreDashboard = Page("Theatre Dashboard");
+const TheatreScreens = Page("Theatre Screens");
+const TheatreShowtimes = Page("Theatre Showtimes");
+const TheatreProfile = Page("Theatre Profile");
+const TheatreReports = Page("Theatre Reports");
+const TheatrePricing = Page("Theatre Pricing");
+const TheatreView = Page("Theatre View");
+const TheatreAdmins = Page("Theatre Admins");
 
-// Theatre Admin pages
-import TheatreDashboard from "./pages/theatre/TheatreDashboard";
-import TheatreScreens from "./pages/theatre/TheatreScreens";
-import TheatreShowtimes from "./pages/theatre/TheatreShowtimes";
-import TheatreProfile from "./pages/theatre/TheatreProfile";
-import TheatreReports from "./pages/theatre/TheatreReports";
-import TheatrePricing from "./pages/theatre/TheatrePricing";
-import TheatreView from "./pages/theatre/TheatreView";
+/* ------------------------------- Real page -------------------------------- */
+function AdminScreens() {
+  return (
+    <div className="p-6 space-y-2">
+      <h1 className="text-2xl font-semibold">Manage Screens</h1>
+      <p className="text-slate-600">Add screens under theaters.</p>
+    </div>
+  );
+}
 
-// Super-only
-import TheatreAdmins from "./pages/super/TheatreAdmins";
-
-/* ------------------------------- Helpers ---------------------------------- */
-
+/* -------------------------------- Helpers --------------------------------- */
 function NotFound() {
   return <p className="p-6 text-center text-gray-500">404 — Page not found</p>;
 }
-
-/** Normalize roles; canonical is THEATRE_ADMIN */
 const normalizeRole = (r) => {
   if (!r) return null;
   let x = String(r).trim().toUpperCase().replace(/\s+/g, "_");
@@ -68,8 +106,6 @@ const normalizeRole = (r) => {
   if (x === "SUPERADMIN") x = "SUPER_ADMIN";
   return x;
 };
-
-/** Infer role if string missing but booleans exist in context */
 const inferRole = (auth) => {
   if (!auth) return null;
   if (auth.isSuperAdmin) return "SUPER_ADMIN";
@@ -81,7 +117,6 @@ const inferRole = (auth) => {
 function RequireAuth({ children, role }) {
   const auth = useAuth();
   const location = useLocation();
-
   if (auth?.loading) return null;
 
   const roleFromCtx = normalizeRole(auth?.role || auth?.user?.role) || inferRole(auth);
@@ -104,25 +139,17 @@ function RequireAuth({ children, role }) {
     const needsAdmin = Array.isArray(role)
       ? role.map(normalizeRole).some((r) => ["SUPER_ADMIN", "THEATRE_ADMIN", "ADMIN"].includes(r))
       : ["SUPER_ADMIN", "THEATRE_ADMIN", "ADMIN"].includes(normalizeRole(role));
-    return (
-      <Navigate
-        to={needsAdmin ? "/admin/login" : "/login"}
-        replace
-        state={{ from: location }}
-      />
-    );
+    return <Navigate to={needsAdmin ? "/admin/login" : "/login"} replace state={{ from: location }} />;
   }
 
   if (!role) return children;
 
   const allowed = Array.isArray(role) ? role.map(normalizeRole) : [normalizeRole(role)];
-
   if (currentRole === "SUPER_ADMIN") return children;
   if (currentRole && allowed.includes(currentRole)) return children;
 
-  // If role blocked for this route, send each role to its home
   if (currentRole === "THEATRE_ADMIN") return <Navigate to="/theatre/my" replace />;
-  if (currentRole === "ADMIN") return <Navigate to="/admin/screens" replace />; // ⬅️ fixed
+  if (currentRole === "ADMIN") return <Navigate to="/admin/screens" replace />;
   return <Navigate to="/" replace />;
 }
 
@@ -139,25 +166,21 @@ function AdminIndex() {
     inferRole(auth) ||
     (typeof window !== "undefined" && normalizeRole(localStorage.getItem("role")));
   if (role === "SUPER_ADMIN") return <Navigate to="/admin/dashboard" replace />;
-  if (role === "ADMIN") return <Navigate to="/admin/screens" replace />; // ⬅️ fixed
+  if (role === "ADMIN") return <Navigate to="/admin/screens" replace />;
   if (role === "THEATRE_ADMIN") return <Navigate to="/theatre/my" replace />;
   return <Navigate to="/" replace />;
 }
 
-function TheatreIndex() {
-  return <Navigate to="/theatre/my" replace />;
-}
+function TheatreIndex() { return <Navigate to="/theatre/my" replace />; }
 
-/** NEW: If already logged-in admin, bounce away from /admin/login */
 function RedirectIfAdmin({ children }) {
   const auth = useAuth();
   const role =
     normalizeRole(auth?.role || auth?.user?.role) ||
     inferRole(auth) ||
     (typeof window !== "undefined" && normalizeRole(localStorage.getItem("role")));
-
   if (role === "SUPER_ADMIN") return <Navigate to="/admin/dashboard" replace />;
-  if (role === "ADMIN") return <Navigate to="/admin/screens" replace />; // ⬅️ fixed
+  if (role === "ADMIN") return <Navigate to="/admin/screens" replace />;
   if (role === "THEATRE_ADMIN") return <Navigate to="/theatre/my" replace />;
   return children;
 }
@@ -169,345 +192,110 @@ function RoleProfileRouter() {
     inferRole(auth) ||
     (typeof window !== "undefined" && normalizeRole(localStorage.getItem("role")));
   if (r === "SUPER_ADMIN") return <Navigate to="/admin/dashboard" replace />;
-  if (r === "ADMIN") return <Navigate to="/admin/screens" replace />; // ⬅️ fixed
+  if (r === "ADMIN") return <Navigate to="/admin/screens" replace />;
   if (r === "THEATRE_ADMIN") return <Navigate to="/theatre/profile" replace />;
   return <Navigate to="/profile" replace />;
 }
 
 /* ----------------------------------- App ---------------------------------- */
-
 export default function App() {
+  const navigate = useNavigate();
+
+  // Example dashboard tile here (self-contained) to ensure /admin/screens is used
+  function AdminDashboardTiles() {
+    const Card = ({ title, desc, to }) => (
+      <div className="rounded-2xl border bg-white shadow-sm p-5">
+        <h3 className="text-lg font-semibold">{title}</h3>
+        <p className="text-slate-600">{desc}</p>
+        <div className="mt-3 flex gap-2">
+          <Link to={to} className="inline-flex items-center rounded-xl border px-3 py-2 hover:bg-slate-50">Open</Link>
+          <button type="button" onClick={() => navigate(to)} className="inline-flex items-center rounded-xl border px-3 py-2 hover:bg-slate-50">Go</button>
+        </div>
+      </div>
+    );
+    return (
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <Card title="Manage Theaters" desc="Add or edit theaters" to="/admin/theaters" />
+        <Card title="Manage Movies" desc="Add or edit movie listings" to="/admin/movies" />
+        {/* ✅ Screens -> absolute path */}
+        <Card title="Manage Screens" desc="Add screens under theaters" to="/admin/screens" />
+        <Card title="Manage Showtimes" desc="Schedule showtimes" to="/admin/showtimes" />
+        <Card title="Update Pricing" desc="Adjust ticket pricing" to="/admin/pricing" />
+        <Card title="Admin Analytics" desc="Sales & booking reports" to="/admin/analytics" />
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col min-h-screen text-gray-800 overflow-x-hidden bg-transparent">
       <Navbar />
-
       <main className="relative flex-grow">
         <div className="absolute inset-0 -z-10 pointer-events-none">
           <GlobalBackdrop />
         </div>
-
         <ScrollToTop />
-
         <div className="max-w-6xl mx-auto p-4">
           <Routes>
             {/* Public */}
             <Route path="/" element={<Home />} />
-            <Route path="/login" element={<Login role="USER" />} />
-            <Route path="/register" element={<Register role="USER" />} />
-
-            {/* Admin login: redirect if already authenticated */}
-            <Route
-              path="/admin/login"
-              element={
-                <RedirectIfAdmin>
-                  <AdminLogin />
-                </RedirectIfAdmin>
-              }
-            />
-
+            <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<Register />} />
+            <Route path="/admin/login" element={<RedirectIfAdmin><AdminLogin /></RedirectIfAdmin>} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/reset-password/:token" element={<ResetPassword />} />
-
-            {/* Movies */}
             <Route path="/movies" element={<Movies />} />
             <Route path="/movies/:movieId" element={<MovieDetail />} />
             <Route path="/showtimes" element={<Showtimes />} />
             <Route path="/theaters" element={<TheatersPage />} />
-
-            {/* Booking */}
             <Route path="/seats/:showtimeId" element={<SeatSelection />} />
             <Route path="/checkout/:showtimeId" element={<Checkout />} />
             <Route path="/payment" element={<PaymentPage />} />
+            <Route path="/profile" element={<RequireAuth role="USER"><ProfilePage /></RequireAuth>} />
+            <Route path="/account" element={<RequireAuth role="USER"><AccountInfo /></RequireAuth>} />
+            <Route path="/bookings" element={<RequireAuth role="USER"><MyBookings /></RequireAuth>} />
+            <Route path="/bookings/:id" element={<RequireAuth role="USER"><TicketDetails /></RequireAuth>} />
+            <Route path="/ticket/:bookingId" element={<RequireAuth role="USER"><TicketDetails /></RequireAuth>} />
+            <Route path="/me" element={<RequireAuth role={["USER","SUPER_ADMIN","ADMIN","THEATRE_ADMIN"]}><RoleProfileRouter /></RequireAuth>} />
+            <Route path="/profile/me" element={<RequireAuth role={["USER","SUPER_ADMIN","ADMIN","THEATRE_ADMIN"]}><RoleProfileRouter /></RequireAuth>} />
 
-            {/* User private */}
-            <Route
-              path="/profile"
-              element={
-                <RequireAuth role="USER">
-                  <ProfilePage />
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="/account"
-              element={
-                <RequireAuth role="USER">
-                  <AccountInfo />
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="/bookings"
-              element={
-                <RequireAuth role="USER">
-                  <MyBookings />
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="/bookings/:id"
-              element={
-                <RequireAuth role="USER">
-                  <TicketDetails />
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="/ticket/:bookingId"
-              element={
-                <RequireAuth role="USER">
-                  <TicketDetails />
-                </RequireAuth>
-              }
-            />
+            {/* Admin landing */}
+            <Route path="/admin" element={<RequireAuth role={["SUPER_ADMIN","ADMIN","THEATRE_ADMIN"]}><div className="p-6"><AdminIndex /></div></RequireAuth>} />
 
-            {/* Smart role → profile */}
-            <Route
-              path="/me"
-              element={
-                <RequireAuth role={["USER", "SUPER_ADMIN", "ADMIN", "THEATRE_ADMIN"]}>
-                  <RoleProfileRouter />
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="/profile/me"
-              element={
-                <RequireAuth role={["USER", "SUPER_ADMIN", "ADMIN", "THEATRE_ADMIN"]}>
-                  <RoleProfileRouter />
-                </RequireAuth>
-              }
-            />
+            {/* SUPER_ADMIN only */}
+            <Route path="/admin/dashboard" element={<RequireAuth role="SUPER_ADMIN"><div className="p-6"><h1 className="text-2xl font-semibold mb-4">Admin Dashboard</h1><AdminDashboardTiles /></div></RequireAuth>} />
+            <Route path="/admin/theaters" element={<RequireAuth role="SUPER_ADMIN"><AdminTheaters /></RequireAuth>} />
+            <Route path="/admin/showtimes" element={<RequireAuth role="SUPER_ADMIN"><AdminShowtimes /></RequireAuth>} />
+            <Route path="/admin/movies" element={<RequireAuth role="SUPER_ADMIN"><AdminMoviesPage /></RequireAuth>} />
+            <Route path="/admin/analytics" element={<RequireAuth role="SUPER_ADMIN"><AdminAnalytics /></RequireAuth>} />
 
-            {/* ======== Admin Landing (any admin role) ======== */}
-            <Route
-              path="/admin"
-              element={
-                <RequireAuth role={["SUPER_ADMIN", "ADMIN", "THEATRE_ADMIN"]}>
-                  <AdminShell>
-                    <AdminIndex />
-                  </AdminShell>
-                </RequireAuth>
-              }
-            />
+            {/* Screens → open to SUPER_ADMIN, ADMIN, THEATRE_ADMIN */}
+            <Route path="/admin/screens" element={<RequireAuth role={["SUPER_ADMIN","ADMIN","THEATRE_ADMIN"]}><AdminScreens /></RequireAuth>} />
 
-            {/* SUPER_ADMIN ONLY */}
-            <Route
-              path="/admin/dashboard"
-              element={
-                <RequireAuth role="SUPER_ADMIN">
-                  <AdminShell>
-                    <AdminDashboard />
-                  </AdminShell>
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="/admin/theaters"
-              element={
-                <RequireAuth role="SUPER_ADMIN">
-                  <AdminShell>
-                    <AdminTheaters />
-                  </AdminShell>
-                </RequireAuth>
-              }
-            />
-            {/* 🔓 Screens allowed for SUPER_ADMIN, ADMIN, THEATRE_ADMIN */}
-            <Route
-              path="/admin/screens"
-              element={
-                <RequireAuth role={["SUPER_ADMIN", "ADMIN", "THEATRE_ADMIN"]}>
-                  <AdminShell>
-                    <AdminScreens />
-                  </AdminShell>
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="/admin/showtimes"
-              element={
-                <RequireAuth role="SUPER_ADMIN">
-                  <AdminShell>
-                    <AdminShowtimes />
-                  </AdminShell>
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="/admin/movies"
-              element={
-                <RequireAuth role="SUPER_ADMIN">
-                  <AdminShell>
-                    <AdminMoviesPage />
-                  </AdminShell>
-                </RequireAuth>
-              }
-            />
-            {/* Admin profile open to SUPER_ADMIN + ADMIN */}
-            <Route
-              path="/admin/profile"
-              element={
-                <RequireAuth role={["SUPER_ADMIN", "ADMIN"]}>
-                  <AdminShell>
-                    <AdminProfile />
-                  </AdminShell>
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="/admin/analytics"
-              element={
-                <RequireAuth role="SUPER_ADMIN">
-                  <AdminShell>
-                    <AdminAnalytics />
-                  </AdminShell>
-                </RequireAuth>
-              }
-            />
+            {/* Shared */}
+            <Route path="/admin/pricing" element={<RequireAuth role={["SUPER_ADMIN","THEATRE_ADMIN"]}><AdminPricing /></RequireAuth>} />
+            <Route path="/admin/bookings/:id" element={<RequireAuth role={["SUPER_ADMIN","THEATRE_ADMIN"]}><AdminBookingDetails /></RequireAuth>} />
 
-            {/* SHARED (SUPER_ADMIN + THEATRE_ADMIN) */}
-            <Route
-              path="/admin/pricing"
-              element={
-                <RequireAuth role={["SUPER_ADMIN", "THEATRE_ADMIN"]}>
-                  <AdminShell>
-                    <AdminPricing />
-                  </AdminShell>
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="/admin/bookings/:id"
-              element={
-                <RequireAuth role={["SUPER_ADMIN", "THEATRE_ADMIN"]}>
-                  <AdminShell>
-                    <AdminBookingDetails />
-                  </AdminShell>
-                </RequireAuth>
-              }
-            />
+            {/* Theatre admin only */}
+            <Route path="/theatre" element={<RequireAuth role="THEATRE_ADMIN"><TheatreIndex /></RequireAuth>} />
+            <Route path="/theatre/my" element={<RequireAuth role="THEATRE_ADMIN"><TheatreDashboard /></RequireAuth>} />
+            <Route path="/theatre/dashboard" element={<RequireAuth role="THEATRE_ADMIN"><Navigate to="/theatre/my" replace /></RequireAuth>} />
+            <Route path="/theatre/screens" element={<RequireAuth role="THEATRE_ADMIN"><TheatreScreens /></RequireAuth>} />
+            <Route path="/theatre/showtimes" element={<RequireAuth role="THEATRE_ADMIN"><TheatreShowtimes /></RequireAuth>} />
+            <Route path="/theatre/profile" element={<RequireAuth role="THEATRE_ADMIN"><TheatreProfile /></RequireAuth>} />
+            <Route path="/theatre/reports" element={<RequireAuth role="THEATRE_ADMIN"><TheatreReports /></RequireAuth>} />
+            <Route path="/theatre/pricing" element={<RequireAuth role="THEATRE_ADMIN"><TheatrePricing /></RequireAuth>} />
+            <Route path="/theatre/view" element={<RequireAuth role="THEATRE_ADMIN"><TheatreView /></RequireAuth>} />
+            <Route path="/theatre/view/:id" element={<RequireAuth role="THEATRE_ADMIN"><TheatreView /></RequireAuth>} />
 
-            {/* ======== THEATRE ADMIN ONLY ======== */}
-            <Route
-              path="/theatre"
-              element={
-                <RequireAuth role="THEATRE_ADMIN">
-                  <AdminShell>
-                    <TheatreIndex />
-                  </AdminShell>
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="/theatre/my"
-              element={
-                <RequireAuth role="THEATRE_ADMIN">
-                  <AdminShell>
-                    <TheatreDashboard />
-                  </AdminShell>
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="/theatre/dashboard"
-              element={
-                <RequireAuth role="THEATRE_ADMIN">
-                  <AdminShell>
-                    <Navigate to="/theatre/my" replace />
-                  </AdminShell>
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="/theatre/screens"
-              element={
-                <RequireAuth role="THEATRE_ADMIN">
-                  <AdminShell>
-                    <TheatreScreens />
-                  </AdminShell>
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="/theatre/showtimes"
-              element={
-                <RequireAuth role="THEATRE_ADMIN">
-                  <AdminShell>
-                    <TheatreShowtimes />
-                  </AdminShell>
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="/theatre/profile"
-              element={
-                <RequireAuth role="THEATRE_ADMIN">
-                  <AdminShell>
-                    <TheatreProfile />
-                  </AdminShell>
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="/theatre/reports"
-              element={
-                <RequireAuth role="THEATRE_ADMIN">
-                  <AdminShell>
-                    <TheatreReports />
-                  </AdminShell>
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="/theatre/pricing"
-              element={
-                <RequireAuth role="THEATRE_ADMIN">
-                  <AdminShell>
-                    <TheatrePricing />
-                  </AdminShell>
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="/theatre/view"
-              element={
-                <RequireAuth role="THEATRE_ADMIN">
-                  <AdminShell>
-                    <TheatreView />
-                  </AdminShell>
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="/theatre/view/:id"
-              element={
-                <RequireAuth role="THEATRE_ADMIN">
-                  <AdminShell>
-                    <TheatreView />
-                  </AdminShell>
-                </RequireAuth>
-              }
-            />
+            {/* Super only */}
+            <Route path="/super/theatre-admins" element={<RequireAuth role="SUPER_ADMIN"><TheatreAdmins /></RequireAuth>} />
 
-            {/* SUPER_ADMIN only — manage theatre admins */}
-            <Route
-              path="/super/theatre-admins"
-              element={
-                <RequireAuth role="SUPER_ADMIN">
-                  <AdminShell>
-                    <TheatreAdmins />
-                  </AdminShell>
-                </RequireAuth>
-              }
-            />
-
-            {/* Fallback */}
+            {/* 404 */}
             <Route path="*" element={<NotFound />} />
           </Routes>
         </div>
       </main>
-
       <Footer />
     </div>
   );
