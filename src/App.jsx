@@ -1,4 +1,3 @@
-// src/App.jsx
 import React, { useEffect } from "react";
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "./context/AuthContext";
@@ -33,7 +32,7 @@ import MyBookings from "./pages/MyBookings";
 import AdminDashboard from "./pages/AdminDashboard";
 import AdminTheaters from "./pages/AdminTheaters";
 import AdminScreens from "./pages/AdminScreens";
-import AdminShowtimes from "./pages/AdminShowtimes";
+import AdminShowtimes from "./pages/AdminShowtimes"; // ⬅️ make this route real
 import AdminPricing from "./pages/AdminPricing";
 import AdminMoviesPage from "./pages/AdminMoviesPage";
 import AdminProfile from "./pages/AdminProfile";
@@ -55,7 +54,6 @@ import TheatreAdmins from "./pages/super/TheatreAdmins";
 function NotFound() {
   return <p className="p-6 text-center text-gray-500">404 — Page not found</p>;
 }
-
 function Loader() {
   return (
     <div className="w-full py-10 flex items-center justify-center">
@@ -72,8 +70,6 @@ const normalizeRole = (r) => {
   if (x === "SUPERADMIN") x = "SUPER_ADMIN";
   return x;
 };
-
-// ✅ Treat authenticated non-admins as USER to satisfy role="USER" routes
 const inferRole = (auth) => {
   if (!auth) return null;
   if (auth.isSuperAdmin) return "SUPER_ADMIN";
@@ -86,8 +82,6 @@ const inferRole = (auth) => {
 function RequireAuth({ children, role }) {
   const auth = useAuth();
   const location = useLocation();
-
-  // Avoid premature redirects while auth is hydrating
   if (auth?.loading) return <Loader />;
 
   const roleFromCtx =
@@ -118,16 +112,13 @@ function RequireAuth({ children, role }) {
     );
   }
 
-  // If a role is required but we don't yet know it, wait (prevents redirect loops)
   if (role && !currentRole) return <Loader />;
-
   if (!role) return children;
 
   const allowed = Array.isArray(role)
     ? role.map(normalizeRole)
     : [normalizeRole(role)];
 
-  // SUPER_ADMIN always allowed
   if (currentRole === "SUPER_ADMIN") return children;
   if (currentRole && allowed.includes(currentRole)) return children;
 
@@ -135,7 +126,6 @@ function RequireAuth({ children, role }) {
     return <Navigate to="/theatre/my" replace />;
   if (currentRole === "ADMIN") return <Navigate to="/admin/screens" replace />;
 
-  // Normal user trying to hit admin-only routes
   return <Navigate to="/" replace />;
 }
 
@@ -145,70 +135,54 @@ function ScrollToTop() {
   return null;
 }
 
-// ✅ SUPER_ADMIN and ADMIN both go to /admin/screens
 function AdminIndex() {
   const auth = useAuth();
-
   if (auth?.loading) return <Loader />;
-
   const role =
     normalizeRole(auth?.role || auth?.user?.role) ||
     inferRole(auth) ||
-    (typeof window !== "undefined" && normalizeRole(localStorage.getItem("role")));
-
+    (typeof window !== "undefined" &&
+      normalizeRole(localStorage.getItem("role")));
   if (!role) return <Loader />;
-
   if (role === "SUPER_ADMIN" || role === "ADMIN")
     return <Navigate to="/admin/screens" replace />;
   if (role === "THEATRE_ADMIN") return <Navigate to="/theatre/my" replace />;
   return <Navigate to="/" replace />;
 }
-
 function TheatreIndex() {
   return <Navigate to="/theatre/my" replace />;
 }
-
-// ✅ SUPER_ADMIN and ADMIN bounce away from login -> /admin/screens
 function RedirectIfAdmin({ children }) {
   const auth = useAuth();
-
   if (auth?.loading) return <Loader />;
-
   const role =
     normalizeRole(auth?.role || auth?.user?.role) ||
     inferRole(auth) ||
-    (typeof window !== "undefined" && normalizeRole(localStorage.getItem("role")));
-
-  // If session exists but role hasn't resolved yet, wait to avoid oscillation
+    (typeof window !== "undefined" &&
+      normalizeRole(localStorage.getItem("role")));
   const hasSession =
     !!auth?.isAuthenticated ||
     !!auth?.token ||
     (typeof window !== "undefined" && !!localStorage.getItem("token"));
   if (hasSession && !role) return <Loader />;
-
   if (role === "SUPER_ADMIN" || role === "ADMIN")
     return <Navigate to="/admin/screens" replace />;
   if (role === "THEATRE_ADMIN") return <Navigate to="/theatre/my" replace />;
   return children;
 }
-
 function RoleProfileRouter() {
   const auth = useAuth();
-
   if (auth?.loading) return <Loader />;
-
   const r =
     normalizeRole(auth?.role || auth?.user?.role) ||
     inferRole(auth) ||
-    (typeof window !== "undefined" && normalizeRole(localStorage.getItem("role")));
-
+    (typeof window !== "undefined" &&
+      normalizeRole(localStorage.getItem("role")));
   const hasSession =
     !!auth?.isAuthenticated ||
     !!auth?.token ||
     (typeof window !== "undefined" && !!localStorage.getItem("token"));
-
   if (hasSession && !r) return <Loader />;
-
   if (r === "SUPER_ADMIN" || r === "ADMIN")
     return <Navigate to="/admin/screens" replace />;
   if (r === "THEATRE_ADMIN") return <Navigate to="/theatre/profile" replace />;
@@ -344,7 +318,7 @@ export default function App() {
                 }
               />
 
-              {/* ✅ Screens for SUPER_ADMIN + ADMIN + THEATRE_ADMIN */}
+              {/* ✅ Shared admin routes */}
               <Route
                 path="screens"
                 element={
@@ -352,6 +326,17 @@ export default function App() {
                     role={["SUPER_ADMIN", "ADMIN", "THEATRE_ADMIN"]}
                   >
                     <AdminScreens />
+                  </RequireAuth>
+                }
+              />
+              {/* ⬇️ the missing route that the menu was linking to */}
+              <Route
+                path="showtimes"
+                element={
+                  <RequireAuth
+                    role={["SUPER_ADMIN", "ADMIN", "THEATRE_ADMIN"]}
+                  >
+                    <AdminShowtimes />
                   </RequireAuth>
                 }
               />
