@@ -75,6 +75,7 @@ const normalizeScreen = (s = {}) => {
 
 async function fetchScreensForTheater(theaterId) {
   const ts = Date.now();
+  // ✅ this one is correct against screens.routes.js
   const { data } = await api.get(`/admin/theaters/${theaterId}/screens?ts=${ts}`);
   const arr = Array.isArray(data) ? data : (data?.data || []);
   return arr.filter(Boolean).map(normalizeScreen);
@@ -111,7 +112,6 @@ const canonRole = (r) => {
 export default function AdminScreens() {
   const { token, role, roles: userRoles, user, loading, isAuthenticated } = useAuth() || {};
 
-  // ✅ Wait for hydration; don't decide until auth state is ready
   if (loading) return null;
 
   const rolesList = useMemo(() => {
@@ -123,14 +123,12 @@ export default function AdminScreens() {
     /^(SUPER_ADMIN|ADMIN|THEATRE_ADMIN)$/.test(r || "")
   );
 
-  // Final gating (after hydration)
   if (!token && !isAuthenticated) return <Navigate to="/admin/login" replace />;
   if (!isSomeAdmin) return <Navigate to="/" replace />;
 
   const isSuper = rolesList.includes("SUPER_ADMIN");
   const isTheatreAdmin = rolesList.includes("THEATRE_ADMIN");
 
-  // Default theatre for theatre admins from JWT (supports multiple shapes)
   const jwtTheatreId =
     user?.theatreId || user?.theaterId || user?.theatre?.id || user?.theater?.id || "";
 
@@ -146,18 +144,20 @@ export default function AdminScreens() {
   const [msg, setMsg] = useState("");
   const [msgType, setMsgType] = useState("info");
 
-  // Hydrate default theatre for theatre admins
   useEffect(() => {
     if (isTheatreAdmin && jwtTheatreId && !selectedTheater) {
       setSelectedTheater(jwtTheatreId);
     }
   }, [isTheatreAdmin, jwtTheatreId, selectedTheater]);
 
-  // Load theatres (SUPER_ADMIN sees list; theatre admin may still call to show the list)
+  // 🔧 FIX: use /theaters/admin/theaters[(/mine)]
   useEffect(() => {
     const load = async () => {
       try {
-        const { data } = await api.get(`/admin/theaters?ts=${Date.now()}`);
+        const url = isTheatreAdmin
+          ? `/theaters/admin/theaters/mine?ts=${Date.now()}`
+          : `/theaters/admin/theaters?ts=${Date.now()}`;
+        const { data } = await api.get(url);
         const list = Array.isArray(data) ? data : (data?.theaters || data?.data || []);
         setTheaters(Array.isArray(list) ? list : []);
         setMsg("");
@@ -169,9 +169,8 @@ export default function AdminScreens() {
     };
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isTheatreAdmin]);
 
-  // Load screens for selected theatre
   useEffect(() => {
     if (!selectedTheater) {
       setScreens([]);
@@ -200,7 +199,6 @@ export default function AdminScreens() {
     })();
   }, [selectedTheater]);
 
-  // When screen selection changes, fill form
   useEffect(() => {
     if (selectedScreen === NEW) {
       setScreenName("");
@@ -225,8 +223,7 @@ export default function AdminScreens() {
       return;
     }
 
-    const r = Number(rows),
-      c = Number(cols);
+    const r = Number(rows), c = Number(cols);
     if (!Number.isFinite(r) || !Number.isFinite(c) || r <= 0 || c <= 0) {
       setMsgType("error");
       setMsg("Rows and columns must be positive integers.");
@@ -279,10 +276,11 @@ export default function AdminScreens() {
     }
   }
 
+  // 🔧 FIX: delete endpoint lives under /theaters/admin/:id (or .../theaters/:id)
   async function deleteTheater(id) {
     if (!confirm("Delete this theater and its screens?")) return;
     try {
-      await api.delete(`/admin/theaters/${id}`);
+      await api.delete(`/theaters/admin/${id}`);
       setTheaters((prev) => prev.filter((t) => t._id !== id));
       if (selectedTheater === id) {
         setSelectedTheater("");
@@ -313,10 +311,12 @@ export default function AdminScreens() {
               <p className="text-sm text-slate-600 mt-1">Add or update screens under each theater.</p>
             </div>
             <SecondaryBtn onClick={() => {
-              // Reload theaters and current theatre's screens without changing selection
               (async () => {
                 try {
-                  const { data } = await api.get(`/admin/theaters?ts=${Date.now()}`);
+                  const url = isTheatreAdmin
+                    ? `/theaters/admin/theaters/mine?ts=${Date.now()}`
+                    : `/theaters/admin/theaters?ts=${Date.now()}`;
+                  const { data } = await api.get(url);
                   const list = Array.isArray(data) ? data : (data?.theaters || data?.data || []);
                   setTheaters(Array.isArray(list) ? list : []);
                 } catch {}
@@ -363,7 +363,7 @@ export default function AdminScreens() {
                 label="Select Theater"
                 value={selectedTheater}
                 onChange={(e) => setSelectedTheater(e.target.value)}
-                disabled={isTheatreAdmin && !!jwtTheatreId} // theatre admins locked to their theatre
+                disabled={isTheatreAdmin && !!jwtTheatreId}
               >
                 <option value="">-- Choose a theater --</option>
                 {(Array.isArray(theaters) ? theaters : []).map((t) => (
