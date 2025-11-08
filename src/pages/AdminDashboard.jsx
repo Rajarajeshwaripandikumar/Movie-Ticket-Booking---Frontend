@@ -1,6 +1,6 @@
 // src/pages/AdminDashboard.jsx — Walmart-style (clean, rounded, blue accents)
 import React, { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import {
   Building2,        // Theaters
   Monitor,          // Screens
@@ -15,8 +15,9 @@ import api from "../api/api";
 import { useAuth } from "../context/AuthContext";
 
 /* ----------------------------- API endpoints ----------------------------- */
-const LIST_THEATRES = "/theatres";                           // GET
-const CREATE_THEATRE_ADMIN = "/superadmin/theatre-admins";   // POST { name,email,password,theatreId }
+// Prefer US spelling unless you’ve mounted a /theatres alias
+const LIST_THEATERS = "/theaters";                         // GET
+const CREATE_THEATRE_ADMIN = "/superadmin/theatre-admins"; // POST { name,email,password,theatreId }
 
 /* ----------------------------- Walmart primitives ---------------------------- */
 const Card = ({ children, className = "" }) => (
@@ -25,20 +26,11 @@ const Card = ({ children, className = "" }) => (
   </div>
 );
 
-// Link + navigate fallback to avoid click being swallowed by overlays
+// Simple Link (no preventDefault/navigate) to avoid routing quirks
 const Tile = ({ to, icon: Icon, label, desc, disabled = false }) => {
-  const navigate = useNavigate();
-  const handle = (e) => {
-    if (disabled) return;
-    try { e.preventDefault(); } catch {}
-    navigate(to);
-  };
-
   return (
     <Link
       to={to}
-      onClick={handle}
-      onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && handle(e)}
       aria-disabled={disabled}
       className={`block focus:outline-none group ${disabled ? "pointer-events-none opacity-50" : ""}`}
     >
@@ -70,7 +62,7 @@ export default function AdminDashboard() {
 
   // Role gates must mirror your App.jsx route guards
   const canScreens   = isSuperAdmin || isAdmin || isTheatreAdmin;      // /admin/screens
-  const canShowtimes = isSuperAdmin || isTheatreAdmin;                 // /admin/showtimes (updated)
+  const canShowtimes = isSuperAdmin || isTheatreAdmin;                 // /admin/showtimes
   const canTheaters  = isSuperAdmin;                                   // /admin/theaters
   const canMovies    = isSuperAdmin;                                   // /admin/movies
   const canPricing   = isSuperAdmin || isTheatreAdmin;                 // /admin/pricing
@@ -102,10 +94,9 @@ export default function AdminDashboard() {
     (async () => {
       try {
         setLoadingTheatres(true);
-        // Authorization header already set globally by AuthContext
-        const res = await api.get(LIST_THEATRES);
+        const res = await api.get(LIST_THEATERS);
         if (!mounted) return;
-        setTheatres(Array.isArray(res.data) ? res.data : res.data?.data || []);
+        setTheatres(Array.isArray(res.data) ? res.data : res.data?.data || res?.data?.theaters || []);
       } catch {
         if (mounted) setTheatres([]);
       } finally {
@@ -212,7 +203,7 @@ export default function AdminDashboard() {
                   className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#0071DC]"
                   placeholder="e.g. PVR Manager"
                   value={aName}
-                  onChange={(e) => setAName(e.target.value)}   // fixed typo
+                  onChange={(e) => setAName(e.target.value)}
                   required
                 />
               </div>
