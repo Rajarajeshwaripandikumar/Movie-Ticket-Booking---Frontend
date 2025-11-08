@@ -61,20 +61,20 @@ export default function AdminDashboard() {
   const { isSuperAdmin, isAdmin, isTheatreAdmin } = useAuth();
 
   // Role gates must mirror your App.jsx route guards
-  const canScreens   = isSuperAdmin || isAdmin || isTheatreAdmin;      // /admin/screens
-  const canShowtimes = isSuperAdmin || isTheatreAdmin;                 // /admin/showtimes
-  const canTheaters  = isSuperAdmin;                                   // /admin/theaters
-  const canMovies    = isSuperAdmin;                                   // /admin/movies
-  const canPricing   = isSuperAdmin || isTheatreAdmin;                 // /admin/pricing
-  const canAnalytics = isSuperAdmin;                                   // /admin/analytics
+  const canScreens   = isSuperAdmin || isAdmin || isTheatreAdmin; // /admin/screens
+  const canShowtimes = isSuperAdmin || isTheatreAdmin;            // /admin/showtimes
+  const canTheaters  = isSuperAdmin;                              // /admin/theaters
+  const canMovies    = isSuperAdmin;                              // /admin/movies
+  const canPricing   = isSuperAdmin || isTheatreAdmin;            // /admin/pricing
+  const canAnalytics = isSuperAdmin;                              // /admin/analytics
 
   const links = [
-    { to: "/admin/theaters",  label: "Manage Theaters",  desc: "Add or edit theaters",        icon: Building2,     show: canTheaters },
-    { to: "/admin/movies",    label: "Manage Movies",    desc: "Add or edit movie listings",  icon: Clapperboard,  show: canMovies },
-    { to: "/admin/screens",   label: "Manage Screens",   desc: "Add screens under theaters",  icon: Monitor,       show: canScreens },
-    { to: "/admin/showtimes", label: "Manage Showtimes", desc: "Schedule movie showtimes",    icon: CalendarClock, show: canShowtimes },
-    { to: "/admin/pricing",   label: "Update Pricing",   desc: "Adjust ticket pricing",       icon: CircleDollarSign, show: canPricing },
-    { to: "/admin/analytics", label: "Admin Analytics",  desc: "Sales and booking reports",   icon: BarChart3,     show: canAnalytics },
+    { to: "/admin/theaters",  label: "Manage Theaters",  desc: "Add or edit theaters",        icon: Building2,       show: canTheaters },
+    { to: "/admin/movies",    label: "Manage Movies",    desc: "Add or edit movie listings",  icon: Clapperboard,    show: canMovies },
+    { to: "/admin/screens",   label: "Manage Screens",   desc: "Add screens under theaters",  icon: Monitor,         show: canScreens },
+    { to: "/admin/showtimes", label: "Manage Showtimes", desc: "Schedule movie showtimes",    icon: CalendarClock,   show: canShowtimes },
+    { to: "/admin/pricing",   label: "Update Pricing",   desc: "Adjust ticket pricing",       icon: CircleDollarSign,show: canPricing },
+    { to: "/admin/analytics", label: "Admin Analytics",  desc: "Sales and booking reports",   icon: BarChart3,       show: canAnalytics },
   ];
 
   // Theatre list for the form (SUPER_ADMIN only; hidden otherwise)
@@ -96,8 +96,14 @@ export default function AdminDashboard() {
         setLoadingTheatres(true);
         const res = await api.get(LIST_THEATERS);
         if (!mounted) return;
-        setTheatres(Array.isArray(res.data) ? res.data : res.data?.data || res?.data?.theaters || []);
-      } catch {
+        const list =
+          (Array.isArray(res.data) && res.data) ||
+          res.data?.data ||
+          res.data?.theaters ||
+          [];
+        setTheatres(Array.isArray(list) ? list : []);
+      } catch (err) {
+        console.error("[AdminDashboard] Failed to load theaters:", err?.message || err);
         if (mounted) setTheatres([]);
       } finally {
         if (mounted) setLoadingTheatres(false);
@@ -198,8 +204,10 @@ export default function AdminDashboard() {
 
             <form onSubmit={handleCreateTheatreAdmin} className="grid gap-4 md:grid-cols-2">
               <div>
-                <label className="text-sm font-semibold text-slate-700">Admin Name*</label>
+                <label className="text-sm font-semibold text-slate-700" htmlFor="aName">Admin Name*</label>
                 <input
+                  id="aName"
+                  autoComplete="name"
                   className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#0071DC]"
                   placeholder="e.g. PVR Manager"
                   value={aName}
@@ -209,9 +217,11 @@ export default function AdminDashboard() {
               </div>
 
               <div>
-                <label className="text-sm font-semibold text-slate-700">Admin Email*</label>
+                <label className="text-sm font-semibold text-slate-700" htmlFor="aEmail">Admin Email*</label>
                 <input
+                  id="aEmail"
                   type="email"
+                  autoComplete="email"
                   className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#0071DC]"
                   placeholder="admin@example.com"
                   value={aEmail}
@@ -221,9 +231,12 @@ export default function AdminDashboard() {
               </div>
 
               <div>
-                <label className="text-sm font-semibold text-slate-700">Password*</label>
+                <label className="text-sm font-semibold text-slate-700" htmlFor="aPassword">Password*</label>
                 <input
+                  id="aPassword"
                   type="password"
+                  autoComplete="new-password"
+                  minLength={6}
                   className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#0071DC]"
                   placeholder="Strong password"
                   value={aPassword}
@@ -233,8 +246,9 @@ export default function AdminDashboard() {
               </div>
 
               <div>
-                <label className="text-sm font-semibold text-slate-700">Theatre*</label>
+                <label className="text-sm font-semibold text-slate-700" htmlFor="aTheatre">Theatre*</label>
                 <select
+                  id="aTheatre"
                   className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#0071DC]"
                   value={aTheatreId}
                   onChange={(e) => setATheatreId(e.target.value)}
