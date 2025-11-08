@@ -56,6 +56,14 @@ function NotFound() {
   return <p className="p-6 text-center text-gray-500">404 — Page not found</p>;
 }
 
+function Loader() {
+  return (
+    <div className="w-full py-10 flex items-center justify-center">
+      <div className="animate-pulse text-sm text-gray-500">Loading…</div>
+    </div>
+  );
+}
+
 const normalizeRole = (r) => {
   if (!r) return null;
   let x = String(r).trim().toUpperCase().replace(/\s+/g, "_");
@@ -65,32 +73,41 @@ const normalizeRole = (r) => {
   return x;
 };
 
+// ✅ Treat authenticated non-admins as USER to satisfy role="USER" routes
 const inferRole = (auth) => {
   if (!auth) return null;
   if (auth.isSuperAdmin) return "SUPER_ADMIN";
   if (auth.isAdmin) return "ADMIN";
   if (auth.isTheatreAdmin || auth.isTheaterAdmin) return "THEATRE_ADMIN";
+  if (auth.isAuthenticated || auth.user || auth.token) return "USER";
   return null;
 };
 
 function RequireAuth({ children, role }) {
   const auth = useAuth();
   const location = useLocation();
-  if (auth?.loading) return null;
 
-  const roleFromCtx = normalizeRole(auth?.role || auth?.user?.role) || inferRole(auth);
+  // Avoid premature redirects while auth is hydrating
+  if (auth?.loading) return <Loader />;
+
+  const roleFromCtx =
+    normalizeRole(auth?.role || auth?.user?.role) || inferRole(auth);
   const roleFromStorage =
-    typeof window !== "undefined" ? normalizeRole(localStorage.getItem("role")) : null;
+    typeof window !== "undefined"
+      ? normalizeRole(localStorage.getItem("role"))
+      : null;
   const currentRole = normalizeRole(roleFromCtx || roleFromStorage);
 
   const hasSession =
     !!auth?.isAuthenticated ||
     !!auth?.token ||
-    (typeof window !== "undefined" && localStorage.getItem("token"));
+    (typeof window !== "undefined" && !!localStorage.getItem("token"));
 
   if (!hasSession) {
     const needsAdmin = Array.isArray(role)
-      ? role.map(normalizeRole).some((r) => ["SUPER_ADMIN", "THEATRE_ADMIN", "ADMIN"].includes(r))
+      ? role.map(normalizeRole).some((r) =>
+          ["SUPER_ADMIN", "THEATRE_ADMIN", "ADMIN"].includes(r)
+        )
       : ["SUPER_ADMIN", "THEATRE_ADMIN", "ADMIN"].includes(normalizeRole(role));
     return (
       <Navigate
@@ -101,17 +118,24 @@ function RequireAuth({ children, role }) {
     );
   }
 
+  // If a role is required but we don't yet know it, wait (prevents redirect loops)
+  if (role && !currentRole) return <Loader />;
+
   if (!role) return children;
 
-  const allowed = Array.isArray(role) ? role.map(normalizeRole) : [normalizeRole(role)];
+  const allowed = Array.isArray(role)
+    ? role.map(normalizeRole)
+    : [normalizeRole(role)];
 
   // SUPER_ADMIN always allowed
   if (currentRole === "SUPER_ADMIN") return children;
   if (currentRole && allowed.includes(currentRole)) return children;
 
-  if (currentRole === "THEATRE_ADMIN") return <Navigate to="/theatre/my" replace />;
+  if (currentRole === "THEATRE_ADMIN")
+    return <Navigate to="/theatre/my" replace />;
   if (currentRole === "ADMIN") return <Navigate to="/admin/screens" replace />;
 
+  // Normal user trying to hit admin-only routes
   return <Navigate to="/" replace />;
 }
 
@@ -124,11 +148,18 @@ function ScrollToTop() {
 // ✅ SUPER_ADMIN and ADMIN both go to /admin/screens
 function AdminIndex() {
   const auth = useAuth();
+
+  if (auth?.loading) return <Loader />;
+
   const role =
     normalizeRole(auth?.role || auth?.user?.role) ||
     inferRole(auth) ||
     (typeof window !== "undefined" && normalizeRole(localStorage.getItem("role")));
-  if (role === "SUPER_ADMIN" || role === "ADMIN") return <Navigate to="/admin/screens" replace />;
+
+  if (!role) return <Loader />;
+
+  if (role === "SUPER_ADMIN" || role === "ADMIN")
+    return <Navigate to="/admin/screens" replace />;
   if (role === "THEATRE_ADMIN") return <Navigate to="/theatre/my" replace />;
   return <Navigate to="/" replace />;
 }
@@ -140,22 +171,46 @@ function TheatreIndex() {
 // ✅ SUPER_ADMIN and ADMIN bounce away from login -> /admin/screens
 function RedirectIfAdmin({ children }) {
   const auth = useAuth();
+
+  if (auth?.loading) return <Loader />;
+
   const role =
     normalizeRole(auth?.role || auth?.user?.role) ||
     inferRole(auth) ||
     (typeof window !== "undefined" && normalizeRole(localStorage.getItem("role")));
-  if (role === "SUPER_ADMIN" || role === "ADMIN") return <Navigate to="/admin/screens" replace />;
+
+  // If session exists but role hasn't resolved yet, wait to avoid oscillation
+  const hasSession =
+    !!auth?.isAuthenticated ||
+    !!auth?.token ||
+    (typeof window !== "undefined" && !!localStorage.getItem("token"));
+  if (hasSession && !role) return <Loader />;
+
+  if (role === "SUPER_ADMIN" || role === "ADMIN")
+    return <Navigate to="/admin/screens" replace />;
   if (role === "THEATRE_ADMIN") return <Navigate to="/theatre/my" replace />;
   return children;
 }
 
 function RoleProfileRouter() {
   const auth = useAuth();
+
+  if (auth?.loading) return <Loader />;
+
   const r =
     normalizeRole(auth?.role || auth?.user?.role) ||
     inferRole(auth) ||
     (typeof window !== "undefined" && normalizeRole(localStorage.getItem("role")));
-  if (r === "SUPER_ADMIN" || r === "ADMIN") return <Navigate to="/admin/screens" replace />;
+
+  const hasSession =
+    !!auth?.isAuthenticated ||
+    !!auth?.token ||
+    (typeof window !== "undefined" && !!localStorage.getItem("token"));
+
+  if (hasSession && !r) return <Loader />;
+
+  if (r === "SUPER_ADMIN" || r === "ADMIN")
+    return <Navigate to="/admin/screens" replace />;
   if (r === "THEATRE_ADMIN") return <Navigate to="/theatre/profile" replace />;
   return <Navigate to="/profile" replace />;
 }
@@ -177,7 +232,14 @@ export default function App() {
             <Route path="/" element={<Home />} />
             <Route path="/login" element={<Login role="USER" />} />
             <Route path="/register" element={<Register role="USER" />} />
-            <Route path="/admin/login" element={<RedirectIfAdmin><AdminLogin /></RedirectIfAdmin>} />
+            <Route
+              path="/admin/login"
+              element={
+                <RedirectIfAdmin>
+                  <AdminLogin />
+                </RedirectIfAdmin>
+              }
+            />
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password/:token" element={<ResetPassword />} />
 
@@ -193,18 +255,55 @@ export default function App() {
             <Route path="/payment" element={<PaymentPage />} />
 
             {/* User private */}
-            <Route path="/profile" element={<RequireAuth role="USER"><ProfilePage /></RequireAuth>} />
-            <Route path="/account" element={<RequireAuth role="USER"><AccountInfo /></RequireAuth>} />
-            <Route path="/bookings" element={<RequireAuth role="USER"><MyBookings /></RequireAuth>} />
-            <Route path="/bookings/:id" element={<RequireAuth role="USER"><TicketDetails /></RequireAuth>} />
+            <Route
+              path="/profile"
+              element={
+                <RequireAuth role="USER">
+                  <ProfilePage />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/account"
+              element={
+                <RequireAuth role="USER">
+                  <AccountInfo />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/bookings"
+              element={
+                <RequireAuth role="USER">
+                  <MyBookings />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/bookings/:id"
+              element={
+                <RequireAuth role="USER">
+                  <TicketDetails />
+                </RequireAuth>
+              }
+            />
 
-            <Route path="/me" element={<RequireAuth role={["USER","SUPER_ADMIN","ADMIN","THEATRE_ADMIN"]}><RoleProfileRouter /></RequireAuth>} />
+            <Route
+              path="/me"
+              element={
+                <RequireAuth
+                  role={["USER", "SUPER_ADMIN", "ADMIN", "THEATRE_ADMIN"]}
+                >
+                  <RoleProfileRouter />
+                </RequireAuth>
+              }
+            />
 
             {/* ADMIN */}
             <Route
               path="/admin"
               element={
-                <RequireAuth role={["SUPER_ADMIN","ADMIN","THEATRE_ADMIN"]}>
+                <RequireAuth role={["SUPER_ADMIN", "ADMIN", "THEATRE_ADMIN"]}>
                   <AdminShell />
                 </RequireAuth>
               }
@@ -212,34 +311,173 @@ export default function App() {
               <Route index element={<AdminIndex />} />
 
               {/* SUPER_ADMIN ONLY */}
-              <Route path="dashboard" element={<RequireAuth role="SUPER_ADMIN"><AdminDashboard /></RequireAuth>} />
-              <Route path="theaters" element={<RequireAuth role="SUPER_ADMIN"><AdminTheaters /></RequireAuth>} />
-              <Route path="movies" element={<RequireAuth role="SUPER_ADMIN"><AdminMoviesPage /></RequireAuth>} />
-              <Route path="analytics" element={<RequireAuth role="SUPER_ADMIN"><AdminAnalytics /></RequireAuth>} />
+              <Route
+                path="dashboard"
+                element={
+                  <RequireAuth role="SUPER_ADMIN">
+                    <AdminDashboard />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="theaters"
+                element={
+                  <RequireAuth role="SUPER_ADMIN">
+                    <AdminTheaters />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="movies"
+                element={
+                  <RequireAuth role="SUPER_ADMIN">
+                    <AdminMoviesPage />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="analytics"
+                element={
+                  <RequireAuth role="SUPER_ADMIN">
+                    <AdminAnalytics />
+                  </RequireAuth>
+                }
+              />
 
               {/* ✅ Screens for SUPER_ADMIN + ADMIN + THEATRE_ADMIN */}
-              <Route path="screens" element={<RequireAuth role={["SUPER_ADMIN","ADMIN","THEATRE_ADMIN"]}><AdminScreens /></RequireAuth>} />
+              <Route
+                path="screens"
+                element={
+                  <RequireAuth
+                    role={["SUPER_ADMIN", "ADMIN", "THEATRE_ADMIN"]}
+                  >
+                    <AdminScreens />
+                  </RequireAuth>
+                }
+              />
 
               {/* Pricing + Bookings for SUPER + THEATRE ADMIN */}
-              <Route path="pricing" element={<RequireAuth role={["SUPER_ADMIN","THEATRE_ADMIN"]}><AdminPricing /></RequireAuth>} />
-              <Route path="bookings/:id" element={<RequireAuth role={["SUPER_ADMIN","THEATRE_ADMIN"]}><AdminBookingDetails /></RequireAuth>} />
+              <Route
+                path="pricing"
+                element={
+                  <RequireAuth role={["SUPER_ADMIN", "THEATRE_ADMIN"]}>
+                    <AdminPricing />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="bookings/:id"
+                element={
+                  <RequireAuth role={["SUPER_ADMIN", "THEATRE_ADMIN"]}>
+                    <AdminBookingDetails />
+                  </RequireAuth>
+                }
+              />
 
               {/* Profile for SUPER_ADMIN + ADMIN */}
-              <Route path="profile" element={<RequireAuth role={["SUPER_ADMIN","ADMIN"]}><AdminProfile /></RequireAuth>} />
+              <Route
+                path="profile"
+                element={
+                  <RequireAuth role={["SUPER_ADMIN", "ADMIN"]}>
+                    <AdminProfile />
+                  </RequireAuth>
+                }
+              />
             </Route>
 
             {/* THEATRE ADMIN SECTION */}
-            <Route path="/theatre" element={<RequireAuth role="THEATRE_ADMIN"><AdminShell><TheatreIndex /></AdminShell></RequireAuth>} />
-            <Route path="/theatre/my" element={<RequireAuth role="THEATRE_ADMIN"><AdminShell><TheatreDashboard /></AdminShell></RequireAuth>} />
-            <Route path="/theatre/screens" element={<RequireAuth role="THEATRE_ADMIN"><AdminShell><TheatreScreens /></AdminShell></RequireAuth>} />
-            <Route path="/theatre/showtimes" element={<RequireAuth role="THEATRE_ADMIN"><AdminShell><TheatreShowtimes /></AdminShell></RequireAuth>} />
-            <Route path="/theatre/profile" element={<RequireAuth role="THEATRE_ADMIN"><AdminShell><TheatreProfile /></AdminShell></RequireAuth>} />
-            <Route path="/theatre/reports" element={<RequireAuth role="THEATRE_ADMIN"><AdminShell><TheatreReports /></AdminShell></RequireAuth>} />
-            <Route path="/theatre/pricing" element={<RequireAuth role="THEATRE_ADMIN"><AdminShell><TheatrePricing /></AdminShell></RequireAuth>} />
-            <Route path="/theatre/view/:id" element={<RequireAuth role="THEATRE_ADMIN"><AdminShell><TheatreView /></AdminShell></RequireAuth>} />
+            <Route
+              path="/theatre"
+              element={
+                <RequireAuth role="THEATRE_ADMIN">
+                  <AdminShell>
+                    <TheatreIndex />
+                  </AdminShell>
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/theatre/my"
+              element={
+                <RequireAuth role="THEATRE_ADMIN">
+                  <AdminShell>
+                    <TheatreDashboard />
+                  </AdminShell>
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/theatre/screens"
+              element={
+                <RequireAuth role="THEATRE_ADMIN">
+                  <AdminShell>
+                    <TheatreScreens />
+                  </AdminShell>
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/theatre/showtimes"
+              element={
+                <RequireAuth role="THEATRE_ADMIN">
+                  <AdminShell>
+                    <TheatreShowtimes />
+                  </AdminShell>
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/theatre/profile"
+              element={
+                <RequireAuth role="THEATRE_ADMIN">
+                  <AdminShell>
+                    <TheatreProfile />
+                  </AdminShell>
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/theatre/reports"
+              element={
+                <RequireAuth role="THEATRE_ADMIN">
+                  <AdminShell>
+                    <TheatreReports />
+                  </AdminShell>
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/theatre/pricing"
+              element={
+                <RequireAuth role="THEATRE_ADMIN">
+                  <AdminShell>
+                    <TheatrePricing />
+                  </AdminShell>
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/theatre/view/:id"
+              element={
+                <RequireAuth role="THEATRE_ADMIN">
+                  <AdminShell>
+                    <TheatreView />
+                  </AdminShell>
+                </RequireAuth>
+              }
+            />
 
             {/* SUPER ONLY */}
-            <Route path="/super/theatre-admins" element={<RequireAuth role="SUPER_ADMIN"><AdminShell><TheatreAdmins /></AdminShell></RequireAuth>} />
+            <Route
+              path="/super/theatre-admins"
+              element={
+                <RequireAuth role="SUPER_ADMIN">
+                  <AdminShell>
+                    <TheatreAdmins />
+                  </AdminShell>
+                </RequireAuth>
+              }
+            />
 
             {/* 404 */}
             <Route path="*" element={<NotFound />} />
