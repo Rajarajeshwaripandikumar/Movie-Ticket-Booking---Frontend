@@ -138,7 +138,9 @@ function AdminIndex() {
     normalizeRole(auth?.role || auth?.user?.role) ||
     inferRole(auth) ||
     (typeof window !== "undefined" && normalizeRole(localStorage.getItem("role")));
-  if (role === "SUPER_ADMIN") return <Navigate to="/admin/dashboard" replace />;
+
+  // ⬅️ SUPER_ADMIN now goes to /admin/screens (same as ADMIN)
+  if (role === "SUPER_ADMIN") return <Navigate to="/admin/screens" replace />;
   if (role === "ADMIN") return <Navigate to="/admin/screens" replace />;
   if (role === "THEATRE_ADMIN") return <Navigate to="/theatre/my" replace />;
   return <Navigate to="/" replace />;
@@ -156,7 +158,8 @@ function RedirectIfAdmin({ children }) {
     inferRole(auth) ||
     (typeof window !== "undefined" && normalizeRole(localStorage.getItem("role")));
 
-  if (role === "SUPER_ADMIN") return <Navigate to="/admin/dashboard" replace />;
+  // ⬅️ SUPER_ADMIN now goes to /admin/screens
+  if (role === "SUPER_ADMIN") return <Navigate to="/admin/screens" replace />;
   if (role === "ADMIN") return <Navigate to="/admin/screens" replace />;
   if (role === "THEATRE_ADMIN") return <Navigate to="/theatre/my" replace />;
   return children;
@@ -168,7 +171,9 @@ function RoleProfileRouter() {
     normalizeRole(auth?.role || auth?.user?.role) ||
     inferRole(auth) ||
     (typeof window !== "undefined" && normalizeRole(localStorage.getItem("role")));
-  if (r === "SUPER_ADMIN") return <Navigate to="/admin/dashboard" replace />;
+
+  // ⬅️ SUPER_ADMIN now goes to /admin/screens
+  if (r === "SUPER_ADMIN") return <Navigate to="/admin/screens" replace />;
   if (r === "ADMIN") return <Navigate to="/admin/screens" replace />;
   if (r === "THEATRE_ADMIN") return <Navigate to="/theatre/profile" replace />;
   return <Navigate to="/profile" replace />;
@@ -292,7 +297,7 @@ export default function App() {
               {/* Landing → role-based index redirect */}
               <Route index element={<AdminIndex />} />
 
-              {/* SUPER_ADMIN ONLY */}
+              {/* SUPER_ADMIN ONLY (you can keep these, but landings go to /admin/screens) */}
               <Route
                 path="dashboard"
                 element={
@@ -326,7 +331,7 @@ export default function App() {
                 }
               />
 
-              {/* 🔓 Screens allowed for SUPER_ADMIN, ADMIN, THEATRE_ADMIN */}
+              {/* 🔓 Screens for SUPER_ADMIN + ADMIN + THEATRE_ADMIN */}
               <Route
                 path="screens"
                 element={
@@ -470,7 +475,7 @@ export default function App() {
             {/* SUPER_ADMIN only — manage theatre admins */}
             <Route
               path="/super/theatre-admins"
-              element={
+              element{
                 <RequireAuth role="SUPER_ADMIN">
                   <AdminShell>
                     <TheatreAdmins />
