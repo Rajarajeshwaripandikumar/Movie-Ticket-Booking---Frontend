@@ -1,3 +1,4 @@
+// src/components/Navbar.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
@@ -25,26 +26,20 @@ function IconBtn({ className = "", ...rest }) {
   );
 }
 
-function GhostLink({ active, className = "", ...rest }) {
-  return (
-    <button
-      className={cn(
-        "text-sm font-semibold transition-colors",
-        active ? "text-[#0654BA]" : "text-slate-700 hover:text-[#0654BA]",
-        className
-      )}
-      {...rest}
-    />
+/* ---------- REMOVE button-inside-link; style NavLink directly ---------- */
+const navLinkClasses = ({ isActive }) =>
+  cn(
+    "text-sm font-semibold transition-colors",
+    isActive ? "text-[#0654BA]" : "text-slate-700 hover:text-[#0654BA]"
   );
-}
 
-/* imperative link so clicks from inside popover work reliably */
+/* imperative link for popover items so closing menu is reliable */
 function MenuItemLink({ to, children, onClick }) {
   const navigate = useNavigate();
   return (
     <button
       type="button"
-      onMouseDown={(e) => {
+      onClick={(e) => {
         e.preventDefault();
         onClick?.();
         navigate(to);
@@ -61,7 +56,7 @@ const SUPER_ADMIN_LINKS = [
   { label: "Manage Theaters", to: "/admin/theaters" },
   { label: "Manage Movies", to: "/admin/movies" },
   { label: "Manage Screens", to: "/admin/screens" },
-  { label: "Manage Showtimes", to: "/admin/showtimes" }, // ⬅️ now exists
+  { label: "Manage Showtimes", to: "/admin/showtimes" },
   { label: "Update Pricing", to: "/admin/pricing" },
   { label: "Admin Analytics", to: "/admin/analytics" },
   { label: "Theatre Admins", to: "/super/theatre-admins" },
@@ -202,7 +197,9 @@ export default function Navbar() {
     <header className="w-full sticky top-0 z-50">
       <div className="relative isolate z-50 backdrop-blur-md bg-white/85 border-b border-slate-200 shadow-sm overflow-visible">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          {/* ROW: logo | middle nav | right controls */}
           <div className="h-16 flex items-center gap-6">
+            {/* Brand (left) */}
             <Link to="/" className="flex items-center gap-3 shrink-0">
               <Card className="p-1.5">
                 <Logo size={36} />
@@ -212,24 +209,28 @@ export default function Navbar() {
               </div>
             </Link>
 
+            {/* Main Links (middle) */}
             <nav className="hidden md:flex items-center gap-5 ml-8">
-              <NavLink to="/movies">
-                {({ isActive }) => <GhostLink active={isActive}>Movies</GhostLink>}
+              <NavLink to="/movies" className={navLinkClasses}>
+                Movies
               </NavLink>
-              <NavLink to="/theaters">
-                {({ isActive }) => <GhostLink active={isActive}>Theaters</GhostLink>}
+              <NavLink to="/theaters" className={navLinkClasses}>
+                Theaters
               </NavLink>
-              <NavLink to="/showtimes">
-                {({ isActive }) => <GhostLink active={isActive}>Showtimes</GhostLink>}
+              <NavLink to="/showtimes" className={navLinkClasses}>
+                Showtimes
               </NavLink>
+              {/* Hide "My Bookings" for ALL admin roles */}
               {isLoggedIn && !anyAdmin && (
-                <NavLink to="/bookings">
-                  {({ isActive }) => <GhostLink active={isActive}>My Bookings</GhostLink>}
+                <NavLink to="/bookings" className={navLinkClasses}>
+                  My Bookings
                 </NavLink>
               )}
             </nav>
 
+            {/* Right Controls (pushed right) */}
             <div className="ml-auto flex items-center gap-3 relative">
+              {/* Notifications */}
               {isLoggedIn && (
                 <div className="relative z-50" ref={notifRef}>
                   <IconBtn
@@ -253,6 +254,7 @@ export default function Navbar() {
                       role="menu"
                       aria-label="Notifications"
                     >
+                      {/* Mark all as read */}
                       {notifications.length > 0 && (
                         <div className="sticky top-0 bg-white border-b border-slate-200 p-2 text-right">
                           <button
@@ -296,7 +298,7 @@ export default function Navbar() {
                                   role="menuitem"
                                 >
                                   <div className="flex items-start gap-2">
-                                    {!n.readAt && <span className="mt-1 inline-block w-2 h-2 rounded-full bg-rose-500" />}
+                                    {!n.readAt && <span className="mt-1 inline-block w-2 h-2 rounded-full" style={{ background: "currentColor" }} />}
                                     <div className="flex-1">
                                       <div className="text-sm font-extrabold text-slate-900">
                                         {n.title || "Notification"}
@@ -320,6 +322,7 @@ export default function Navbar() {
                 </div>
               )}
 
+              {/* Admin access / login + Login/Register pills */}
               {!isLoggedIn ? (
                 <>
                   <button
@@ -343,6 +346,7 @@ export default function Navbar() {
                 </>
               ) : null}
 
+              {/* Account Menu — only when logged in */}
               {isLoggedIn && (
                 <div className="relative">
                   <button
@@ -360,6 +364,7 @@ export default function Navbar() {
                         Profile
                       </MenuItemLink>
 
+                      {/* Hide My Bookings for ALL admin roles */}
                       {!(isSuperAdmin || isAdmin || isTheatreAdmin) && (
                         <MenuItemLink to="/bookings" onClick={() => setAdminMenu(false)}>
                           My Bookings
@@ -382,7 +387,7 @@ export default function Navbar() {
 
                       <button
                         type="button"
-                        onMouseDown={async () => {
+                        onClick={async () => {
                           await logout();
                           setAdminMenu(false);
                           setNotifOpen(false);
@@ -397,6 +402,7 @@ export default function Navbar() {
                 </div>
               )}
 
+              {/* Mobile Menu Button */}
               <IconBtn className="md:hidden" onClick={() => setOpen((v) => !v)}>
                 {open ? <X /> : <Menu />}
               </IconBtn>
@@ -405,6 +411,7 @@ export default function Navbar() {
         </div>
       </div>
 
+      {/* Spacer in case sticky header overlaps admin pages */}
       {location.pathname.startsWith("/admin") || location.pathname.startsWith("/theatre")
         ? <div className="h-0 md:h-0" />
         : null}
