@@ -1,4 +1,3 @@
-// src/components/Navbar.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
@@ -6,7 +5,6 @@ import Logo from "./Logo";
 import { ChevronDown, Menu, X, UserRound, Shield, LogOut, Bell } from "lucide-react";
 import api from "../api/api";
 
-/* --------------------------- Walmart primitives --------------------------- */
 const cn = (...xs) => xs.filter(Boolean).join(" ");
 
 const Card = ({ className = "", as: Comp = "div", ...rest }) => (
@@ -40,17 +38,16 @@ function GhostLink({ active, className = "", ...rest }) {
   );
 }
 
-/* -------------------------- Menu Navigation Item -------------------------- */
-/* Changed to imperative navigation so clicks inside popover always work */
+/* imperative link so clicks from inside popover work reliably */
 function MenuItemLink({ to, children, onClick }) {
   const navigate = useNavigate();
   return (
     <button
       type="button"
-      onClick={(e) => {
+      onMouseDown={(e) => {
         e.preventDefault();
-        onClick?.();        // close the menu first
-        navigate(to);       // then navigate
+        onClick?.();
+        navigate(to);
       }}
       className="block w-full text-left px-3 py-2 text-sm rounded-xl hover:bg-slate-50 font-semibold"
       role="menuitem"
@@ -60,18 +57,16 @@ function MenuItemLink({ to, children, onClick }) {
   );
 }
 
-/* ------------------------------ Menu Groups ------------------------------ */
 const SUPER_ADMIN_LINKS = [
   { label: "Manage Theaters", to: "/admin/theaters" },
   { label: "Manage Movies", to: "/admin/movies" },
   { label: "Manage Screens", to: "/admin/screens" },
-  { label: "Manage Showtimes", to: "/admin/showtimes" },
+  { label: "Manage Showtimes", to: "/admin/showtimes" }, // ⬅️ now exists
   { label: "Update Pricing", to: "/admin/pricing" },
   { label: "Admin Analytics", to: "/admin/analytics" },
   { label: "Theatre Admins", to: "/super/theatre-admins" },
 ];
 
-// ✅ cleaned & aligned with routes
 const THEATRE_ADMIN_LINKS = [
   { label: "Dashboard", to: "/theatre/my" },
   { label: "Manage Screens", to: "/theatre/screens" },
@@ -81,7 +76,6 @@ const THEATRE_ADMIN_LINKS = [
   { label: "My Theatre", to: "/theatre/profile" },
 ];
 
-/* --------------------------- Notifications utils -------------------------- */
 const normalizeNotifications = (raw) => {
   const arr =
     Array.isArray(raw) ? raw :
@@ -107,8 +101,6 @@ const normalizeNotifications = (raw) => {
   };
 };
 
-/* -------------------------------------------------------------------------- */
-
 export default function Navbar() {
   const {
     user,
@@ -127,12 +119,10 @@ export default function Navbar() {
   const [open, setOpen] = useState(false);
   const [adminMenu, setAdminMenu] = useState(false);
 
-  // Notifications
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const notifRef = useRef(null);
 
-  // Prefer admin token, then context user token, then localStorage fallback
   const token =
     adminToken ||
     userToken ||
@@ -142,11 +132,9 @@ export default function Navbar() {
 
   const unread = useMemo(() => notifications.filter((n) => !n.readAt).length, [notifications]);
 
-  // Load notifications (✅ uses /notifications/mine)
   useEffect(() => {
     if (!isLoggedIn || !token) return;
     let alive = true;
-
     const load = async () => {
       try {
         const res = await api.get("/notifications/mine", {
@@ -159,13 +147,11 @@ export default function Navbar() {
         if (alive) setNotifications([]);
       }
     };
-
     load();
     const t = setInterval(load, 30000);
     return () => { alive = false; clearInterval(t); };
   }, [isLoggedIn, token]);
 
-  // Close dropdowns on outside click
   useEffect(() => {
     const onDocClick = (e) => {
       if (!notifRef.current) return;
@@ -175,7 +161,6 @@ export default function Navbar() {
     return () => document.removeEventListener("mousedown", onDocClick);
   }, []);
 
-  // Close menus on route change
   useEffect(() => {
     setNotifOpen(false);
     setAdminMenu(false);
@@ -183,29 +168,24 @@ export default function Navbar() {
 
   const toKey = (n) => n.id || `${n.type || "n"}-${n.createdAt || Math.random()}`;
 
-  // ✅ theatre admins deep-link to /theatre/showtimes
   const resolveNotificationPath = (n) => {
     const t = (n.type || "").toLowerCase();
-    if (t.includes("booking")) {
-      return "/bookings"; // user booking list (admins usually have per-id route)
-    }
+    if (t.includes("booking")) return "/bookings";
     if (t.includes("showtime")) {
       if (isSuperAdmin) return "/admin/showtimes";
       if (isTheatreAdmin) return "/theatre/showtimes";
       if (isAdmin) return "/admin/showtimes";
       return "/showtimes";
     }
-    // default landing by role
     if (isTheatreAdmin) return "/theatre/my";
     if (isSuperAdmin || isAdmin) return "/admin";
     return "/bookings";
   };
 
-  // ✅ PATCH for read
   const markOneRead = async (id) => {
     try {
       await api.patch(`/notifications/${id}/read`, {}, { headers: { Authorization: `Bearer ${token}` } });
-    } catch { /* ignore */ }
+    } catch {}
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, readAt: n.readAt || new Date().toISOString() } : n))
     );
@@ -222,9 +202,7 @@ export default function Navbar() {
     <header className="w-full sticky top-0 z-50">
       <div className="relative isolate z-50 backdrop-blur-md bg-white/85 border-b border-slate-200 shadow-sm overflow-visible">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          {/* ROW: logo | middle nav | right controls */}
           <div className="h-16 flex items-center gap-6">
-            {/* Brand (left) */}
             <Link to="/" className="flex items-center gap-3 shrink-0">
               <Card className="p-1.5">
                 <Logo size={36} />
@@ -234,7 +212,6 @@ export default function Navbar() {
               </div>
             </Link>
 
-            {/* Main Links (middle) */}
             <nav className="hidden md:flex items-center gap-5 ml-8">
               <NavLink to="/movies">
                 {({ isActive }) => <GhostLink active={isActive}>Movies</GhostLink>}
@@ -245,7 +222,6 @@ export default function Navbar() {
               <NavLink to="/showtimes">
                 {({ isActive }) => <GhostLink active={isActive}>Showtimes</GhostLink>}
               </NavLink>
-              {/* Hide "My Bookings" for ALL admin roles */}
               {isLoggedIn && !anyAdmin && (
                 <NavLink to="/bookings">
                   {({ isActive }) => <GhostLink active={isActive}>My Bookings</GhostLink>}
@@ -253,9 +229,7 @@ export default function Navbar() {
               )}
             </nav>
 
-            {/* Right Controls (pushed right) */}
             <div className="ml-auto flex items-center gap-3 relative">
-              {/* Notifications */}
               {isLoggedIn && (
                 <div className="relative z-50" ref={notifRef}>
                   <IconBtn
@@ -279,7 +253,6 @@ export default function Navbar() {
                       role="menu"
                       aria-label="Notifications"
                     >
-                      {/* Mark all as read */}
                       {notifications.length > 0 && (
                         <div className="sticky top-0 bg-white border-b border-slate-200 p-2 text-right">
                           <button
@@ -290,7 +263,7 @@ export default function Navbar() {
                                 setNotifications((prev) =>
                                   prev.map((n) => ({ ...n, readAt: n.readAt || new Date().toISOString() }))
                                 );
-                              } catch { /* ignore */ }
+                              } catch {}
                             }}
                           >
                             Mark all as read
@@ -347,7 +320,6 @@ export default function Navbar() {
                 </div>
               )}
 
-              {/* Admin access / login + Login/Register pills */}
               {!isLoggedIn ? (
                 <>
                   <button
@@ -371,7 +343,6 @@ export default function Navbar() {
                 </>
               ) : null}
 
-              {/* Account Menu — only when logged in */}
               {isLoggedIn && (
                 <div className="relative">
                   <button
@@ -389,7 +360,6 @@ export default function Navbar() {
                         Profile
                       </MenuItemLink>
 
-                      {/* Hide My Bookings for ALL admin roles */}
                       {!(isSuperAdmin || isAdmin || isTheatreAdmin) && (
                         <MenuItemLink to="/bookings" onClick={() => setAdminMenu(false)}>
                           My Bookings
@@ -412,7 +382,7 @@ export default function Navbar() {
 
                       <button
                         type="button"
-                        onClick={async () => {
+                        onMouseDown={async () => {
                           await logout();
                           setAdminMenu(false);
                           setNotifOpen(false);
@@ -427,7 +397,6 @@ export default function Navbar() {
                 </div>
               )}
 
-              {/* Mobile Menu Button */}
               <IconBtn className="md:hidden" onClick={() => setOpen((v) => !v)}>
                 {open ? <X /> : <Menu />}
               </IconBtn>
@@ -436,8 +405,7 @@ export default function Navbar() {
         </div>
       </div>
 
-      {/* Spacer in case sticky header overlaps admin pages */}
-      {(location.pathname || "").startsWith("/admin") || (location.pathname || "").startsWith("/theatre")
+      {location.pathname.startsWith("/admin") || location.pathname.startsWith("/theatre")
         ? <div className="h-0 md:h-0" />
         : null}
     </header>
