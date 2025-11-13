@@ -215,7 +215,8 @@ export function AuthProvider({ children }) {
 
   /* USER LOGIN (normal site login) */
   const login = useCallback(async (email, password, roleHint) => {
-    const res = await api.post("/auth/login", { email, password, roleHint });
+    // Use backend-mounted path: /api/auth/login
+    const res = await api.post("/api/auth/login", { email, password, roleHint });
     const data = res?.data ?? res;
     const t = data?.token;
     if (!t || typeof t !== "string") throw new Error("No token returned from server");
@@ -273,12 +274,12 @@ export function AuthProvider({ children }) {
 
   /* ADMIN LOGIN (SUPER_ADMIN / THEATRE_ADMIN / ADMIN) */
   const loginAdmin = useCallback(async (email, password) => {
-    // Try slash route first, then hyphen fallback
+    // Try slash route first, then hyphen fallback under /api/auth
     let res;
     try {
-      res = await api.post("/auth/admin/login", { email, password });
+      res = await api.post("/api/auth/admin/login", { email, password });
     } catch {
-      res = await api.post("/auth/admin-login", { email, password });
+      res = await api.post("/api/auth/admin-login", { email, password });
     }
     const data = res?.data ?? res;
     const t = data?.adminToken || data?.token;
@@ -352,8 +353,12 @@ export function AuthProvider({ children }) {
     async () => {
       try {
         if (!activeToken) return null;
-        const res = await api.get("/auth/me");
-        const u = res?.data?.user;
+
+        // if adminToken is active, call admin profile endpoint; otherwise call unified auth/me
+        const profilePath = adminToken ? "/api/admin/me" : "/api/auth/me";
+        const res = await api.get(profilePath);
+
+        const u = res?.data?.user ?? res?.data; // adapt if backend returns user directly
         if (!u) return null;
 
         const roleCandidates = [
@@ -386,13 +391,14 @@ export function AuthProvider({ children }) {
 
         return nextUser;
       } catch (err) {
+        // if unauthorized, logout and let guards handle redirect
         if (err?.response?.status === 401) logout();
         return null;
       }
     },
-    // eslint: include deps that are referenced
+    // include adminToken in deps so closure sees it
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activeToken, logout, role, perms, user]
+    [activeToken, adminToken, logout, role, perms, user]
   );
 
   /* Derived flags */
@@ -446,8 +452,8 @@ export function AuthProvider({ children }) {
       setUser,
 
       // actions
-      login, // user login (/auth/login)
-      loginAdmin, // admin login (/auth/admin-login or /auth/admin/login)
+      login, // user login (/api/auth/login)
+      loginAdmin, // admin login (/api/auth/admin-login or /api/auth/admin/login)
       logout,
       refreshProfile,
 
