@@ -1,3 +1,4 @@
+// src/App.jsx (FULL UPDATED CODE — Option B canonical /admin/dashboard)
 import React, { useEffect } from "react";
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "./context/AuthContext";
@@ -32,7 +33,7 @@ import MyBookings from "./pages/MyBookings";
 import AdminDashboard from "./pages/AdminDashboard";
 import AdminTheaters from "./pages/AdminTheaters";
 import AdminScreens from "./pages/AdminScreens";
-import AdminShowtimes from "./pages/AdminShowtimes"; // ⬅️ make this route real
+import AdminShowtimes from "./pages/AdminShowtimes";
 import AdminPricing from "./pages/AdminPricing";
 import AdminMoviesPage from "./pages/AdminMoviesPage";
 import AdminProfile from "./pages/AdminProfile";
@@ -51,6 +52,7 @@ import TheatreView from "./pages/theatre/TheatreView";
 // Super Admin Only
 import TheatreAdmins from "./pages/super/TheatreAdmins";
 
+/* ---------------------- tiny UI helpers used in loaders --------------------- */
 function NotFound() {
   return <p className="p-6 text-center text-gray-500">404 — Page not found</p>;
 }
@@ -62,6 +64,7 @@ function Loader() {
   );
 }
 
+/* ---------------------------- role utilities ------------------------------- */
 const normalizeRole = (r) => {
   if (!r) return null;
   let x = String(r).trim().toUpperCase().replace(/\s+/g, "_");
@@ -79,9 +82,24 @@ const inferRole = (auth) => {
   return null;
 };
 
+/* --------------------------- Navigation watcher --------------------------- */
+/* Keep while debugging; remove when stable */
+function NavigationWatcher() {
+  const location = useLocation();
+  useEffect(() => {
+    // eslint-disable-next-line no-console
+    console.warn("[NavigationWatcher] navigated to:", location.pathname, new Date().toISOString());
+  }, [location.pathname]);
+  return null;
+}
+
+/* ------------------------- Guarded auth components ------------------------ */
+// NOTE: Option B — canonical admin landing is /admin/dashboard
+
 function RequireAuth({ children, role }) {
   const auth = useAuth();
   const location = useLocation();
+
   if (auth?.loading) return <Loader />;
 
   const roleFromCtx =
@@ -103,15 +121,18 @@ function RequireAuth({ children, role }) {
           ["SUPER_ADMIN", "THEATRE_ADMIN", "ADMIN"].includes(r)
         )
       : ["SUPER_ADMIN", "THEATRE_ADMIN", "ADMIN"].includes(normalizeRole(role));
+
+    const loginTarget = needsAdmin ? "/admin/login" : "/login";
+
+    // don't repeatedly navigate to the same login page
+    if (location.pathname === loginTarget) return null;
+
     return (
-      <Navigate
-        to={needsAdmin ? "/admin/login" : "/login"}
-        replace
-        state={{ from: location }}
-      />
+      <Navigate to={loginTarget} replace state={{ from: location }} />
     );
   }
 
+  // If route expects a role but we haven't resolved it yet, show loader
   if (role && !currentRole) return <Loader />;
   if (!role) return children;
 
@@ -122,73 +143,115 @@ function RequireAuth({ children, role }) {
   if (currentRole === "SUPER_ADMIN") return children;
   if (currentRole && allowed.includes(currentRole)) return children;
 
-  if (currentRole === "THEATRE_ADMIN")
+  // redirect to role-specific home, but guard against re-navigation
+  if (currentRole === "THEATRE_ADMIN") {
+    if (location.pathname === "/theatre/my") return null;
     return <Navigate to="/theatre/my" replace />;
-  if (currentRole === "ADMIN") return <Navigate to="/admin/screens" replace />;
+  }
+  if (currentRole === "ADMIN") {
+    if (location.pathname === "/admin/dashboard") return null;
+    return <Navigate to="/admin/dashboard" replace />;
+  }
 
+  if (location.pathname === "/") return null;
   return <Navigate to="/" replace />;
-}
-
-function ScrollToTop() {
-  const { pathname, search } = useLocation();
-  useEffect(() => window.scrollTo(0, 0), [pathname, search]);
-  return null;
 }
 
 function AdminIndex() {
   const auth = useAuth();
+  const location = useLocation();
+
   if (auth?.loading) return <Loader />;
+
   const role =
     normalizeRole(auth?.role || auth?.user?.role) ||
     inferRole(auth) ||
     (typeof window !== "undefined" &&
       normalizeRole(localStorage.getItem("role")));
+
   if (!role) return <Loader />;
-  if (role === "SUPER_ADMIN" || role === "ADMIN")
-    return <Navigate to="/admin/screens" replace />;
-  if (role === "THEATRE_ADMIN") return <Navigate to="/theatre/my" replace />;
-  return <Navigate to="/" replace />;
+
+  // Option B: canonical admin landing is /admin/dashboard
+  const target = role === "THEATRE_ADMIN" ? "/theatre/my" : "/admin/dashboard";
+
+  // avoid redirecting to the current path (prevents loops)
+  if (location.pathname === target) return null;
+
+  return <Navigate to={target} replace />;
 }
+
 function TheatreIndex() {
   return <Navigate to="/theatre/my" replace />;
 }
+
 function RedirectIfAdmin({ children }) {
   const auth = useAuth();
+  const location = useLocation();
+
   if (auth?.loading) return <Loader />;
+
   const role =
     normalizeRole(auth?.role || auth?.user?.role) ||
     inferRole(auth) ||
     (typeof window !== "undefined" &&
       normalizeRole(localStorage.getItem("role")));
+
   const hasSession =
     !!auth?.isAuthenticated ||
     !!auth?.token ||
     (typeof window !== "undefined" && !!localStorage.getItem("token"));
+
   if (hasSession && !role) return <Loader />;
-  if (role === "SUPER_ADMIN" || role === "ADMIN")
-    return <Navigate to="/admin/screens" replace />;
-  if (role === "THEATRE_ADMIN") return <Navigate to="/theatre/my" replace />;
+
+  let target = null;
+  if (role === "SUPER_ADMIN" || role === "ADMIN") target = "/admin/dashboard";
+  if (role === "THEATRE_ADMIN") target = "/theatre/my";
+
+  // only redirect if we have a target AND it's not the current path
+  if (target && location.pathname !== target) {
+    return <Navigate to={target} replace />;
+  }
+
   return children;
 }
+
 function RoleProfileRouter() {
   const auth = useAuth();
+  const location = useLocation();
+
   if (auth?.loading) return <Loader />;
+
   const r =
     normalizeRole(auth?.role || auth?.user?.role) ||
     inferRole(auth) ||
     (typeof window !== "undefined" &&
       normalizeRole(localStorage.getItem("role")));
+
   const hasSession =
     !!auth?.isAuthenticated ||
     !!auth?.token ||
     (typeof window !== "undefined" && !!localStorage.getItem("token"));
+
   if (hasSession && !r) return <Loader />;
-  if (r === "SUPER_ADMIN" || r === "ADMIN")
-    return <Navigate to="/admin/screens" replace />;
-  if (r === "THEATRE_ADMIN") return <Navigate to="/theatre/profile" replace />;
-  return <Navigate to="/profile" replace />;
+
+  const adminTarget = "/admin/dashboard";
+  const theatreTarget = "/theatre/profile";
+  const userTarget = "/profile";
+
+  if (r === "SUPER_ADMIN" || r === "ADMIN") {
+    if (location.pathname === adminTarget) return null;
+    return <Navigate to={adminTarget} replace />;
+  }
+  if (r === "THEATRE_ADMIN") {
+    if (location.pathname === theatreTarget) return null;
+    return <Navigate to={theatreTarget} replace />;
+  }
+
+  if (location.pathname === userTarget) return null;
+  return <Navigate to={userTarget} replace />;
 }
 
+/* ---------------------------------- App ---------------------------------- */
 export default function App() {
   return (
     <div className="flex flex-col min-h-screen text-gray-800 overflow-x-hidden bg-transparent">
@@ -198,7 +261,7 @@ export default function App() {
           <GlobalBackdrop />
         </div>
 
-        <ScrollToTop />
+        <NavigationWatcher />
 
         <div className="max-w-6xl mx-auto p-4">
           <Routes>
@@ -318,7 +381,7 @@ export default function App() {
                 }
               />
 
-              {/* ✅ Shared admin routes */}
+              {/* Shared admin routes */}
               <Route
                 path="screens"
                 element={
@@ -329,7 +392,6 @@ export default function App() {
                   </RequireAuth>
                 }
               />
-              {/* ⬇️ the missing route that the menu was linking to */}
               <Route
                 path="showtimes"
                 element={
