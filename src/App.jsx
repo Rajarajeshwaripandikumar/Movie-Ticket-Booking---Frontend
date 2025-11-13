@@ -94,28 +94,23 @@ function NavigationWatcher() {
 }
 
 /* ------------------------- Guarded auth components ------------------------ */
-// NOTE: Option B — canonical admin landing is /admin/dashboard
+/* NOTE: These have been updated to rely on the AuthContext shape:
+   - auth.initialized (instead of auth.loading)
+   - auth.isLoggedIn (instead of auth.isAuthenticated)
+   - auth.role / auth.user (instead of auth.user.role)
+   - auth.isAdmin, auth.isTheatreAdmin, auth.isSuperAdmin where available
+*/
 
+/* Replace RequireAuth */
 function RequireAuth({ children, role }) {
   const auth = useAuth();
   const location = useLocation();
 
-  if (auth?.loading) return <Loader />;
+  // Wait until AuthContext finishes its initial load
+  if (!auth?.initialized) return <Loader />;
 
-  const roleFromCtx =
-    normalizeRole(auth?.role || auth?.user?.role) || inferRole(auth);
-  const roleFromStorage =
-    typeof window !== "undefined"
-      ? normalizeRole(localStorage.getItem("role"))
-      : null;
-  const currentRole = normalizeRole(roleFromCtx || roleFromStorage);
-
-  const hasSession =
-    !!auth?.isAuthenticated ||
-    !!auth?.token ||
-    (typeof window !== "undefined" && !!localStorage.getItem("token"));
-
-  if (!hasSession) {
+  // If not logged in, redirect to the appropriate login page
+  if (!auth?.isLoggedIn) {
     const needsAdmin = Array.isArray(role)
       ? role.map(normalizeRole).some((r) =>
           ["SUPER_ADMIN", "THEATRE_ADMIN", "ADMIN"].includes(r)
@@ -123,27 +118,27 @@ function RequireAuth({ children, role }) {
       : ["SUPER_ADMIN", "THEATRE_ADMIN", "ADMIN"].includes(normalizeRole(role));
 
     const loginTarget = needsAdmin ? "/admin/login" : "/login";
-
-    // don't repeatedly navigate to the same login page
     if (location.pathname === loginTarget) return null;
-
-    return (
-      <Navigate to={loginTarget} replace state={{ from: location }} />
-    );
+    return <Navigate to={loginTarget} replace state={{ from: location }} />;
   }
 
-  // If route expects a role but we haven't resolved it yet, show loader
-  if (role && !currentRole) return <Loader />;
+  // If no role requirement, allow access
   if (!role) return children;
 
-  const allowed = Array.isArray(role)
-    ? role.map(normalizeRole)
-    : [normalizeRole(role)];
+  // Resolve the current role (prefer explicit role from context)
+  const currentRole =
+    normalizeRole(auth.role || auth.user?.role) ||
+    (auth.isTheatreAdmin ? "THEATRE_ADMIN" : auth.isAdmin ? "ADMIN" : auth.isSuperAdmin ? "SUPER_ADMIN" : null);
+
+  // If role isn't resolved yet, show loader
+  if (!currentRole) return <Loader />;
+
+  const allowed = Array.isArray(role) ? role.map(normalizeRole) : [normalizeRole(role)];
 
   if (currentRole === "SUPER_ADMIN") return children;
   if (currentRole && allowed.includes(currentRole)) return children;
 
-  // redirect to role-specific home, but guard against re-navigation
+  // route user to role-specific home (but avoid re-navigation)
   if (currentRole === "THEATRE_ADMIN") {
     if (location.pathname === "/theatre/my") return null;
     return <Navigate to="/theatre/my" replace />;
@@ -157,49 +152,39 @@ function RequireAuth({ children, role }) {
   return <Navigate to="/" replace />;
 }
 
+/* Replace AdminIndex */
 function AdminIndex() {
   const auth = useAuth();
   const location = useLocation();
 
-  if (auth?.loading) return <Loader />;
+  if (!auth?.initialized) return <Loader />;
 
   const role =
-    normalizeRole(auth?.role || auth?.user?.role) ||
-    inferRole(auth) ||
-    (typeof window !== "undefined" &&
-      normalizeRole(localStorage.getItem("role")));
+    normalizeRole(auth.role || auth.user?.role) ||
+    (auth.isSuperAdmin ? "SUPER_ADMIN" : auth.isAdmin ? "ADMIN" : auth.isTheatreAdmin ? "THEATRE_ADMIN" : null) ||
+    (typeof window !== "undefined" && normalizeRole(localStorage.getItem("role")));
 
   if (!role) return <Loader />;
 
-  // Option B: canonical admin landing is /admin/dashboard
   const target = role === "THEATRE_ADMIN" ? "/theatre/my" : "/admin/dashboard";
 
-  // avoid redirecting to the current path (prevents loops)
   if (location.pathname === target) return null;
-
   return <Navigate to={target} replace />;
 }
 
-function TheatreIndex() {
-  return <Navigate to="/theatre/my" replace />;
-}
-
+/* Replace RedirectIfAdmin */
 function RedirectIfAdmin({ children }) {
   const auth = useAuth();
   const location = useLocation();
 
-  if (auth?.loading) return <Loader />;
+  if (!auth?.initialized) return <Loader />;
 
   const role =
-    normalizeRole(auth?.role || auth?.user?.role) ||
-    inferRole(auth) ||
-    (typeof window !== "undefined" &&
-      normalizeRole(localStorage.getItem("role")));
+    normalizeRole(auth.role || auth.user?.role) ||
+    (auth.isSuperAdmin ? "SUPER_ADMIN" : auth.isAdmin ? "ADMIN" : auth.isTheatreAdmin ? "THEATRE_ADMIN" : null) ||
+    (typeof window !== "undefined" && normalizeRole(localStorage.getItem("role")));
 
-  const hasSession =
-    !!auth?.isAuthenticated ||
-    !!auth?.token ||
-    (typeof window !== "undefined" && !!localStorage.getItem("token"));
+  const hasSession = !!auth?.isLoggedIn;
 
   if (hasSession && !role) return <Loader />;
 
@@ -207,7 +192,6 @@ function RedirectIfAdmin({ children }) {
   if (role === "SUPER_ADMIN" || role === "ADMIN") target = "/admin/dashboard";
   if (role === "THEATRE_ADMIN") target = "/theatre/my";
 
-  // only redirect if we have a target AND it's not the current path
   if (target && location.pathname !== target) {
     return <Navigate to={target} replace />;
   }
@@ -215,20 +199,20 @@ function RedirectIfAdmin({ children }) {
   return children;
 }
 
+/* Replace RoleProfileRouter */
 function RoleProfileRouter() {
   const auth = useAuth();
   const location = useLocation();
 
-  if (auth?.loading) return <Loader />;
+  if (!auth?.initialized) return <Loader />;
 
   const r =
-    normalizeRole(auth?.role || auth?.user?.role) ||
-    inferRole(auth) ||
-    (typeof window !== "undefined" &&
-      normalizeRole(localStorage.getItem("role")));
+    normalizeRole(auth.role || auth.user?.role) ||
+    (auth.isSuperAdmin ? "SUPER_ADMIN" : auth.isAdmin ? "ADMIN" : auth.isTheatreAdmin ? "THEATRE_ADMIN" : null) ||
+    (typeof window !== "undefined" && normalizeRole(localStorage.getItem("role")));
 
   const hasSession =
-    !!auth?.isAuthenticated ||
+    !!auth?.isLoggedIn ||
     !!auth?.token ||
     (typeof window !== "undefined" && !!localStorage.getItem("token"));
 
@@ -438,7 +422,7 @@ export default function App() {
               element={
                 <RequireAuth role="THEATRE_ADMIN">
                   <AdminShell>
-                    <TheatreIndex />
+                    <Navigate to="/theatre/my" replace />
                   </AdminShell>
                 </RequireAuth>
               }
