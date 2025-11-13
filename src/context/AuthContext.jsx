@@ -62,7 +62,7 @@ function normalizeRole(raw) {
 function defaultLandingFor(role) {
   const r = normalizeRole(role);
   if (r === "SUPER_ADMIN") return "/admin/dashboard";
-  if (r === "THEATRE_ADMIN") return "/admin";       // send theatre admins into admin shell
+  if (r === "THEATRE_ADMIN") return "/admin"; // send theatre admins into admin shell
   if (r === "ADMIN") return "/admin/dashboard";
   return "/";
 }
@@ -96,7 +96,9 @@ function readJSON(key, fallback) {
 export function AuthProvider({ children }) {
   // Keep BOTH tokens; prefer adminToken for protected/admin API calls & identity
   const [token, setToken] = useState(() => localStorage.getItem(LS_KEYS.token) || null);
-  const [adminToken, setAdminToken] = useState(() => localStorage.getItem(LS_KEYS.adminToken) || null);
+  const [adminToken, setAdminToken] = useState(
+    () => localStorage.getItem(LS_KEYS.adminToken) || null
+  );
 
   const [role, setRole] = useState(() => normalizeRole(localStorage.getItem(LS_KEYS.role)));
   const [roles, setRoles] = useState(() => {
@@ -110,6 +112,9 @@ export function AuthProvider({ children }) {
   });
 
   const [user, setUser] = useState(() => readJSON(LS_KEYS.user, null));
+
+  // NEW: whether auth finished its initial load. Consumers should wait for this before redirecting.
+  const [initialized, setInitialized] = useState(false);
 
   // Compute the active auth token (admin has priority)
   const activeToken = adminToken || token || null;
@@ -177,6 +182,7 @@ export function AuthProvider({ children }) {
           perms: Array.isArray(claims.perms) ? claims.perms : [],
           theaterId: claims.theatreId || claims.theaterId || user?.theaterId || null,
         });
+        setInitialized(true); // <-- mark ready
         return;
       } else {
         localStorage.removeItem(LS_KEYS.adminToken);
@@ -201,6 +207,9 @@ export function AuthProvider({ children }) {
         localStorage.removeItem(LS_KEYS.token);
       }
     }
+
+    // if neither token set, still mark initialized so guards can act.
+    setInitialized(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -257,6 +266,8 @@ export function AuthProvider({ children }) {
     writeJSON(LS_KEYS.user, finalUser);
 
     // axios header prefers activeToken automatically via effect
+    // Ensure app is considered initialized after an explicit login flow
+    setInitialized(true);
     setTimeout(() => window.location.replace(defaultLandingFor(finalRole)), 0);
   }, []);
 
@@ -291,7 +302,7 @@ export function AuthProvider({ children }) {
       role: finalRole,
       roles: [finalRole],
       perms: permsArr,
-      theaterId: claims.theatreId || claims.theaterId || data?.user?.theaterId || null,
+      theaterId: claims.theatreId || claims.theaterId || data?.user?.theatreId || null,
     };
 
     // set state: ADMIN token only, clear user token if present
@@ -310,6 +321,8 @@ export function AuthProvider({ children }) {
     writeJSON(LS_KEYS.perms, permsArr);
     writeJSON(LS_KEYS.user, finalUser);
 
+    // Ensure app is considered initialized after an explicit admin login flow
+    setInitialized(true);
     setTimeout(() => window.location.replace(defaultLandingFor(finalRole)), 0);
   }, []);
 
@@ -328,52 +341,59 @@ export function AuthProvider({ children }) {
     api.setAuthToken?.(null);
     if (api.defaults) delete api.defaults.headers.common.Authorization;
 
+    // mark initialized so guards don't keep waiting; user is known to be logged out
+    setInitialized(true);
+
     setTimeout(() => window.location.replace("/"), 0);
   }, []);
 
   /* REFRESH PROFILE — uses whichever token is active (admin preferred) */
-  const refreshProfile = useCallback(async () => {
-    try {
-      if (!activeToken) return null;
-      const res = await api.get("/auth/me");
-      const u = res?.data?.user;
-      if (!u) return null;
+  const refreshProfile = useCallback(
+    async () => {
+      try {
+        if (!activeToken) return null;
+        const res = await api.get("/auth/me");
+        const u = res?.data?.user;
+        if (!u) return null;
 
-      const roleCandidates = [
-        u.role,
-        ...(Array.isArray(u.roles) ? u.roles : []),
-        ...(Array.isArray(u.authorities) ? u.authorities : []),
-        role,
-      ].filter(Boolean);
+        const roleCandidates = [
+          u.role,
+          ...(Array.isArray(u.roles) ? u.roles : []),
+          ...(Array.isArray(u.authorities) ? u.authorities : []),
+          role,
+        ].filter(Boolean);
 
-      const normalizedRoles = roleCandidates.map(normalizeRole).filter(Boolean);
-      const nextRole = normalizedRoles[0] || role || "USER";
+        const normalizedRoles = roleCandidates.map(normalizeRole).filter(Boolean);
+        const nextRole = normalizedRoles[0] || role || "USER";
 
-      const nextPerms =
-        (Array.isArray(u.perms) && u.perms) ||
-        (Array.isArray(res?.data?.perms) && res.data.perms) ||
-        perms;
+        const nextPerms =
+          (Array.isArray(u.perms) && u.perms) ||
+          (Array.isArray(res?.data?.perms) && res.data.perms) ||
+          perms;
 
-      const nextUser = {
-        ...u,
-        role: nextRole,
-        roles: normalizedRoles,
-        perms: nextPerms,
-        theaterId: u.theaterId || u.theatreId || user?.theaterId || null,
-      };
+        const nextUser = {
+          ...u,
+          role: nextRole,
+          roles: normalizedRoles,
+          perms: nextPerms,
+          theaterId: u.theaterId || u.theatreId || user?.theaterId || null,
+        };
 
-      setUser(nextUser);
-      setRole(nextRole);
-      setRoles(normalizedRoles);
-      setPerms(nextPerms);
+        setUser(nextUser);
+        setRole(nextRole);
+        setRoles(normalizedRoles);
+        setPerms(nextPerms);
 
-      return nextUser;
-    } catch (err) {
-      if (err?.response?.status === 401) logout();
-      return null;
-    }
+        return nextUser;
+      } catch (err) {
+        if (err?.response?.status === 401) logout();
+        return null;
+      }
+    },
+    // eslint: include deps that are referenced
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeToken, logout, role, perms, user]);
+    [activeToken, logout, role, perms, user]
+  );
 
   /* Derived flags */
   const isLoggedIn = !!activeToken;
@@ -392,8 +412,10 @@ export function AuthProvider({ children }) {
   /* Who can open the admin shell (panel) */
   const canOpenAdminPanel = isAdminLike;
 
-  /* Redirect on load (only when logged in) */
+  /* Redirect on load (only when logged in) — wait for initialization */
   useEffect(() => {
+    if (!initialized) return; // WAIT until we know auth state
+
     if (isLoggedIn && role) {
       const here = window.location.pathname;
       const target = defaultLandingFor(role);
@@ -407,7 +429,7 @@ export function AuthProvider({ children }) {
         window.location.replace(target);
       }
     }
-  }, [isLoggedIn, role]);
+  }, [initialized, isLoggedIn, role]);
 
   /* Context value */
   const value = useMemo(
@@ -430,6 +452,7 @@ export function AuthProvider({ children }) {
       refreshProfile,
 
       // flags
+      initialized, // NEW: consumers should wait until this is true before redirecting
       isLoggedIn,
       isSuperAdmin,
       isAdmin, // literal ADMIN
@@ -453,6 +476,7 @@ export function AuthProvider({ children }) {
       loginAdmin,
       logout,
       refreshProfile,
+      initialized,
       isLoggedIn,
       isSuperAdmin,
       isAdmin,
