@@ -8,6 +8,22 @@ import api from "../api/api";
 
 const cn = (...xs) => xs.filter(Boolean).join(" ");
 
+/* ---------- safeNavigate helper to avoid repeated same-path navigations ---------- */
+const safeNavigate = (navigate, to, opts = {}) => {
+  try {
+    if (!to) return;
+    // compare pathname only to avoid re-navigating to same page
+    const current = window.location.pathname;
+    const targetPath = new URL(to, window.location.origin).pathname;
+    if (current === targetPath) return;
+    navigate(to, opts);
+  } catch (e) {
+    // fallback: attempt navigate anyway (very rare)
+    navigate(to, opts);
+  }
+};
+
+/* ---------- small UI helpers ---------- */
 const Card = ({ className = "", as: Comp = "div", ...rest }) => (
   <Comp className={cn("bg-white border border-slate-200 rounded-2xl shadow-sm", className)} {...rest} />
 );
@@ -26,23 +42,32 @@ function IconBtn({ className = "", ...rest }) {
   );
 }
 
-/* ---------- REMOVE button-inside-link; style NavLink directly ---------- */
 const navLinkClasses = ({ isActive }) =>
   cn(
     "text-sm font-semibold transition-colors",
     isActive ? "text-[#0654BA]" : "text-slate-700 hover:text-[#0654BA]"
   );
 
-/* imperative link for popover items so closing menu is reliable */
+/* ---------- MenuItemLink: imperative link for popover items with a small click guard ---------- */
 function MenuItemLink({ to, children, onClick }) {
   const navigate = useNavigate();
+  const clickingRef = useRef(false);
+
   return (
     <button
       type="button"
       onClick={(e) => {
         e.preventDefault();
-        onClick?.();
-        navigate(to);
+        if (clickingRef.current) return;
+        clickingRef.current = true;
+        try {
+          onClick?.();
+          safeNavigate(navigate, to);
+        } finally {
+          setTimeout(() => {
+            clickingRef.current = false;
+          }, 120);
+        }
       }}
       className="block w-full text-left px-3 py-2 text-sm rounded-xl hover:bg-slate-50 font-semibold"
       role="menuitem"
@@ -52,6 +77,7 @@ function MenuItemLink({ to, children, onClick }) {
   );
 }
 
+/* ---------- Admin / Theatre link lists ---------- */
 const SUPER_ADMIN_LINKS = [
   { label: "Manage Theaters", to: "/admin/theaters" },
   { label: "Manage Movies", to: "/admin/movies" },
@@ -71,6 +97,7 @@ const THEATRE_ADMIN_LINKS = [
   { label: "My Theatre", to: "/theatre/profile" },
 ];
 
+/* ---------- Notifications normalizer ---------- */
 const normalizeNotifications = (raw) => {
   const arr =
     Array.isArray(raw) ? raw :
@@ -96,6 +123,7 @@ const normalizeNotifications = (raw) => {
   };
 };
 
+/* ---------- Navbar component ---------- */
 export default function Navbar() {
   const {
     user,
@@ -127,6 +155,7 @@ export default function Navbar() {
 
   const unread = useMemo(() => notifications.filter((n) => !n.readAt).length, [notifications]);
 
+  /* ---------- load notifications (poll every 30s) ---------- */
   useEffect(() => {
     if (!isLoggedIn || !token) return;
     let alive = true;
@@ -147,6 +176,7 @@ export default function Navbar() {
     return () => { alive = false; clearInterval(t); };
   }, [isLoggedIn, token]);
 
+  /* ---------- close notification popover when clicking outside ---------- */
   useEffect(() => {
     const onDocClick = (e) => {
       if (!notifRef.current) return;
@@ -156,6 +186,7 @@ export default function Navbar() {
     return () => document.removeEventListener("mousedown", onDocClick);
   }, []);
 
+  /* ---------- close popovers on navigation change ---------- */
   useEffect(() => {
     setNotifOpen(false);
     setAdminMenu(false);
@@ -287,7 +318,7 @@ export default function Navbar() {
                                     e.stopPropagation();
                                     setNotifOpen(false);
                                     if (n.id && !n.readAt) markOneRead(n.id);
-                                    navigate(to);
+                                    safeNavigate(navigate, to);
                                   }}
                                   className={cn(
                                     "w-full text-left p-3 border-b border-slate-200 last:border-b-0",
@@ -326,7 +357,7 @@ export default function Navbar() {
               {!isLoggedIn ? (
                 <>
                   <button
-                    onClick={() => navigate("/admin/login")}
+                    onClick={() => safeNavigate(navigate, "/admin/login")}
                     className="text-sm font-semibold px-4 py-2 rounded-full border border-[#0071DC]/40 text-[#0071DC] hover:bg-[#E8F1FF]"
                   >
                     <Shield className="w-4 h-4 inline-block" /> Admin
@@ -391,7 +422,7 @@ export default function Navbar() {
                           await logout();
                           setAdminMenu(false);
                           setNotifOpen(false);
-                          navigate("/", { replace: true });
+                          safeNavigate(navigate, "/", { replace: true });
                         }}
                         className="w-full text-left px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 rounded-xl font-semibold"
                       >
