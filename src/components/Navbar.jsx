@@ -1,493 +1,517 @@
-// src/components/Navbar.jsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Link, NavLink, useNavigate, useLocation } from "react-router-dom";
-import { useAuth } from "../context/AuthContext";
-import Logo from "./Logo";
-import { ChevronDown, Menu, X, UserRound, Shield, LogOut, Bell } from "lucide-react";
+// src/context/AuthContext.jsx
+import React, {
+  createContext,
+  useContext,
+  useMemo,
+  useState,
+  useEffect,
+  useCallback,
+} from "react";
 import api from "../api/api";
 
-const cn = (...xs) => xs.filter(Boolean).join(" ");
+export const AuthContext = createContext(null);
+export const useAuth = () => useContext(AuthContext);
 
-/* ---------- safeNavigate helper to avoid repeated same-path navigations ---------- */
-const safeNavigate = (navigate, to, opts = {}) => {
+/* ---------------- helpers to decode jwt (safe, no atob errors) ---------------- */
+function safeJsonBase64Decode(payload) {
   try {
-    if (!to) return;
-    const current = window.location.pathname;
-    const targetPath = new URL(to, window.location.origin).pathname;
-    if (current === targetPath) return;
-    navigate(to, opts);
-  } catch (e) {
-    navigate(to, opts);
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const pad = normalized.length % 4;
+    const padded = normalized + (pad ? "=".repeat(4 - pad) : "");
+    const json = atob(padded);
+    return JSON.parse(json);
+  } catch {
+    return null;
   }
-};
-
-/* ---------- small UI helpers ---------- */
-const Card = ({ className = "", as: Comp = "div", ...rest }) => (
-  <Comp className={cn("bg-white border border-slate-200 rounded-2xl shadow-sm", className)} {...rest} />
-);
-
-function IconBtn({ className = "", ...rest }) {
-  return (
-    <button
-      className={cn(
-        "inline-flex items-center justify-center w-9 h-9 rounded-full",
-        "border border-slate-300 bg-white text-slate-700",
-        "hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071DC]",
-        className
-      )}
-      {...rest}
-    />
-  );
 }
 
-const navLinkClasses = ({ isActive }) =>
-  cn(
-    "text-sm font-semibold transition-colors",
-    isActive ? "text-[#0654BA]" : "text-slate-700 hover:text-[#0654BA]"
-  );
-
-/* -------------------------------------------------------------------------- */
-/*  MenuItemLink — defensive popover link that waits for AuthContext.initialized  */
-/* -------------------------------------------------------------------------- */
-function MenuItemLink({ to, children, onClick }) {
-  const navigate = useNavigate();
-  const clickingRef = useRef(false);
-  const mountedRef = useRef(true);
-  const auth = useAuth();
-
-  useEffect(() => {
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
-
-  const doNavigate = (target) => {
-    // debug log
-    // eslint-disable-next-line no-console
-    console.debug("[MenuItemLink] navigate ->", target, { initialized: !!auth?.initialized });
-    safeNavigate(navigate, target);
-  };
-
-  const waitForInitThenNavigate = (target) => {
-    // if auth already initialized, go immediately
-    if (auth?.initialized) {
-      doNavigate(target);
-      return;
-    }
-    // otherwise poll for a short while (max 2s) before forcing navigation
-    const start = Date.now();
-    const tick = () => {
-      if (!mountedRef.current) return;
-      if (auth?.initialized) {
-        doNavigate(target);
-        return;
-      }
-      if (Date.now() - start > 2000) {
-        // fallback after 2s
-        // eslint-disable-next-line no-console
-        console.warn("[MenuItemLink] auth not initialized after 2s — forcing navigate", target);
-        doNavigate(target);
-        return;
-      }
-      setTimeout(tick, 100);
-    };
-    tick();
-  };
-
-  return (
-    <button
-      type="button"
-      onClick={(e) => {
-        e.preventDefault();
-        if (clickingRef.current) return;
-        clickingRef.current = true;
-        try {
-          onClick?.();
-          // Wait for auth to finish initializing to avoid guard race
-          waitForInitThenNavigate(to);
-        } finally {
-          setTimeout(() => {
-            clickingRef.current = false;
-          }, 120);
-        }
-      }}
-      className="block w-full text-left px-3 py-2 text-sm rounded-xl hover:bg-slate-50 font-semibold"
-      role="menuitem"
-    >
-      {children}
-    </button>
-  );
+function decodeJwt(token) {
+  if (!token || typeof token !== "string") return null;
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  return safeJsonBase64Decode(parts[1]);
 }
 
-/* ---------- Admin / Theatre link lists ---------- */
-const SUPER_ADMIN_LINKS = [
-  { label: "Manage Theaters", to: "/admin/theaters" },
-  { label: "Manage Movies", to: "/admin/movies" },
-  { label: "Manage Screens", to: "/admin/screens" },
-  { label: "Manage Showtimes", to: "/admin/showtimes" },
-  { label: "Update Pricing", to: "/admin/pricing" },
-  { label: "Admin Analytics", to: "/admin/analytics" },
-  { label: "Theatre Admins", to: "/super/theatre-admins" },
-];
+/* ---------------- normalize role helper (canonical: THEATRE_ADMIN) ---------------- */
+function normalizeRole(raw) {
+  if (raw === undefined || raw === null) return null;
+  try {
+    const val =
+      typeof raw === "object" && raw !== null
+        ? raw.authority ?? raw.value ?? raw.name
+        : raw;
 
-const THEATRE_ADMIN_LINKS = [
-  { label: "Dashboard", to: "/theatre/my" },
-  { label: "Manage Screens", to: "/theatre/screens" },
-  { label: "Manage Showtimes", to: "/theatre/showtimes" },
-  { label: "Update Pricing", to: "/theatre/pricing" },
-  { label: "Theatre Reports", to: "/theatre/reports" },
-  { label: "My Theatre", to: "/theatre/profile" },
-];
+    let v = String(val).trim().toUpperCase().replace(/\s+/g, "_");
 
-/* ---------- Notifications normalizer ---------- */
-const normalizeNotifications = (raw) => {
-  const arr =
-    Array.isArray(raw) ? raw :
-    Array.isArray(raw?.items) ? raw.items :
-    Array.isArray(raw?.data) ? raw.data :
-    Array.isArray(raw?.content) ? raw.content :
-    Array.isArray(raw?.notifications) ? raw.notifications : [];
+    // strip Spring prefix
+    if (v.startsWith("ROLE_")) v = v.slice(5);
 
-  const unreadFallback = Number(
-    raw?.unread ?? raw?.unreadCount ?? raw?.meta?.unread ?? 0
-  );
+    // Map managers/owners and US spelling to canonical UK spelling
+    if (/_MANAGER$/.test(v)) v = "THEATRE_ADMIN";
+    if (["THEATER_ADMIN", "THEATRE_OWNER", "THEATER_OWNER"].includes(v))
+      v = "THEATRE_ADMIN";
 
-  return {
-    items: arr.map((n, i) => ({
-      id: n._id ?? n.id ?? `n-${i}`,
-      type: n.type ?? n.kind ?? "",
-      title: n.title ?? n.subject ?? "Notification",
-      message: n.message ?? n.body ?? n.text ?? "",
-      createdAt: n.createdAt ?? n.timestamp ?? n.time ?? new Date().toISOString(),
-      readAt: n.readAt ?? (n.read === true ? new Date().toISOString() : null),
-    })),
-    unreadFallback,
-  };
+    if (v === "SUPERADMIN") v = "SUPER_ADMIN";
+
+    return v;
+  } catch {
+    return null;
+  }
+}
+
+function defaultLandingFor(role) {
+  const r = normalizeRole(role);
+  if (r === "SUPER_ADMIN") return "/admin/dashboard";
+  if (r === "THEATRE_ADMIN") return "/admin"; // send theatre admins into admin shell
+  if (r === "ADMIN") return "/admin/dashboard";
+  return "/";
+}
+
+/* ---------------- small storage helpers ---------------- */
+const LS_KEYS = {
+  token: "token", // normal user token
+  adminToken: "adminToken", // admin-only token
+  role: "role",
+  roles: "roles",
+  perms: "perms",
+  user: "user",
 };
 
-/* ---------- Navbar component ---------- */
-export default function Navbar() {
-  const {
-    user,
-    logout,
-    isAdmin,
-    isSuperAdmin,
-    isTheatreAdmin,
-    isLoggedIn,
-    token: userToken,
-    adminToken,
-  } = useAuth();
+function writeJSON(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {}
+}
 
-  const navigate = useNavigate();
-  const location = useLocation();
+function readJSON(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
 
-  const [open, setOpen] = useState(false);
-  const [adminMenu, setAdminMenu] = useState(false);
+/* ---------------- AuthProvider ---------------- */
+export function AuthProvider({ children }) {
+  // Keep BOTH tokens; prefer adminToken for protected/admin API calls & identity
+  const [token, setToken] = useState(() => localStorage.getItem(LS_KEYS.token) || null);
+  const [adminToken, setAdminToken] = useState(
+    () => localStorage.getItem(LS_KEYS.adminToken) || null
+  );
 
-  const [notifOpen, setNotifOpen] = useState(false);
-  const [notifications, setNotifications] = useState([]);
-  const notifRef = useRef(null);
+  const [role, setRole] = useState(() => normalizeRole(localStorage.getItem(LS_KEYS.role)));
+  const [roles, setRoles] = useState(() => {
+    const raw = readJSON(LS_KEYS.roles, []);
+    return Array.isArray(raw) ? raw.map(normalizeRole).filter(Boolean) : [];
+  });
 
-  const token =
-    adminToken ||
-    userToken ||
-    localStorage.getItem("adminToken") ||
-    localStorage.getItem("token") ||
-    "";
+  const [perms, setPerms] = useState(() => {
+    const raw = readJSON(LS_KEYS.perms, []);
+    return Array.isArray(raw) ? raw.map(String) : [];
+  });
 
-  const unread = useMemo(() => notifications.filter((n) => !n.readAt).length, [notifications]);
+  const [user, setUser] = useState(() => readJSON(LS_KEYS.user, null));
 
-  /* ---------- load notifications (poll every 30s) ---------- */
+  // whether auth finished its initial load. Consumers should wait for this before redirecting.
+  const [initialized, setInitialized] = useState(false);
+
+  // Compute the active auth token (admin has priority)
+  const activeToken = adminToken || token || null;
+
+  /* Sync active token -> axios header and localStorage */
   useEffect(() => {
-    if (!isLoggedIn || !token) return;
-    let alive = true;
-    const load = async () => {
-      try {
-        const res = await api.get("/notifications/mine", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const { items } = normalizeNotifications(res.data);
-        if (!alive) return;
-        setNotifications(items);
-      } catch {
-        if (alive) setNotifications([]);
-      }
-    };
-    load();
-    const t = setInterval(load, 30000);
-    return () => { alive = false; clearInterval(t); };
-  }, [isLoggedIn, token]);
-
-  /* ---------- close notification popover when clicking outside ---------- */
-  useEffect(() => {
-    const onDocClick = (e) => {
-      if (!notifRef.current) return;
-      if (!notifRef.current.contains(e.target)) setNotifOpen(false);
-    };
-    document.addEventListener("mousedown", onDocClick);
-    return () => document.removeEventListener("mousedown", onDocClick);
-  }, []);
-
-  /* ---------- close popovers on navigation change ---------- */
-  useEffect(() => {
-    setNotifOpen(false);
-    setAdminMenu(false);
-  }, [location.pathname]);
-
-  const toKey = (n) => n.id || `${n.type || "n"}-${n.createdAt || Math.random()}`;
-
-  const resolveNotificationPath = (n) => {
-    const t = (n.type || "").toLowerCase();
-    if (t.includes("booking")) return "/bookings";
-    if (t.includes("showtime")) {
-      if (isSuperAdmin) return "/admin/showtimes";
-      if (isTheatreAdmin) return "/theatre/showtimes";
-      if (isAdmin) return "/admin/showtimes";
-      return "/showtimes";
-    }
-    if (isTheatreAdmin) return "/theatre/my";
-    if (isSuperAdmin || isAdmin) return "/admin";
-    return "/bookings";
-  };
-
-  const markOneRead = async (id) => {
+    // Use api.setAuthToken which your api.js exposes
     try {
-      await api.patch(`/notifications/${id}/read`, {}, { headers: { Authorization: `Bearer ${token}` } });
+      api.setAuthToken?.(activeToken);
+      if (activeToken) {
+        // also keep axios defaults in sync (api.setAuthToken does this)
+        if (api.defaults) api.defaults.headers.common.Authorization = `Bearer ${activeToken}`;
+      } else {
+        if (api.defaults) delete api.defaults.headers.common.Authorization;
+      }
     } catch {}
-    setNotifications((prev) =>
-      prev.map((n) => (n.id === id ? { ...n, readAt: n.readAt || new Date().toISOString() } : n))
-    );
-  };
+  }, [activeToken]);
 
-  const profilePath =
-    isSuperAdmin ? "/admin/profile"
-    : isTheatreAdmin ? "/theatre/profile"
-    : "/profile";
+  // Persist each token separately
+  useEffect(() => {
+    if (token) localStorage.setItem(LS_KEYS.token, token);
+    else localStorage.removeItem(LS_KEYS.token);
+  }, [token]);
 
-  const anyAdmin = isSuperAdmin || isAdmin || isTheatreAdmin;
+  useEffect(() => {
+    if (adminToken) localStorage.setItem(LS_KEYS.adminToken, adminToken);
+    else localStorage.removeItem(LS_KEYS.adminToken);
+  }, [adminToken]);
 
-  return (
-    <header className="w-full sticky top-0 z-50">
-      <div className="relative isolate z-50 backdrop-blur-md bg-white/85 border-b border-slate-200 shadow-sm overflow-visible">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          {/* ROW: logo | middle nav | right controls */}
-          <div className="h-16 flex items-center gap-6">
-            {/* Brand (left) */}
-            <Link to="/" className="flex items-center gap-3 shrink-0">
-              <Card className="p-1.5">
-                <Logo size={36} />
-              </Card>
-              <div className="leading-tight">
-                <div className="text-2xl font-extrabold text-[#0071DC]">Cinema</div>
-              </div>
-            </Link>
+  /* Persist role/roles/perms/user whenever they change */
+  useEffect(() => {
+    if (role) localStorage.setItem(LS_KEYS.role, role);
+    else localStorage.removeItem(LS_KEYS.role);
+  }, [role]);
 
-            {/* Main Links (middle) */}
-            <nav className="hidden md:flex items-center gap-5 ml-8">
-              <NavLink to="/movies" className={navLinkClasses}>
-                Movies
-              </NavLink>
-              <NavLink to="/theaters" className={navLinkClasses}>
-                Theaters
-              </NavLink>
-              <NavLink to="/showtimes" className={navLinkClasses}>
-                Showtimes
-              </NavLink>
-              {/* Hide "My Bookings" for ALL admin roles */}
-              {isLoggedIn && !anyAdmin && (
-                <NavLink to="/bookings" className={navLinkClasses}>
-                  My Bookings
-                </NavLink>
-              )}
-            </nav>
+  useEffect(() => {
+    if (roles?.length) writeJSON(LS_KEYS.roles, roles);
+    else localStorage.removeItem(LS_KEYS.roles);
+  }, [roles]);
 
-            {/* Right Controls (pushed right) */}
-            <div className="ml-auto flex items-center gap-3 relative">
-              {/* Notifications */}
-              {isLoggedIn && (
-                <div className="relative z-50" ref={notifRef}>
-                  <IconBtn
-                    aria-label="Notifications"
-                    title="Notifications"
-                    onClick={() => { setNotifOpen((v) => !v); setAdminMenu(false); }}
-                  >
-                    <Bell className="w-5 h-5" />
-                  </IconBtn>
+  useEffect(() => {
+    if (perms?.length) writeJSON(LS_KEYS.perms, perms);
+    else localStorage.removeItem(LS_KEYS.perms);
+  }, [perms]);
 
-                  {unread > 0 && (
-                    <span className="absolute -top-1 -right-1 text-[10px] leading-none px-1.5 py-0.5 rounded-full border border-white bg-rose-600 text-white shadow-sm">
-                      {unread > 99 ? "99+" : unread}
-                    </span>
-                  )}
+  useEffect(() => {
+    if (user) writeJSON(LS_KEYS.user, user);
+    else localStorage.removeItem(LS_KEYS.user);
+  }, [user]);
 
-                  {notifOpen && (
-                    <Card
-                      className="absolute right-0 mt-3 w-80 bg-white max-h-96 overflow-auto p-0 z-50"
-                      onClick={(e) => e.stopPropagation()}
-                      role="menu"
-                      aria-label="Notifications"
-                    >
-                      {/* Mark all as read */}
-                      {notifications.length > 0 && (
-                        <div className="sticky top-0 bg-white border-b border-slate-200 p-2 text-right">
-                          <button
-                            className="text-[11px] px-2 py-1 rounded-full border border-slate-300 bg-white hover:bg-slate-50 font-semibold"
-                            onClick={async () => {
-                              try {
-                                await api.post("/notifications/read-all", {}, { headers: { Authorization: `Bearer ${token}` } });
-                                setNotifications((prev) =>
-                                  prev.map((n) => ({ ...n, readAt: n.readAt || new Date().toISOString() }))
-                                );
-                              } catch {}
-                            }}
-                          >
-                            Mark all as read
-                          </button>
-                        </div>
-                      )}
+  /* Initialize identity on first load (prefer admin token) */
+  useEffect(() => {
+    const rawAdmin = localStorage.getItem(LS_KEYS.adminToken);
+    const rawUser = localStorage.getItem(LS_KEYS.token);
 
-                      {notifications.length === 0 ? (
-                        <div className="p-4 text-sm text-slate-600 text-center">No notifications yet.</div>
-                      ) : (
-                        <ul>
-                          {notifications.map((n) => {
-                            const to = resolveNotificationPath(n);
-                            return (
-                              <li key={toKey(n)}>
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setNotifOpen(false);
-                                    if (n.id && !n.readAt) markOneRead(n.id);
-                                    safeNavigate(navigate, to);
-                                  }}
-                                  className={cn(
-                                    "w-full text-left p-3 border-b border-slate-200 last:border-b-0",
-                                    "hover:bg-slate-50 focus:bg-slate-50 outline-none",
-                                    !n.readAt && "bg-yellow-50/70"
-                                  )}
-                                  title="Open notification"
-                                  role="menuitem"
-                                >
-                                  <div className="flex items-start gap-2">
-                                    {!n.readAt && <span className="mt-1 inline-block w-2 h-2 rounded-full" style={{ background: "currentColor" }} />}
-                                    <div className="flex-1">
-                                      <div className="text-sm font-extrabold text-slate-900">
-                                        {n.title || "Notification"}
-                                      </div>
-                                      <div className="text-xs text-slate-700 whitespace-pre-line">
-                                        {n.message || ""}
-                                      </div>
-                                      <div className="text-[10px] text-slate-500 mt-1">
-                                        {new Date(n.createdAt || Date.now()).toLocaleString()}
-                                      </div>
-                                    </div>
-                                  </div>
-                                </button>
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      )}
-                    </Card>
-                  )}
-                </div>
-              )}
+    if (rawAdmin) {
+      const claims = decodeJwt(rawAdmin) || {};
+      const r = normalizeRole(claims.role);
+      if (r) {
+        setAdminToken(rawAdmin);
+        setToken(null); // ensure clean separation
+        setRole(r);
+        setRoles([r]);
+        setUser({
+          email: claims.email || user?.email || "",
+          role: r,
+          roles: [r],
+          perms: Array.isArray(claims.perms) ? claims.perms : [],
+          theaterId: claims.theatreId || claims.theaterId || user?.theaterId || null,
+        });
+        setInitialized(true);
+        return;
+      } else {
+        localStorage.removeItem(LS_KEYS.adminToken);
+      }
+    }
 
-              {/* Admin access / login + Login/Register pills */}
-              {!isLoggedIn ? (
-                <>
-                  <button
-                    onClick={() => safeNavigate(navigate, "/admin/login")}
-                    className="text-sm font-semibold px-4 py-2 rounded-full border border-[#0071DC]/40 text-[#0071DC] hover:bg-[#E8F1FF]"
-                  >
-                    <Shield className="w-4 h-4 inline-block" /> Admin
-                  </button>
-                  <Link
-                    to="/login"
-                    className="text-sm font-semibold px-4 py-2 rounded-full border border-slate-300 text-slate-800 hover:bg-slate-50"
-                  >
-                    Login
-                  </Link>
-                  <Link
-                    to="/register"
-                    className="text-sm font-semibold px-4 py-2 rounded-full bg-[#0071DC] text-white hover:bg-[#0654BA]"
-                  >
-                    Register
-                  </Link>
-                </>
-              ) : null}
+    if (rawUser) {
+      const claims = decodeJwt(rawUser) || {};
+      const r = normalizeRole(claims.role);
+      if (r) {
+        setToken(rawUser);
+        setRole(r);
+        setRoles([r]);
+        setUser({
+          email: claims.email || user?.email || "",
+          role: r,
+          roles: [r],
+          perms: Array.isArray(claims.perms) ? claims.perms : [],
+          theaterId: claims.theatreId || claims.theaterId || user?.theaterId || null,
+        });
+      } else {
+        localStorage.removeItem(LS_KEYS.token);
+      }
+    }
 
-              {/* Account Menu — only when logged in */}
-              {isLoggedIn && (
-                <div className="relative">
-                  <button
-                    onClick={() => setAdminMenu((v) => !v)}
-                    className="flex items-center gap-2 px-3 py-2 rounded-full border border-slate-300 bg-white"
-                  >
-                    <UserRound className="w-5 h-5 text-[#0071DC]" />
-                    <span className="max-w-[160px] truncate">{user?.name || user?.email}</span>
-                    <ChevronDown className="w-4 h-4 text-slate-600" />
-                  </button>
+    setInitialized(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-                  {adminMenu && (
-                    <Card className="absolute right-0 mt-2 w-64 p-1 bg-white z-50">
-                      <MenuItemLink to={profilePath} onClick={() => setAdminMenu(false)}>
-                        Profile
-                      </MenuItemLink>
+  /* Listen for global 401 events from api.js and logout (defensive) */
+  useEffect(() => {
+    const onUnauth = () => {
+      // eslint-disable-next-line no-console
+      console.warn("[AuthContext] received api:unauthorized — logging out");
+      logout();
+    };
+    window.addEventListener("api:unauthorized", onUnauth);
+    return () => window.removeEventListener("api:unauthorized", onUnauth);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-                      {/* Hide My Bookings for ALL admin roles */}
-                      {!(isSuperAdmin || isAdmin || isTheatreAdmin) && (
-                        <MenuItemLink to="/bookings" onClick={() => setAdminMenu(false)}>
-                          My Bookings
-                        </MenuItemLink>
-                      )}
+  /* USER LOGIN (normal site login) */
+  const login = useCallback(async (email, password, roleHint) => {
+    const res = await api.post("/auth/login", { email, password, roleHint });
+    const data = res?.data ?? res;
+    const t = data?.token;
+    if (!t || typeof t !== "string") throw new Error("No token returned from server");
 
-                      {isSuperAdmin &&
-                        SUPER_ADMIN_LINKS.map((item) => (
-                          <MenuItemLink key={item.to} to={item.to} onClick={() => setAdminMenu(false)}>
-                            {item.label}
-                          </MenuItemLink>
-                        ))}
+    const claims = decodeJwt(t) || {};
 
-                      {isTheatreAdmin &&
-                        THEATRE_ADMIN_LINKS.map((item) => (
-                          <MenuItemLink key={item.to} to={item.to} onClick={() => setAdminMenu(false)}>
-                            {item.label}
-                          </MenuItemLink>
-                        ))}
+    const roleCandidates = [
+      claims.role,
+      ...(Array.isArray(claims.roles) ? claims.roles : []),
+      data?.role,
+      data?.user?.role,
+      ...(Array.isArray(data?.user?.roles) ? data.user.roles : []),
+      roleHint,
+      "USER",
+    ].filter(Boolean);
 
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          await logout();
-                          setAdminMenu(false);
-                          setNotifOpen(false);
-                          safeNavigate(navigate, "/", { replace: true });
-                        }}
-                        className="w-full text-left px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 rounded-xl font-semibold"
-                      >
-                        <LogOut className="inline w-4 h-4 mr-1" /> Logout
-                      </button>
-                    </Card>
-                  )}
-                </div>
-              )}
+    const normalizedRoles = roleCandidates.map(normalizeRole).filter(Boolean);
+    const finalRole = normalizedRoles[0] || "USER";
 
-              {/* Mobile Menu Button */}
-              <IconBtn className="md:hidden" onClick={() => setOpen((v) => !v)}>
-                {open ? <X /> : <Menu />}
-              </IconBtn>
-            </div>
-          </div>
-        </div>
-      </div>
+    const permsArr =
+      (Array.isArray(claims.perms) && claims.perms) ||
+      (Array.isArray(data?.user?.perms) && data.user.perms) ||
+      [];
 
-      {/* Spacer in case sticky header overlaps admin pages */}
-      {location.pathname.startsWith("/admin") || location.pathname.startsWith("/theatre")
-        ? <div className="h-0 md:h-0" />
-        : null}
-    </header>
+    const finalUser = {
+      ...(data?.user || {}),
+      email: data?.user?.email || claims.email || email,
+      role: finalRole,
+      roles: normalizedRoles,
+      perms: permsArr,
+      theaterId: claims.theatreId || claims.theaterId || data?.user?.theaterId || null,
+    };
+
+    // set state: USER token only, clear admin token if present
+    setAdminToken(null);
+    setToken(t);
+    setRole(finalRole);
+    setRoles(normalizedRoles);
+    setPerms(permsArr);
+    setUser(finalUser);
+
+    // storage
+    localStorage.setItem(LS_KEYS.token, t);
+    localStorage.removeItem(LS_KEYS.adminToken);
+    localStorage.setItem(LS_KEYS.role, finalRole);
+    writeJSON(LS_KEYS.roles, normalizedRoles);
+    writeJSON(LS_KEYS.perms, permsArr);
+    writeJSON(LS_KEYS.user, finalUser);
+
+    // prime axios header
+    api.setAuthToken?.(t);
+
+    setInitialized(true);
+    setTimeout(() => window.location.replace(defaultLandingFor(finalRole)), 0);
+  }, []);
+
+  /* ADMIN LOGIN (SUPER_ADMIN / THEATRE_ADMIN / ADMIN) */
+  const loginAdmin = useCallback(async (email, password) => {
+    // Try slash route first, then hyphen fallback under /api/auth
+    let res;
+    try {
+      res = await api.post("/auth/admin/login", { email, password });
+    } catch {
+      res = await api.post("/auth/admin-login", { email, password });
+    }
+    const data = res?.data ?? res;
+    const t = data?.adminToken || data?.token;
+    if (!t || typeof t !== "string") throw new Error("No admin token returned from server");
+
+    const claims = decodeJwt(t) || {};
+    const finalRole =
+      normalizeRole(claims.role) ||
+      normalizeRole(data?.role) ||
+      normalizeRole(data?.user?.role) ||
+      "ADMIN";
+
+    const permsArr =
+      (Array.isArray(claims.perms) && claims.perms) ||
+      (Array.isArray(data?.user?.perms) && data.user.perms) ||
+      [];
+
+    const finalUser = {
+      ...(data?.user || {}),
+      email: data?.user?.email || claims.email || email,
+      role: finalRole,
+      roles: [finalRole],
+      perms: permsArr,
+      theaterId: claims.theatreId || claims.theaterId || data?.user?.theatreId || null,
+    };
+
+    // set state: ADMIN token only, clear user token if present
+    setToken(null);
+    setAdminToken(t);
+    setRole(finalRole);
+    setRoles([finalRole]);
+    setPerms(permsArr);
+    setUser(finalUser);
+
+    // storage
+    localStorage.setItem(LS_KEYS.adminToken, t);
+    localStorage.removeItem(LS_KEYS.token);
+    localStorage.setItem(LS_KEYS.role, finalRole);
+    writeJSON(LS_KEYS.roles, [finalRole]);
+    writeJSON(LS_KEYS.perms, permsArr);
+    writeJSON(LS_KEYS.user, finalUser);
+
+    // prime axios header
+    api.setAuthToken?.(t);
+
+    setInitialized(true);
+    setTimeout(() => window.location.replace(defaultLandingFor(finalRole)), 0);
+  }, []);
+
+  /* LOGOUT */
+  const logout = useCallback(() => {
+    setToken(null);
+    setAdminToken(null);
+    setRole(null);
+    setRoles([]);
+    setPerms([]);
+    setUser(null);
+
+    // remove only our keys
+    Object.values(LS_KEYS).forEach((k) => localStorage.removeItem(k));
+
+    api.setAuthToken?.(null);
+    if (api.defaults) delete api.defaults.headers.common.Authorization;
+
+    // mark initialized so guards don't keep waiting; user is known to be logged out
+    setInitialized(true);
+
+    setTimeout(() => window.location.replace("/"), 0);
+  }, []);
+
+  /* REFRESH PROFILE — uses whichever token is active (admin preferred) */
+  const refreshProfile = useCallback(
+    async () => {
+      try {
+        if (!activeToken) return null;
+
+        // if adminToken is active, call admin profile endpoint; otherwise call unified auth/me
+        const profilePath = adminToken ? "/admin/me" : "/auth/me";
+        // NOTE: api.baseURL already includes /api (see src/api/api.js)
+        const res = await api.get(profilePath);
+
+        const u = res?.data?.user ?? res?.data; // adapt if backend returns user directly
+        if (!u) return null;
+
+        const roleCandidates = [
+          u.role,
+          ...(Array.isArray(u.roles) ? u.roles : []),
+          ...(Array.isArray(u.authorities) ? u.authorities : []),
+          role,
+        ].filter(Boolean);
+
+        const normalizedRoles = roleCandidates.map(normalizeRole).filter(Boolean);
+        const nextRole = normalizedRoles[0] || role || "USER";
+
+        const nextPerms =
+          (Array.isArray(u.perms) && u.perms) ||
+          (Array.isArray(res?.data?.perms) && res.data.perms) ||
+          perms;
+
+        const nextUser = {
+          ...u,
+          role: nextRole,
+          roles: normalizedRoles,
+          perms: nextPerms,
+          theaterId: u.theaterId || u.theatreId || user?.theaterId || null,
+        };
+
+        setUser(nextUser);
+        setRole(nextRole);
+        setRoles(normalizedRoles);
+        setPerms(nextPerms);
+
+        return nextUser;
+      } catch (err) {
+        if (err?.response?.status === 401) {
+          logout();
+        }
+        return null;
+      }
+    },
+    // include adminToken in deps so closure sees it
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activeToken, adminToken, logout, role, perms, user]
   );
+
+  /* Derived flags */
+  const isLoggedIn = !!activeToken;
+  const isSuperAdmin = role === "SUPER_ADMIN";
+  const isAdmin = role === "ADMIN"; // literal ADMIN only
+  const isTheatreAdmin = role === "THEATRE_ADMIN";
+  const isUser = role === "USER";
+
+  // Any admin-like role (what your guards should use)
+  const isAdminLike = isSuperAdmin || isTheatreAdmin || isAdmin;
+
+  /* RBAC helpers */
+  const hasRole = useCallback((r) => role === r, [role]);
+  const hasAnyRole = useCallback((...rs) => rs.some((r) => r && r === role), [role]);
+
+  /* Who can open the admin shell (panel) */
+  const canOpenAdminPanel = isAdminLike;
+
+  /* Redirect on load (only when logged in) — wait for initialization */
+  useEffect(() => {
+    if (!initialized) return; // WAIT until we know auth state
+
+    if (isLoggedIn && role) {
+      const here = window.location.pathname;
+      const target = defaultLandingFor(role);
+      if (
+        (here === "/" ||
+          here === "/login" ||
+          here === "/admin" ||
+          here === "/admin/login") &&
+        here !== target
+      ) {
+        window.location.replace(target);
+      }
+    }
+  }, [initialized, isLoggedIn, role]);
+
+  /* Context value */
+  const value = useMemo(
+    () => ({
+      // raw tokens (optional debugging)
+      token,
+      adminToken,
+
+      // identity
+      role,
+      roles,
+      perms,
+      user,
+      setUser,
+
+      // actions
+      login, // user login (/api/auth/login)
+      loginAdmin, // admin login (/api/auth/admin-login or /api/auth/admin/login)
+      logout,
+      refreshProfile,
+
+      // flags
+      initialized, // consumers should wait until this is true before redirecting
+      isLoggedIn,
+      isSuperAdmin,
+      isAdmin, // literal ADMIN
+      isTheatreAdmin,
+      isAdminLike,
+      isUser,
+      canOpenAdminPanel,
+
+      // rbac helpers
+      hasRole,
+      hasAnyRole,
+    }),
+    [
+      token,
+      adminToken,
+      role,
+      roles,
+      perms,
+      user,
+      login,
+      loginAdmin,
+      logout,
+      refreshProfile,
+      initialized,
+      isLoggedIn,
+      isSuperAdmin,
+      isAdmin,
+      isTheatreAdmin,
+      isAdminLike,
+      isUser,
+      canOpenAdminPanel,
+      hasRole,
+      hasAnyRole,
+    ]
+  );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
