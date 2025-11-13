@@ -29,14 +29,36 @@ Create them (mkcert/openssl) or unset VITE_FORCE_HTTPS.`
 
 export default defineConfig({
   plugins: [react()],
+
+  // Explicitly include common runtime libs so Vite pre-bundles them in optimizeDeps
+  optimizeDeps: {
+    include: [
+      "react",
+      "react-dom",
+      "react-router-dom",
+      "lucide-react",
+      "framer-motion",
+      "recharts",
+      "socket.io-client",
+      "uuid",
+      "qrcode",
+      "qrcode.react"
+    ]
+  },
+
   server: {
     https: httpsConfig || false,
     port: 5173,
-    // ✅ Proxy ONLY API/static paths to the backend
     proxy: {
       "/api": { target: "http://localhost:8080", changeOrigin: true, secure: false },
       "/uploads": { target: "http://localhost:8080", changeOrigin: true, secure: false },
     },
-    // ❌ Do NOT set historyApiFallback here (that’s for webpack). Vite already falls back to index.html.
+  },
+
+  // Defensive build config: do not accidentally externalize runtime deps
+  build: {
+    rollupOptions: {
+      external: [],
+    },
   },
 });
