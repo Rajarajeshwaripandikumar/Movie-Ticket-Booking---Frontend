@@ -12,13 +12,11 @@ const cn = (...xs) => xs.filter(Boolean).join(" ");
 const safeNavigate = (navigate, to, opts = {}) => {
   try {
     if (!to) return;
-    // compare pathname only to avoid re-navigating to same page
     const current = window.location.pathname;
     const targetPath = new URL(to, window.location.origin).pathname;
     if (current === targetPath) return;
     navigate(to, opts);
   } catch (e) {
-    // fallback: attempt navigate anyway (very rare)
     navigate(to, opts);
   }
 };
@@ -48,10 +46,53 @@ const navLinkClasses = ({ isActive }) =>
     isActive ? "text-[#0654BA]" : "text-slate-700 hover:text-[#0654BA]"
   );
 
-/* ---------- MenuItemLink: imperative link for popover items with a small click guard ---------- */
+/* -------------------------------------------------------------------------- */
+/*  MenuItemLink — defensive popover link that waits for AuthContext.initialized  */
+/* -------------------------------------------------------------------------- */
 function MenuItemLink({ to, children, onClick }) {
   const navigate = useNavigate();
   const clickingRef = useRef(false);
+  const mountedRef = useRef(true);
+  const auth = useAuth();
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const doNavigate = (target) => {
+    // debug log
+    // eslint-disable-next-line no-console
+    console.debug("[MenuItemLink] navigate ->", target, { initialized: !!auth?.initialized });
+    safeNavigate(navigate, target);
+  };
+
+  const waitForInitThenNavigate = (target) => {
+    // if auth already initialized, go immediately
+    if (auth?.initialized) {
+      doNavigate(target);
+      return;
+    }
+    // otherwise poll for a short while (max 2s) before forcing navigation
+    const start = Date.now();
+    const tick = () => {
+      if (!mountedRef.current) return;
+      if (auth?.initialized) {
+        doNavigate(target);
+        return;
+      }
+      if (Date.now() - start > 2000) {
+        // fallback after 2s
+        // eslint-disable-next-line no-console
+        console.warn("[MenuItemLink] auth not initialized after 2s — forcing navigate", target);
+        doNavigate(target);
+        return;
+      }
+      setTimeout(tick, 100);
+    };
+    tick();
+  };
 
   return (
     <button
@@ -62,7 +103,8 @@ function MenuItemLink({ to, children, onClick }) {
         clickingRef.current = true;
         try {
           onClick?.();
-          safeNavigate(navigate, to);
+          // Wait for auth to finish initializing to avoid guard race
+          waitForInitThenNavigate(to);
         } finally {
           setTimeout(() => {
             clickingRef.current = false;
