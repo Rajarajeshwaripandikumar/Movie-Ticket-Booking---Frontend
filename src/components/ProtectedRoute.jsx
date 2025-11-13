@@ -4,9 +4,8 @@ import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
 /* -------------------------------- Roles ---------------------------------- */
-/** Canonical role is THEATRE_ADMIN (UK spelling), but accept common aliases */
 const ROLE_ALIASES = {
-  THEATER_ADMIN: "THEATRE_ADMIN", // US -> canonical
+  THEATER_ADMIN: "THEATRE_ADMIN",
   MANAGER: "THEATRE_ADMIN",
   PVR_MANAGER: "THEATRE_ADMIN",
   PVR_ADMIN: "THEATRE_ADMIN",
@@ -29,15 +28,16 @@ function normWanted(roles) {
 /* ------------------------------ Guard ------------------------------------ */
 export default function ProtectedRoute({
   children,
-  roles,                       // string | string[]
-  requireAuth = true,          // block unauthenticated when true
-  superOverrides = true,       // SUPER_ADMIN can pass any admin route
+  roles, // string | string[]
+  requireAuth = true,
+  superOverrides = true,
   loginPath = "/login",
   adminLoginPath = "/admin/login",
   adminHome = "/admin",
   publicHome = "/",
 }) {
-  const { token, role, roles: userRoles, loading, isAuthenticated } = useAuth();
+  // NOTE: your AuthContext exposes token, adminToken, isLoggedIn, role, roles
+  const { token, adminToken, role, roles: userRoles, isLoggedIn } = useAuth();
   const location = useLocation();
 
   const wanted = useMemo(() => normWanted(roles), [roles]);
@@ -45,11 +45,13 @@ export default function ProtectedRoute({
     wanted.size > 0 &&
     Array.from(wanted).some((r) => /ADMIN|MANAGER|THEATRE|THEATER/.test(r || ""));
 
-  /* ✅ Do nothing while auth is hydrating to avoid false redirects */
-  if (loading) return null; // or a Spinner component
+  // If your context has a loading flag in future, use it. For now assume ready.
+  const loading = false;
 
-  /* Not logged in (after hydration) */
-  const authed = !!token || !!isAuthenticated;
+  if (loading) return null;
+
+  // Active auth check: consider adminToken OR token OR context flag
+  const authed = !!isLoggedIn || !!adminToken || !!token;
   if (!authed) {
     if (!requireAuth && wanted.size === 0) return children ?? <Outlet />;
     return (
@@ -61,24 +63,24 @@ export default function ProtectedRoute({
     );
   }
 
-  /* Normalize user roles */
+  // Normalize user roles (prefer userRoles array then role scalar)
   const haveList =
     Array.isArray(userRoles) && userRoles.length > 0 ? userRoles : role ? [role] : [];
   const have = useMemo(() => new Set(haveList.map(normRole).filter(Boolean)), [haveList]);
 
-  /* No specific roles required -> allow */
+  // No role required -> allow
   if (wanted.size === 0) return children ?? <Outlet />;
 
-  /* SUPER_ADMIN override for admin routes */
+  // SUPER_ADMIN override for admin routes
   if (superOverrides && have.has("SUPER_ADMIN")) {
     if (wantsAdmin) return children ?? <Outlet />;
   }
 
-  /* Regular role check */
+  // Regular role check
   const canAccess = Array.from(wanted).some((w) => have.has(w));
   if (canAccess) return children ?? <Outlet />;
 
-  /* Deny: route sensibly based on whether user is some kind of admin */
+  // Deny: sensible fallback route
   const isSomeAdmin = Array.from(have).some((r) => /ADMIN|THEAT(RE|ER)/.test(r));
   return <Navigate to={isSomeAdmin ? adminHome : publicHome} replace />;
 }
@@ -86,11 +88,9 @@ export default function ProtectedRoute({
 /* ----------------------- Convenience wrappers ---------------------------- */
 
 export function AdminOnly(props) {
-  // Admin pages: allow ADMIN and SUPER_ADMIN
   return <ProtectedRoute roles={["ADMIN", "SUPER_ADMIN"]} {...props} />;
 }
 
 export function TheatreAdminOnly(props) {
-  // Theatre-admin pages: allow THEATRE_ADMIN and SUPER_ADMIN
   return <ProtectedRoute roles={["THEATRE_ADMIN", "SUPER_ADMIN"]} {...props} />;
 }
