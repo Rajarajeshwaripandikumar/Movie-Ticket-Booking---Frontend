@@ -204,7 +204,8 @@ export default function Navbar() {
       return "/showtimes";
     }
     if (isTheatreAdmin) return "/theatre/my";
-    if (isSuperAdmin || isAdmin) return "/admin";
+    // Option B: canonical admin landing is /admin/dashboard
+    if (isSuperAdmin || isAdmin) return "/admin/dashboard";
     return "/bookings";
   };
 
@@ -419,10 +420,15 @@ export default function Navbar() {
                       <button
                         type="button"
                         onClick={async () => {
-                          await logout();
-                          setAdminMenu(false);
-                          setNotifOpen(false);
-                          safeNavigate(navigate, "/", { replace: true });
+                          try {
+                            await logout();
+                          } catch (e) {
+                            console.error("[Navbar] logout failed:", e);
+                          } finally {
+                            setAdminMenu(false);
+                            setNotifOpen(false);
+                            safeNavigate(navigate, "/", { replace: true });
+                          }
                         }}
                         className="w-full text-left px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 rounded-xl font-semibold"
                       >
