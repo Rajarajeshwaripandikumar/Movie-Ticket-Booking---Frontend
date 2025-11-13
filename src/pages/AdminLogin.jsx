@@ -1,7 +1,7 @@
-// src/pages/AdminLogin.jsx — robust redirect fallback + debug logs
+// src/pages/AdminLogin.jsx — robust redirect fallback + debug logs (patched)
 import React, { useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 
 /* --------------------------- UI bits (unchanged) --------------------------- */
 const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
@@ -44,10 +44,25 @@ function PrimaryBtn({ children, className = "", ...props }) {
   );
 }
 
+/* ------------------------- safeNavigate helper ---------------------------- */
+const safeNavigate = (navigateFn, to, opts = {}) => {
+  try {
+    if (!to) return;
+    const current = window.location.pathname;
+    const targetPath = new URL(to, window.location.origin).pathname;
+    if (current === targetPath) return;
+    navigateFn(to, opts);
+  } catch (e) {
+    // fallback (rare)
+    navigateFn(to, opts);
+  }
+};
+
 /* -------------------------------- Component -------------------------------- */
 export default function AdminLogin() {
   const { loginAdmin } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const [email, setEmail] = useState("admin@cinema.com");
   const [password, setPassword] = useState("");
@@ -65,38 +80,46 @@ export default function AdminLogin() {
 
     setBusy(true);
     try {
-      // loginAdmin should already redirect via AuthContext, but we do a robust fallback
-      const returned = await loginAdmin(email, password).catch((err) => {
-        // rethrow afterwards for uniform handling
-        throw err;
-      });
+      // await the login call — if it resolves but returns undefined,
+      // we'll fall back to reading localStorage / AuthContext state.
+      const returned = await loginAdmin(email, password);
 
       // Debugging logs — inspect these in the browser console
-      console.log("[AdminLogin] loginAdmin returned:", returned);
-      console.log("[AdminLogin] localStorage.token:", localStorage.getItem("token"));
-      console.log("[AdminLogin] localStorage.adminToken:", localStorage.getItem("adminToken"));
-      console.log("[AdminLogin] localStorage.user:", localStorage.getItem("user"));
+      console.debug("[AdminLogin] loginAdmin returned:", returned);
+      console.debug("[AdminLogin] localStorage.token:", localStorage.getItem("token"));
+      console.debug("[AdminLogin] localStorage.adminToken:", localStorage.getItem("adminToken"));
+      console.debug("[AdminLogin] localStorage.user:", localStorage.getItem("user"));
 
-      // determine role and theatreId (returned value preferred, else localStorage)
+      // prefer redirect target from router state (user attempted to access protected route)
+      const fromPath = location.state?.from?.pathname;
+
+      // Try to derive role & theatreId from returned value first, else from localStorage
       const userFromReturn = returned || (localStorage.getItem("user") && JSON.parse(localStorage.getItem("user")));
-      const role = (userFromReturn?.role || "").toUpperCase();
+      const roleRaw = userFromReturn?.role ?? userFromReturn?.roles?.[0] ?? "";
+      const role = String(roleRaw || "").toUpperCase();
       const theatreId = userFromReturn?.theatreId ?? userFromReturn?.theaterId ?? null;
 
-      // Fallback navigation: only run if the location didn't already change
-      const expectedDashboard = role === "SUPER_ADMIN" ? "/admin/dashboard" : role === "THEATRE_ADMIN" ? (theatreId ? `/admin/theaters/${theatreId}` : "/admin") : "/";
+      // canonical admin landing page — use /admin/screens so it matches AdminIndex logic
+      const canonicalAdminLanding = "/admin/screens";
 
-      // If current pathname is still login, do a client-side navigate (this avoids issues with some hosts blocking window.location.replace)
-      if (window.location.pathname === "/admin/login" || window.location.pathname === "/admin") {
-        // small timeout ensures any auth-context redirect has a chance first
-        setTimeout(() => {
-          if (window.location.pathname === "/admin/login" || window.location.pathname === "/admin") {
-            console.log("[AdminLogin] Performing fallback navigate to:", expectedDashboard);
-            navigate(expectedDashboard, { replace: true });
-          } else {
-            console.log("[AdminLogin] Location already changed by AuthContext:", window.location.pathname);
-          }
-        }, 150);
-      }
+      // decide fallback:
+      // 1) if router state has a 'from', prefer it
+      // 2) else if super admin / admin -> canonicalAdminLanding
+      // 3) else if theatre admin and we know a theater id -> use theatre-specific page (optional)
+      // 4) else -> homepage
+      let fallback = "/";
+      if (fromPath) fallback = fromPath;
+      else if (role === "SUPER_ADMIN" || role === "ADMIN") fallback = canonicalAdminLanding;
+      else if (role === "THEATRE_ADMIN") fallback = theatreId ? `/theatre/view/${theatreId}` : "/theatre/my";
+
+      // small timeout to allow AuthContext to finish any internal redirect first
+      // but guard with safeNavigate to avoid repeated same-path navigation
+      setTimeout(() => {
+        // debug which path we will navigate to
+        console.debug("[AdminLogin] Performing fallback navigate to:", fallback, "current:", window.location.pathname);
+        safeNavigate(navigate, fallback, { replace: true });
+      }, 120);
+
     } catch (err) {
       const msg = err?.response?.data?.message || err?.message || "Login failed";
       console.error("[AdminLogin] login failed:", err);
