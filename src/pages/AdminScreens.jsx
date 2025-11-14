@@ -1,7 +1,6 @@
 // src/pages/AdminScreens.jsx — Walmart Style (clean, rounded, blue accents)
 // Updated: tolerate adminToken, use auth.initialized, endpoint fallbacks, debug logs
 // Fixed: robustly extract theaters/screens from many backend response shapes
-
 import { useEffect, useMemo, useState } from "react";
 import api from "../api/api";
 import { useAuth } from "../context/AuthContext";
@@ -90,6 +89,8 @@ function extractScreenArray(payload) {
   if (Array.isArray(payload.screens)) return payload.screens;
   if (Array.isArray(payload.items)) return payload.items;
   if (Array.isArray(payload.results)) return payload.results;
+  // some endpoints wrap { ok:true, data: { items: [...] } }
+  if (payload.data && Array.isArray(payload.data.items)) return payload.data.items;
   return [];
 }
 
@@ -101,6 +102,8 @@ function extractTheaterArray(payload) {
   if (Array.isArray(payload.items)) return payload.items;
   if (Array.isArray(payload.results)) return payload.results;
   if (Array.isArray(payload.theatres)) return payload.theatres;
+  // nested shapes: { data: { items: [...] } }
+  if (payload.data && Array.isArray(payload.data.items)) return payload.data.items;
   return [];
 }
 
@@ -108,6 +111,7 @@ function extractTheaterArray(payload) {
 /**
  * Try to load screens with endpoint fallbacks:
  * prefer /admin/theaters/:id/screens then /theaters/:id/screens
+ * also try /screens/by-theatre/:id alias which returns a raw array.
  */
 async function fetchScreensForTheater(theaterId) {
   const candidates = [
@@ -115,19 +119,25 @@ async function fetchScreensForTheater(theaterId) {
     `/admin/theatres/${theaterId}/screens`,
     `/theaters/${theaterId}/screens`,
     `/theatres/${theaterId}/screens`,
+    // alias that returns a raw array used by AdminShowtimes / screens.routes.js
+    `/screens/by-theatre/${theaterId}`,
+    `/api/screens/by-theatre/${theaterId}`,
   ];
+
   let lastErr = null;
   for (const path of candidates) {
     try {
       const res = await api.get(path, { params: { _ts: Date.now() } });
       const arr = extractScreenArray(res?.data);
-      if (Array.isArray(arr)) return arr.map(normalizeScreen);
+      if (Array.isArray(arr)) {
+        return arr.map(normalizeScreen);
+      }
     } catch (err) {
       lastErr = err;
-      // try next
+      // try next candidate
     }
   }
-  // rethrow last error so caller can react
+  // nothing returned — throw last error (caller handles)
   throw lastErr || new Error("Failed to fetch screens");
 }
 
@@ -188,7 +198,7 @@ export default function AdminScreens() {
     }
   }, [isTheatreAdmin, theatreIdFromJWT, selectedTheater]);
 
-  /* Load all theaters — with endpoint fallbacks */
+  /* Load all theaters — with endpoint fallbacks and populate screens */
   useEffect(() => {
     (async () => {
       try {
@@ -199,30 +209,70 @@ export default function AdminScreens() {
           "/theatres",
           "/theaters/mine",
           "/theatres/mine",
+          "/admin/theaters-working", // defensive
+          "/api/admin/theaters",     // defensive
+          "/api/theaters",
         ];
+
         let list = [];
         let lastErr = null;
+
         for (const p of candidates) {
           try {
             const res = await api.get(p, { params: { _ts: Date.now() } });
             const arr = extractTheaterArray(res?.data);
             if (Array.isArray(arr) && arr.length > 0) {
               list = arr;
+              console.debug("[AdminScreens] loaded theaters from:", p, "count:", list.length);
+              break;
+            }
+
+            // if server explicitly returned an empty array, accept it and stop trying others
+            if (Array.isArray(res?.data) && res.data.length === 0) {
+              list = [];
+              console.debug("[AdminScreens] endpoint returned empty array:", p);
               break;
             }
           } catch (err) {
             lastErr = err;
-            // continue
+            // continue trying other endpoints
           }
         }
+
         if (!Array.isArray(list)) list = [];
-        setTheaters(list);
-      } catch {
+
+        // Populate screens for each theatre (best-effort, parallel)
+        if (list.length > 0) {
+          const withScreens = await Promise.all(
+            list.map(async (t) => {
+              const id = t._id || t.id || t.theatreId || t.theaterId;
+              if (!id) return { ...t, screens: [] };
+              try {
+                const scr = await fetchScreensForTheater(id);
+                // some backends already include screens on theater objects; avoid overwriting unless empty
+                return { ...t, screens: Array.isArray(t.screens) && t.screens.length ? t.screens : scr };
+              } catch (e) {
+                // if screens fetching fails, return theatre with empty screens — don't abort
+                return { ...t, screens: Array.isArray(t.screens) ? t.screens : [] };
+              }
+            })
+          );
+          setTheaters(withScreens);
+        } else {
+          setTheaters(list);
+          if ((!Array.isArray(list) || list.length === 0) && lastErr) {
+            setMsg("No theaters found (checked multiple endpoints). See console for details.");
+            setMsgType("error");
+            console.debug("[AdminScreens] last endpoint error:", lastErr && (lastErr.message || lastErr));
+          }
+        }
+      } catch (e) {
         setMsgType("error");
         setMsg("Failed to load theaters.");
+        console.debug("[AdminScreens] load theaters unexpected error:", e && (e.message || e));
       }
     })();
-  }, []);
+  }, [theatreIdFromJWT]);
 
   /* Load screens for selected theater */
   useEffect(() => {
