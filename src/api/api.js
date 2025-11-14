@@ -481,4 +481,5 @@ api.getFresh = async (url, cfg = {}) => {
 };
 
 export default api;
-export { canonRole, getAuthFromStorage, COOKIE_AUTH };
+export { canonRole, getAuthFromStorage, COOKIE_AUTH, API_DEBUG };
+
