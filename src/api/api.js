@@ -1,3 +1,4 @@
+// src/api/api.js
 import axios from "axios";
 
 /* -------------------------------- BASE URL -------------------------------- */
@@ -61,7 +62,9 @@ function readCookie(name) {
 /**
  * Attempts to find an auth token + role across common storage locations.
  * Checks explicit admin/user keys, consolidated "auth" JSON, aliases, cookies,
- * and finally the axios default header as a last resort.
+ * and sessionStorage/localStorage.
+ *
+ * NOTE: intentionally DOES NOT inspect the axios instance to avoid runtime coupling.
  */
 function getAuthFromStorage() {
   try {
@@ -119,12 +122,7 @@ function getAuthFromStorage() {
       readCookie("accessToken");
     if (cookieToken) return { token: cookieToken, role: topRole || undefined };
 
-    // 5) Last resort: axios default header (if primed elsewhere)
-    const authHeader = api?.defaults?.headers?.common?.Authorization;
-    if (typeof authHeader === "string") {
-      const m = authHeader.match(/^Bearer\s+(.+)$/i);
-      if (m) return { token: m[1], role: topRole || undefined };
-    }
+    // 5) No axios instance fallback here — keep this helper pure and storage-focused.
   } catch {}
   return { token: null, role: undefined };
 }
@@ -167,11 +165,8 @@ if (api.defaults && api.defaults.headers) {
 }
 
 /* ----------------------- Request interceptor (JWT) ------------------------ */
-export const API_DEBUG = true;
-const DEV_TOKEN_FALLBACK =
-  (typeof import.meta !== "undefined" &&
-    (import.meta.env?.DEV || import.meta.env?.VITE_DEV_TOKEN_FALLBACK === "true")) ||
-  false;
+// Enable verbose debug logs in non-production only
+export const API_DEBUG = !(typeof import.meta !== "undefined" && import.meta.env?.PROD);
 
 // manual override (e.g., post-login priming)
 let _manualToken = null;
@@ -270,7 +265,7 @@ api.interceptors.request.use((config) => {
         config.headers = config.headers || {};
         config.headers.Authorization = `Bearer ${tokenFromUrl}`;
         if (API_DEBUG) console.warn("[api] using ?token= from URL for analytics");
-      } else if (DEV_TOKEN_FALLBACK) {
+      } else if (typeof import.meta !== "undefined" && (import.meta.env?.DEV || import.meta.env?.VITE_DEV_TOKEN_FALLBACK === "true")) {
         const { token } = getAuthFromStorage();
         if (token) {
           config.params = { ...(config.params || {}), token }; // adds ?token=
