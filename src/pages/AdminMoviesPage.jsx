@@ -64,13 +64,9 @@ const UPLOAD_WITH_CREDENTIALS = false;
 /* -------------------------------- Helpers -------------------------------- */
 function resolvePosterUrl(url) {
   if (!url) return null;
-  // api module has BASE_URL and API_PREFIX internally, but this replicates previous logic
-  // If absolute, return as-is; otherwise prefix with api base origin
   try {
     if (/^https?:\/\//i.test(url)) return url;
-    // derive base origin from api.defaults.baseURL if present
     const base = api?.defaults?.baseURL || "";
-    // base likely like https://host/api -> remove trailing /api
     return String(base).replace(/\/api\/?$/, "") + url;
   } catch {
     return url;
@@ -358,7 +354,7 @@ function MovieForm({ initial = {}, onCancel, onSave, isSaving = false }) {
     else data.append("runtimeMinutes", "");
     data.append("genres", form.genresStr || "");
     data.append("releasedAt", form.releaseDate || "");
-    data.append("languages", (languages || []).map((x) => String(x).trim()).filter(Boolean).join(","));
+    data.append("languages", (languages || []).map((x) => String(x).trim()).filter(Boolean).join(",")); 
 
     const normalizedCast = (cast || [])
       .filter((c) => String(c?.actorName || c?.name || "").trim().length > 0)
@@ -506,14 +502,14 @@ export default function AdminMoviesPage() {
     setLoading(true);
     setError("");
     try {
-      // candidate list endpoints — prefer admin list if present, then simple /movies
+      // candidate list endpoints — PREFER simple /movies first to avoid hanging admin endpoints
       const candidates = [
-        "/movies/admin/list",
-        "/movies/admin",
-        "/admin/movies",
         "/movies",
         "/movies/list",
         "/movies/mine",
+        "/movies/admin/list",
+        "/movies/admin",
+        "/admin/movies",
       ];
 
       let list = [];
@@ -553,17 +549,14 @@ export default function AdminMoviesPage() {
       // prefer explicit admin path if detected, else try /movies/admin and fall back to /movies
       if (detected) {
         if (detected.includes("admin") || detected.includes("/admin")) {
-          // if detected was /movies/admin/list -> derive /movies/admin
           const base = detected.replace(/\/list$/, "").replace(/\/$/, "");
           setMovieListPath(detected);
           setMovieAdminBase(base.startsWith("/admin") ? `/movies${base}` : base.split("/list")[0].split("?")[0]);
         } else {
           setMovieListPath(detected);
-          // try /movies/admin first for writes; fallback to /movies below when using it
           setMovieAdminBase(detected.includes("/movies") ? "/movies/admin" : "/movies");
         }
       } else {
-        // default
         setMovieListPath("/movies");
         setMovieAdminBase("/movies/admin");
         if (API_DEBUG) console.warn("[AdminMovies] no candidate returned movies — using defaults");
@@ -595,7 +588,6 @@ export default function AdminMoviesPage() {
         setEditing(normalizeMovie(movieItem));
         return;
       }
-      // try canonical read by id (backend may use /movies/:id)
       const resp = await api.get(`/movies/${id}`, { headers });
       const serverMovie = resp?.data?.data || resp?.data || movieItem;
       setEditing(normalizeMovie(serverMovie));
@@ -613,7 +605,6 @@ export default function AdminMoviesPage() {
     if (submittingRef.current) return;
     submittingRef.current = true;
     try {
-      // Attempt create: prefer movieAdminBase, but if that fails fall back to /movies
       const token = localStorage.getItem("token");
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
@@ -632,7 +623,6 @@ export default function AdminMoviesPage() {
           break;
         } catch (err) {
           if (API_DEBUG) console.warn("[AdminMovies] create failed at", p, err?.response?.status || err?.message || err);
-          // try next
         }
       }
       if (!done) throw new Error("Create failed on all candidate endpoints");
@@ -669,7 +659,6 @@ export default function AdminMoviesPage() {
         if (api?.defaults?.headers?.post) delete api.defaults.headers.post["Content-Type"];
       } catch (e) {}
 
-      // attempt several plausible update endpoints
       const tryPaths = [
         `${movieAdminBase}/${id}`,
         `/movies/admin/${id}`,
