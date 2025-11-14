@@ -1,4 +1,3 @@
-// src/components/Navbar.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
@@ -11,38 +10,37 @@ const cn = (...xs) => xs.filter(Boolean).join(" ");
 /* ---------- safeNavigate helper to avoid repeated same-path navigations ----------
    FIX: Normalize trailing slashes and query params before comparing so Netlify/Router
    normalization (with or without trailing slash) doesn't incorrectly block navigation.
+   RETURNS: true if navigation was performed, false if skipped because paths were equal.
 */
 const normalizePathForCompare = (urlOrPath = "") => {
   try {
-    // If it's already a full URL, extract pathname+search; otherwise use string as-is
     const u = new URL(urlOrPath, typeof window !== "undefined" ? window.location.origin : "http://localhost");
-    // strip trailing slashes from pathname, keep search unchanged (we include it in comparison)
     const pathname = String(u.pathname).replace(/\/+$/, "") || "/";
     const search = u.search || "";
     return pathname + search;
   } catch (e) {
-    // fallback: simple trim + remove trailing slash
     return String(urlOrPath).replace(/\/+$/, "") || "/";
   }
 };
 
 const safeNavigate = (navigate, to, opts = {}) => {
   try {
-    if (!to) return;
+    if (!to) return false;
 
     const current = normalizePathForCompare(window.location.pathname + window.location.search);
     const targetPath = normalizePathForCompare(to);
 
     // same logical path -> bail out to avoid pointless navigation
-    if (current === targetPath) return;
+    if (current === targetPath) return false;
 
-    // explicit navigate (don't replace history unless caller wanted to)
     navigate(to, { replace: false, ...opts });
+    return true;
   } catch (e) {
-    // fallback: attempt navigate anyway
     try {
       navigate(to, opts);
+      return true;
     } catch {}
+    return false;
   }
 };
 
@@ -85,10 +83,32 @@ function MenuItemLink({ to, children, onClick }) {
         clickingRef.current = true;
         try {
           onClick?.();
-          // Use safeNavigate to avoid pointless same-path navigations; don't replace history
-          safeNavigate(navigate, to, {});
+
+          // debug: log current vs target
+          try {
+            const current = normalizePathForCompare(window.location.pathname + window.location.search);
+            const targetPath = normalizePathForCompare(to);
+            // eslint-disable-next-line no-console
+            console.debug('[MenuItemLink] navigate request', { to, targetPath, current });
+          } catch (err) {
+            // eslint-disable-next-line no-console
+            console.debug('[MenuItemLink] navigate (normalize failed)', { to, err: err?.message || err });
+          }
+
+          // attempt safe navigate; if it was skipped because current === target, force navigation via state
+          const didNavigate = safeNavigate(navigate, to, {});
+          if (!didNavigate) {
+            // force navigation by pushing same path with different state (avoids URL mutation)
+            try {
+              // eslint-disable-next-line no-console
+              console.debug('[MenuItemLink] safeNavigate skipped (same path) — forcing nav via state bump');
+              navigate(to, { state: { __forceNav: Date.now() } });
+            } catch (e) {
+              // eslint-disable-next-line no-console
+              console.warn('[MenuItemLink] force navigate failed', e);
+            }
+          }
         } finally {
-          // small debounce to avoid accidental double-nav
           setTimeout(() => {
             clickingRef.current = false;
           }, 120);
@@ -229,7 +249,6 @@ export default function Navbar() {
       return "/showtimes";
     }
     if (isTheatreAdmin) return "/theatre/my";
-    // Option B: canonical admin landing is /admin/dashboard
     if (isSuperAdmin || isAdmin) return "/admin/dashboard";
     return "/bookings";
   };
@@ -343,7 +362,7 @@ export default function Navbar() {
                                     e.stopPropagation();
                                     setNotifOpen(false);
                                     if (n.id && !n.readAt) markOneRead(n.id);
-                                    safeNavigate(navigate, to);
+                                    safeNavigate(navigate, to) || navigate(to, { state: { __forceNav: Date.now() } });
                                   }}
                                   className={cn(
                                     "w-full text-left p-3 border-b border-slate-200 last:border-b-0",
@@ -451,7 +470,7 @@ export default function Navbar() {
                           } finally {
                             setAdminMenu(false);
                             setNotifOpen(false);
-                            safeNavigate(navigate, "/", { replace: true });
+                            safeNavigate(navigate, "/", { replace: true }) || navigate("/", { state: { __forceNav: Date.now() } });
                           }
                         }}
                         className="w-full text-left px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 rounded-xl font-semibold"
