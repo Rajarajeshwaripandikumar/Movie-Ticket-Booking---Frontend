@@ -1,4 +1,4 @@
-// src/api/api.js
+// src/api/api.js — updated (refresh-token, cookie-first option, retries, helpers)
 import axios from "axios";
 
 /* -------------------------------- BASE URL -------------------------------- */
@@ -31,8 +31,7 @@ function canonRole(r) {
   let v = String(raw).toUpperCase().trim().replace(/\s+/g, "_");
   if (v.startsWith("ROLE_")) v = v.slice(5);
 
-  // ✅ Do not remap ADMIN → SUPER_ADMIN
-  // ✅ Canonicalize various admin labels to THEATRE_ADMIN (UK spelling used app-wide)
+  // Keep mapping centralized
   const map = {
     SUPERADMIN: "SUPER_ADMIN",
     THEATER_ADMIN: "THEATRE_ADMIN",
@@ -59,31 +58,21 @@ function readCookie(name) {
   }
 }
 
-/**
- * Attempts to find an auth token + role across common storage locations.
- * Checks explicit admin/user keys, consolidated "auth" JSON, aliases, cookies,
- * and sessionStorage/localStorage.
- *
- * NOTE: intentionally DOES NOT inspect the axios instance to avoid runtime coupling.
- */
 function getAuthFromStorage() {
   try {
-    // 1) Explicit keys set by our AuthContext / backend responses
+    // explicit keys
     const adminToken =
-      localStorage.getItem("adminToken") ||
-      sessionStorage.getItem("adminToken");
+      localStorage.getItem("adminToken") || sessionStorage.getItem("adminToken");
     const userToken =
-      localStorage.getItem("token") ||
-      sessionStorage.getItem("token");
+      localStorage.getItem("token") || sessionStorage.getItem("token");
     const topRole =
-      localStorage.getItem("role") ||
-      sessionStorage.getItem("role");
+      localStorage.getItem("role") || sessionStorage.getItem("role");
 
     if (adminToken || userToken) {
       return { token: adminToken || userToken, role: topRole };
     }
 
-    // 2) Consolidated "auth" JSON used elsewhere
+    // consolidated "auth" JSON
     const raw = localStorage.getItem("auth") || sessionStorage.getItem("auth");
     if (raw) {
       try {
@@ -101,7 +90,7 @@ function getAuthFromStorage() {
       } catch {}
     }
 
-    // 3) Other token aliases
+    // other aliases
     for (const k of [
       "jwt",
       "accessToken",
@@ -114,15 +103,13 @@ function getAuthFromStorage() {
       if (v) return { token: v, role: topRole || undefined };
     }
 
-    // 4) Cookie fallbacks
+    // cookie fallbacks
     const cookieToken =
       readCookie("adminToken") ||
       readCookie("token") ||
       readCookie("jwt") ||
       readCookie("accessToken");
     if (cookieToken) return { token: cookieToken, role: topRole || undefined };
-
-    // 5) No axios instance fallback here — keep this helper pure and storage-focused.
   } catch {}
   return { token: null, role: undefined };
 }
@@ -143,32 +130,35 @@ export const SAME_ORIGIN = BASE_ORIGIN && SELF_ORIGIN && BASE_ORIGIN === SELF_OR
 // Feature flag: allow sending the role header even on cross-origin (defaults false)
 const SEND_ROLE_HEADER = String(import.meta.env?.VITE_SEND_ROLE_HEADER || "false").toLowerCase() === "true";
 
+/* ----------------------- Cookie-first / credentials flag ----------------- */
+// If VITE_COOKIE_AUTH=true then we enable withCredentials and prefer cookie-based refresh
+const COOKIE_AUTH = String(import.meta.env?.VITE_COOKIE_AUTH || "false").toLowerCase() === "true";
+
 /* ------------------------------ Axios instance --------------------------- */
 const api = axios.create({
-  baseURL: AXIOS_BASE, // callers pass paths WITHOUT "/api" (e.g., "/admin/me")
+  baseURL: AXIOS_BASE,
   timeout: 60000,
-  withCredentials: false,
+  withCredentials: COOKIE_AUTH, // cookie-first option
   headers: { Accept: "application/json" },
 });
 
-// ⭐ Endpoints that must NEVER be served from cache
+// Endpoints that must NEVER be served from cache
 const NO_STORE_ENDPOINTS = [
-  /\/notifications\/mine(?:$|\?)/,       // GET list
-  /\/notifications\/\w+\/read(?:$|\?)/,  // read/ack (defensive)
+  /\/notifications\/mine(?:$|\?)/,
+  /\/notifications\/\w+\/read(?:$|\?)/,
 ];
 
-// Keep FormData content-type dynamic; let browser set boundaries
+// Keep FormData content-type dynamic
 if (api.defaults && api.defaults.headers) {
   ["post", "put", "patch"].forEach((m) => {
     if (api.defaults.headers[m]) delete api.defaults.headers[m]["Content-Type"];
   });
 }
 
-/* ----------------------- Request interceptor (JWT) ------------------------ */
-// Enable verbose debug logs in non-production only
-export const API_DEBUG = !(typeof import.meta !== "undefined" && import.meta.env?.PROD);
+/* ----------------------- Request interceptor (cache-bust) ---------------- */
+const API_DEBUG = !(typeof import.meta !== "undefined" && import.meta.env?.PROD);
 
-// manual override (e.g., post-login priming)
+// manual override token
 let _manualToken = null;
 
 api.setAuthToken = (token) => {
@@ -181,22 +171,17 @@ api.setAuthToken = (token) => {
   }
 };
 
-// ⭐ Helper: detect if this request should bypass caches
 function isNoStoreRequest(config) {
   const url = String(config?.url || "");
   return NO_STORE_ENDPOINTS.some((re) => re.test(url));
 }
 
-// ⭐ Interceptor to keep notifications fresh without custom cache headers
 api.interceptors.request.use((config) => {
   try {
     if (String(config.method || "get").toLowerCase() === "get" && isNoStoreRequest(config)) {
       config.headers = config.headers || {};
-      // Do NOT send Cache-Control/Pragma from browser (avoids CORS preflight issues)
-      // Strip conditional headers that enable 304
       delete config.headers["If-None-Match"];
       delete config.headers["If-Modified-Since"];
-      // Cache-buster param so we bypass any intermediary cache
       config.params = { ...(config.params || {}), _ts: Date.now() };
 
       if (API_DEBUG) {
@@ -207,25 +192,20 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// 1) Attach token and (conditionally) x-role if same-origin or opted-in
+/* ----------------------- Request interceptor (attach auth) --------------- */
 api.interceptors.request.use((config) => {
   try {
     const { token, role } = getAuthFromStorage();
     if (token) {
       config.headers = config.headers || {};
-      if (!config.headers.Authorization)
-        config.headers.Authorization = `Bearer ${token}`;
+      if (!config.headers.Authorization) config.headers.Authorization = `Bearer ${token}`;
 
-      // Only send role header when safe to do so
       const normalizedRole = canonRole(role);
       const allowRoleHeader = SAME_ORIGIN || SEND_ROLE_HEADER;
-
-      // Normalize header name to lowercase to minimize CORS issues
       if (allowRoleHeader && normalizedRole) {
-        delete config.headers["X-Role"]; // remove any legacy casing
+        delete config.headers["X-Role"];
         config.headers["x-role"] = normalizedRole;
       } else {
-        // ensure we DO NOT send the role header on cross-origin requests
         delete config.headers["X-Role"];
         delete config.headers["x-role"];
       }
@@ -245,7 +225,7 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// 2) Ensure manually-set token (via setAuthToken) is honored if header missing
+// Ensure manually-set token honored if header missing
 api.interceptors.request.use((config) => {
   if (_manualToken && !config.headers?.Authorization) {
     config.headers = config.headers || {};
@@ -254,7 +234,7 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// 3) Rescue analytics first paint: use ?token= fallback or DEV param attach
+// Analytics token fallback: ?token= or DEV fallback
 api.interceptors.request.use((config) => {
   try {
     const isAnalytics = String(config.url || "").includes("/analytics/");
@@ -268,7 +248,7 @@ api.interceptors.request.use((config) => {
       } else if (typeof import.meta !== "undefined" && (import.meta.env?.DEV || import.meta.env?.VITE_DEV_TOKEN_FALLBACK === "true")) {
         const { token } = getAuthFromStorage();
         if (token) {
-          config.params = { ...(config.params || {}), token }; // adds ?token=
+          config.params = { ...(config.params || {}), token };
           if (API_DEBUG) console.warn("[api] added ?token= fallback for analytics", config.url);
         }
       }
@@ -277,12 +257,103 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-/* -------------------------- Response interceptor (401) -------------------- */
+/* ----------------------- Refresh-token flow (401 handling) -------------- */
+/**
+ * Refresh-flow design:
+ * - on first 401 we attempt a single refresh via `${BASE_URL}${API_PREFIX}/auth/refresh`
+ * - we run refresh withCredentials: true (cookie-based refresh preferred)
+ * - while refresh runs, subsequent requests are queued and retried with new token
+ * - if refresh fails, we emit "api:unauthorized" and reject queued requests
+ */
+let isRefreshing = false;
+let refreshQueue = []; // functions: (err, token) => void
+async function runRefresh() {
+  // Avoid calling through axios instance interceptors — use plain axios to avoid infinite loops
+  const refreshUrl = `${BASE_URL}${API_PREFIX}/auth/refresh`;
+  try {
+    // If COOKIE_AUTH is enabled, request will include credentials
+    const resp = await axios.post(refreshUrl, {}, { withCredentials: true, timeout: 20000 });
+    // Expect resp.data.token or resp.data.accessToken etc.
+    const newToken = resp?.data?.token || resp?.data?.accessToken || null;
+    if (newToken) {
+      api.setAuthToken(newToken);
+      // persist via primeAuth minimal (do not overwrite role)
+      try {
+        const role = (getAuthFromStorage().role) ?? resp?.data?.role;
+        if (newToken) {
+          localStorage.setItem("auth", JSON.stringify({ token: newToken, role: role ?? "" }));
+        }
+      } catch {}
+    }
+    return newToken;
+  } catch (e) {
+    if (API_DEBUG) console.warn("[api] refresh failed", e);
+    return null;
+  }
+}
+
 api.interceptors.response.use(
   (res) => res,
   (error) => {
-    if (error?.response?.status === 401) {
-      window.dispatchEvent(new CustomEvent("api:unauthorized"));
+    const orig = error?.config;
+    try {
+      // if no config or already retried, propagate
+      if (!orig || orig._retry) {
+        if (error?.response?.status === 401) {
+          window.dispatchEvent(new CustomEvent("api:unauthorized"));
+        }
+        return Promise.reject(error);
+      }
+
+      // Only attempt refresh for 401 and for requests that are not refresh itself
+      if (error?.response?.status === 401 && !String(orig.url || "").includes("/auth/refresh")) {
+        if (isRefreshing) {
+          // queue: will be retried once refresh resolves
+          return new Promise((resolve, reject) => {
+            refreshQueue.push((err, token) => {
+              if (err) return reject(err);
+              orig._retry = true;
+              if (token) orig.headers = orig.headers || {}, (orig.headers.Authorization = `Bearer ${token}`);
+              resolve(api.request(orig));
+            });
+          });
+        }
+
+        isRefreshing = true;
+        return new Promise(async (resolve, reject) => {
+          try {
+            const newToken = await runRefresh();
+            isRefreshing = false;
+            if (!newToken) {
+              // flush queue with error
+              refreshQueue.forEach((cb) => cb(new Error("refresh_failed")));
+              refreshQueue = [];
+              window.dispatchEvent(new CustomEvent("api:unauthorized"));
+              return reject(error);
+            }
+            // flush queue with token
+            refreshQueue.forEach((cb) => cb(null, newToken));
+            refreshQueue = [];
+
+            orig._retry = true;
+            orig.headers = orig.headers || {};
+            orig.headers.Authorization = `Bearer ${newToken}`;
+            resolve(api.request(orig));
+          } catch (e) {
+            isRefreshing = false;
+            refreshQueue.forEach((cb) => cb(e));
+            refreshQueue = [];
+            window.dispatchEvent(new CustomEvent("api:unauthorized"));
+            reject(e);
+          }
+        });
+      }
+
+      if (error?.response?.status === 401) {
+        window.dispatchEvent(new CustomEvent("api:unauthorized"));
+      }
+    } catch (e) {
+      // swallow
     }
     return Promise.reject(error);
   }
@@ -306,6 +377,46 @@ api.safeDelete = async (url, cfg) => {
   } catch (e) {
     if (e?.response?.status === 404) return null;
     throw e;
+  }
+};
+
+/* ----------------------------- Convenience JSON helpers ------------------ */
+api.postJson = async (url, body, cfg = {}) => (await api.post(url, body, cfg)).data;
+api.putJson = async (url, body, cfg = {}) => (await api.put(url, body, cfg)).data;
+api.patchJson = async (url, body, cfg = {}) => (await api.patch(url, body, cfg)).data;
+
+/* ------------------------ Retry helper for GET (exponential) ------------ */
+/**
+ * getWithRetry(url, cfg = {}, opts = { attempts: 3, baseDelay: 300 })
+ * - retries on network errors and 5xx responses
+ * - does NOT retry 4xx other than 429 (you may choose to handle 429)
+ */
+api.getWithRetry = async function (url, cfg = {}, opts = {}) {
+  const attempts = Number(opts.attempts || 3);
+  const baseDelay = Number(opts.baseDelay || 300); // ms
+  let attempt = 0;
+
+  while (true) {
+    try {
+      const res = await api.get(url, cfg);
+      return res.data;
+    } catch (err) {
+      attempt++;
+      const status = err?.response?.status;
+      const isNetworkError = !err?.response;
+      const isServerError = status >= 500 && status < 600;
+      const isRateLimit = status === 429;
+
+      // Decide whether to retry
+      const shouldRetry = (isNetworkError || isServerError || isRateLimit) && attempt < attempts;
+      if (!shouldRetry) throw err;
+
+      // Exponential backoff with jitter
+      const jitter = Math.floor(Math.random() * 100);
+      const delay = Math.min(5000, baseDelay * Math.pow(2, attempt - 1) + jitter);
+      if (API_DEBUG) console.warn(`[api] retrying GET ${url} attempt=${attempt} delay=${delay}ms`, err?.message || err);
+      await new Promise((r) => setTimeout(r, delay));
+    }
   }
 };
 
@@ -334,7 +445,6 @@ export function makeAbsoluteImageUrl(url) {
 }
 
 /* ----------------------------- Post-login hook ---------------------------- */
-// Smarter priming: set the correct storage keys so guards & Navbar agree
 export function primeAuth(token, role) {
   try {
     const canonical = canonRole(role);
@@ -346,15 +456,14 @@ export function primeAuth(token, role) {
     if (canonical) localStorage.setItem("role", canonical);
 
     localStorage.setItem("auth", JSON.stringify({ token, role: canonical || role }));
-    api.setAuthToken(token); // prime axios instance immediately
-    if (API_DEBUG) console.debug("[api] primeAuth set", { role: canonical, sameOrigin: SAME_ORIGIN });
+    api.setAuthToken(token);
+    if (API_DEBUG) console.debug("[api] primeAuth set", { role: canonical, sameOrigin: SAME_ORIGIN, cookieAuth: COOKIE_AUTH });
   } catch (e) {
     console.error("[api] primeAuth failed:", e);
   }
 }
 
 /* ------------------------- Startup hydration (NEW) ------------------------ */
-// If the user was already logged in, carry Authorization on first paint
 (() => {
   try {
     const { token } = getAuthFromStorage();
@@ -366,11 +475,10 @@ export function primeAuth(token, role) {
 api.getFresh = async (url, cfg = {}) => {
   const res = await api.get(url, {
     ...(cfg || {}),
-    // No custom cache headers here; rely on server no-store + _ts param
     params: { ...(cfg.params || {}), _ts: Date.now() },
   });
   return res.data;
 };
 
 export default api;
-export { canonRole, getAuthFromStorage };
+export { canonRole, getAuthFromStorage, COOKIE_AUTH };
