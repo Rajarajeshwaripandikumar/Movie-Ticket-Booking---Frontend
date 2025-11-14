@@ -39,35 +39,43 @@ function toJwtString(input) {
  * })
  */
 export default function useSSE(options = {}) {
-  const { token: ctxToken, role } = useAuth();
+  const { token: ctxToken, role } = useAuth() || {};
   const { onNotification, onInit, onAny } = options;
 
   // store current connection & the exact jwt used to open it
   const connRef = useRef(null);
   const jwtRef = useRef("");
   const scopeRef = useRef("");
-  const hiddenRef = useRef(document.visibilityState === "hidden");
+  const hiddenRef = useRef(
+    typeof document !== "undefined" ? document.visibilityState === "hidden" : false
+  );
 
+  // visibility handler (kept stable)
   useEffect(() => {
+    if (typeof document === "undefined") return undefined;
     const handleVisibility = () => {
       const nowHidden = document.visibilityState === "hidden";
       hiddenRef.current = nowHidden;
 
-      // if hidden → close, if visible → reconnect (using same deps)
       if (nowHidden) {
         if (connRef.current) {
-          try { connRef.current.close(); } catch {}
+          try {
+            connRef.current.close?.();
+          } catch {}
           connRef.current = null;
-          console.debug("[SSE] ⏸️ Paused stream (tab hidden)");
+          jwtRef.current = "";
+          console.debug("[SSE] Paused stream (tab hidden)");
         }
       } else {
-        // force reconnect by clearing jwtRef so effect body will re-run logic
-        // (we'll just let the deps take care of reconnection on next render)
-        console.debug("[SSE] ▶️ Tab visible; will ensure stream is open");
-        // Manually trigger re-open if we still have a token
+        // reopen if we have a token
         const jwt = toJwtString(ctxToken);
         if (jwt && (!connRef.current || jwtRef.current !== jwt)) {
           openStream(jwt, scopeRef.current);
+        } else {
+          // if we have a connection but closed unexpectedly, attempt reconnect
+          try {
+            connRef.current?.reconnect?.();
+          } catch {}
         }
       }
     };
@@ -85,7 +93,9 @@ export default function useSSE(options = {}) {
     // if no usable token → close any existing stream and exit
     if (!jwt) {
       if (connRef.current) {
-        try { connRef.current.close(); } catch {}
+        try {
+          connRef.current.close?.();
+        } catch {}
         connRef.current = null;
         jwtRef.current = "";
         console.debug("[SSE] Closed stream (no token)");
@@ -101,8 +111,11 @@ export default function useSSE(options = {}) {
 
     // token changed → close previous before opening a new one
     if (connRef.current) {
-      try { connRef.current.close(); } catch {}
+      try {
+        connRef.current.close?.();
+      } catch {}
       connRef.current = null;
+      jwtRef.current = "";
       console.debug("[SSE] Reconnecting with new token…");
     }
 
@@ -112,8 +125,8 @@ export default function useSSE(options = {}) {
     return () => {
       if (connRef.current) {
         try {
-          connRef.current.close();
-          console.debug("[SSE] 🔌 Closed stream");
+          connRef.current.close?.();
+          console.debug("[SSE] Closed stream (effect cleanup)");
         } catch {}
         connRef.current = null;
         jwtRef.current = "";
@@ -124,55 +137,74 @@ export default function useSSE(options = {}) {
 
   /** Open (or reopen) stream with handlers */
   function openStream(jwt, scope) {
-    const { eventSource, cancel } = connectSSE({
-      token: jwt,           // ← clean JWT string
-      scope,                // "admin" or "user"
-      // Backoff is implemented inside connectSSE; this handler just logs
-      onOpen: () => console.log("[SSE] ✅ Stream opened (scope:", scope, ")"),
-      onMessage: (data, rawEvent) => {
-        try {
-          // Normalized payload
-          const { type, event, payload } = normalizeEvent(data, rawEvent);
+    // guard: ensure we don't double-open
+    if (connRef.current && jwtRef.current === jwt) return;
 
-          // Fire per-event callbacks
+    const s = connectSSE({
+      token: jwt,
+      scope,
+      onOpen: () => {
+        console.debug("[SSE] Stream opened (scope:", scope, ")");
+      },
+      onMessage: (data, meta) => {
+        try {
+          const { type, payload } = normalizeEvent(data, meta);
+
           if (type === "init" && typeof onInit === "function") onInit(payload);
           if (type === "notification" && typeof onNotification === "function") onNotification(payload);
+          if (typeof onAny === "function") onAny(type, payload, meta);
 
-          // Fire any-callback
-          if (typeof onAny === "function") onAny(type, payload, rawEvent);
+          // Emit a browser-wide event for global listeners
+          try {
+            const ev = new CustomEvent("sse:notification", { detail: { type, payload, meta } });
+            window.dispatchEvent(ev);
+          } catch {}
 
-          // Emit a browser-wide event so any feature can listen without prop-drilling
-          window.dispatchEvent(new CustomEvent("sse:notification", { detail: { type, payload } }));
-
-          console.log("[SSE] 🔔", type, payload);
+          console.debug("[SSE] event:", type, payload);
         } catch (e) {
           console.warn("[SSE] Failed to process event", e, data);
         }
       },
       onError: (err, attempt) => {
-        console.warn(`[SSE] ⚠️ Error (attempt ${attempt}). Will retry…`, err);
+        console.warn(`[SSE] Error (attempt ${attempt}). Will retry if policy allows…`, err);
       },
+      // keep defaults for backoff/heartbeat; connectSSE will honor COOKIE_AUTH when needed
     });
 
-    // keep a uniform .close() interface
-    connRef.current = { close: cancel, es: eventSource };
+    // normalize API: ensure we have .close() to match previous code
+    const wrapper = {
+      close: () => {
+        try {
+          s.cancel?.();
+        } catch {}
+      },
+      reconnect: () => {
+        try {
+          s.reconnect?.();
+        } catch {}
+      },
+      getEventSource: () => s.getEventSource?.() ?? null,
+      raw: s,
+    };
+
+    connRef.current = wrapper;
     jwtRef.current = jwt;
   }
 
   function normalizeEvent(data, rawEvent) {
     // server may send either string or object; tolerate both
     if (data && typeof data === "object" && ("type" in data || "event" in data)) {
-      const type = (data.type || data.event || "").toString().toLowerCase() || "message";
-      return { type, event: type, payload: data.payload ?? data.data ?? data };
+      const type = String(data.type || data.event || "").toLowerCase() || "message";
+      return { type, payload: data.payload ?? data.data ?? data };
     }
     // fallback: try JSON parse
     try {
       const parsed = typeof data === "string" ? JSON.parse(data) : data;
-      const type = (parsed?.type || parsed?.event || rawEvent?.type || "message").toString().toLowerCase();
-      return { type, event: type, payload: parsed?.payload ?? parsed?.data ?? parsed };
+      const type = String(parsed?.type || parsed?.event || rawEvent?.type || "message").toLowerCase();
+      return { type, payload: parsed?.payload ?? parsed?.data ?? parsed };
     } catch {
       const type = (rawEvent?.type || "message").toLowerCase();
-      return { type, event: type, payload: data };
+      return { type, payload: data };
     }
   }
 }
