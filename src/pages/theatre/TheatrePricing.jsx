@@ -1,7 +1,13 @@
-// src/pages/theatre/TheatrePricing.jsx — Theatre-scoped pricing manager
-import { useEffect, useMemo, useState } from "react";
+// src/pages/theatre/TheatrePricing.jsx — Theatre-scoped pricing manager (polished)
+// - Defensive fetching / patch/put probing
+// - Loading UX, optimistic update with rollback
+// - Accessibility: aria-live, role=status
+// - Input normalization and disabled states
+
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import api from "../../api/api";
 import { useAuth } from "../../context/AuthContext";
+import { Navigate } from "react-router-dom";
 
 const Card = ({ children, className = "" }) => (
   <div className={`bg-white border border-slate-200 rounded-2xl shadow-sm p-4 ${className}`}>{children}</div>
@@ -9,22 +15,34 @@ const Card = ({ children, className = "" }) => (
 
 /* ------------------------------ helpers ------------------------------ */
 const A = (x) =>
-  Array.isArray(x) ? x : Array.isArray(x?.items) ? x.items : Array.isArray(x?.data) ? x.data : [];
+  Array.isArray(x)
+    ? x
+    : Array.isArray(x?.items)
+    ? x.items
+    : Array.isArray(x?.data)
+    ? x.data
+    : [];
 
 const idOf = (x) => x?._id ?? x?.id ?? x?.uuid ?? "";
 const titleOf = (x) => x?.title ?? x?.name ?? x?.movieTitle ?? "Untitled";
 const whenOf = (s) => s?.startsAt || s?.startAt || s?.startTime || s?.time || s?.datetime;
-const priceOf = (s) => s?.basePrice ?? s?.price ?? s?.amount ?? "";
+const priceOf = (s) => {
+  const v = s?.basePrice ?? s?.price ?? s?.amount ?? s?.cost ?? "";
+  return v === "" ? "" : Number(v);
+};
 
 function decodeJwt(t) {
   try {
-    return JSON.parse(atob(String(t ?? "").split(".")[1])) || {};
+    if (!t) return {};
+    const payload = String(t).split(".")[1];
+    return payload ? JSON.parse(atob(payload)) : {};
   } catch {
     return {};
   }
 }
 
-async function tryGet(endpoints) {
+/* try endpoints for GET */
+async function tryGet(endpoints = []) {
   for (const ep of endpoints.filter(Boolean)) {
     try {
       const r = await api.get(ep);
@@ -34,26 +52,29 @@ async function tryGet(endpoints) {
   return undefined;
 }
 
-async function tryPatchPut(endpoints, body) {
+/* try patch then put (returns data or throws) */
+async function tryPatchPut(endpoints = [], body = {}) {
   for (const ep of endpoints.filter(Boolean)) {
     try {
-      return (await api.patch(ep, body))?.data;
+      const res = await api.patch(ep, body);
+      return res?.data ?? res;
     } catch {
       try {
-        return (await api.put(ep, body))?.data;
+        const res2 = await api.put(ep, body);
+        return res2?.data ?? res2;
       } catch {}
     }
   }
   throw new Error("No compatible pricing endpoint");
 }
 
+/* ------------------------------ Component ------------------------------ */
 export default function TheatrePricing() {
   const { token, adminToken, user, isTheatreAdmin } = useAuth() || {};
-  const activeToken = adminToken || token || null;                // ✅ use correct token
+  const activeToken = adminToken || token || null;
 
   const payload = decodeJwt(activeToken);
 
-  // ✅ Unified theatreId resolution (same logic as TheatreDashboard)
   const theatreId =
     user?.theatreId ||
     user?.theaterId ||
@@ -68,12 +89,12 @@ export default function TheatrePricing() {
   const [showtimes, setShowtimes] = useState([]);
   const [selectedId, setSelectedId] = useState("");
   const [price, setPrice] = useState(200);
+  const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState("");
   const [msgType, setMsgType] = useState("info");
-  const [loading, setLoading] = useState(true);
 
   const selected = useMemo(
-    () => showtimes.find((s) => (s._id || s.id) === selectedId),
+    () => showtimes.find((s) => (s._id || s.id) === selectedId) ?? null,
     [showtimes, selectedId]
   );
 
@@ -82,16 +103,17 @@ export default function TheatrePricing() {
   }, []);
 
   useEffect(() => {
-    if (!isTheatreAdmin || !theatreId) return;
+    if (!isTheatreAdmin || !theatreId) {
+      setLoading(false);
+      return;
+    }
     let mounted = true;
-
+    setLoading(true);
+    setMsg("");
     (async () => {
-      setLoading(true);
-      setMsg("");
       try {
         const ts = Date.now();
-
-        const stData =
+        const data =
           (await tryGet([
             `/theatre/showtimes?theatre=${theatreId}&ts=${ts}`,
             `/admin/showtimes?theatre=${theatreId}&ts=${ts}`,
@@ -99,8 +121,7 @@ export default function TheatrePricing() {
           ])) || [];
 
         if (!mounted) return;
-
-        const items = A(stData);
+        const items = A(data);
         setShowtimes(items);
 
         if (items.length) {
@@ -131,17 +152,31 @@ export default function TheatrePricing() {
     setSelectedId(id);
     const st = showtimes.find((x) => (x._id || x.id) === id);
     setPrice(Number(priceOf(st) || 200));
+    setMsg("");
   };
 
-  const save = async () => {
-    if (!selectedId) return;
+  const save = useCallback(async () => {
+    if (!selectedId) {
+      setMsgType("error");
+      setMsg("Select a showtime first.");
+      return;
+    }
+
+    // normalize price
+    const numericPrice = Number(String(price).replace(/[^\d.-]/g, "")) || 0;
+    if (numericPrice < 0) {
+      setMsgType("error");
+      setMsg("Price must be 0 or greater.");
+      return;
+    }
+
     setMsg("");
     setMsgType("info");
 
+    // optimistic update
     const prev = [...showtimes];
-
     setShowtimes((xs) =>
-      xs.map((x) => ((x._id || x.id) === selectedId ? { ...x, basePrice: Number(price) } : x))
+      xs.map((x) => ((x._id || x.id) === selectedId ? { ...x, basePrice: numericPrice, price: numericPrice } : x))
     );
 
     try {
@@ -152,21 +187,20 @@ export default function TheatrePricing() {
           `/admin/showtimes/${selectedId}`,
           `/showtimes/${selectedId}`,
         ],
-        { basePrice: Number(price), price: Number(price) }
+        { basePrice: numericPrice, price: numericPrice }
       );
       setMsgType("success");
       setMsg("Pricing updated.");
     } catch (e) {
+      // rollback
       setShowtimes(prev);
       setMsgType("error");
       setMsg(e?.response?.data?.message || "Failed to save pricing.");
     }
-  };
+  }, [selectedId, price, showtimes]);
 
-  // ✅ Correct login guard
+  // Guards
   if (!activeToken) return <Navigate to="/admin/login" replace />;
-
-  // ✅ Correct role guard
   if (!isTheatreAdmin) {
     return <div className="p-8 text-center text-rose-600 font-semibold">Access Denied</div>;
   }
@@ -177,39 +211,44 @@ export default function TheatrePricing() {
         <Card>
           <h1 className="text-xl font-bold text-[#0071DC]">Update Pricing</h1>
 
-          {msg && (
-            <div
-              className={`mt-3 rounded-xl px-3 py-2 text-sm font-semibold ${
-                msgType === "error"
-                  ? "bg-rose-50 border border-rose-200 text-rose-700"
-                  : msgType === "success"
-                  ? "bg-emerald-50 border border-emerald-200 text-emerald-700"
-                  : "bg-blue-50 border border-blue-200 text-blue-700"
-              }`}
-            >
-              {msg}
-            </div>
-          )}
+          <div role="status" aria-live="polite" className="mt-3">
+            {msg && (
+              <div
+                className={`rounded-xl px-3 py-2 text-sm font-semibold ${
+                  msgType === "error"
+                    ? "bg-rose-50 border border-rose-200 text-rose-700"
+                    : msgType === "success"
+                    ? "bg-emerald-50 border border-emerald-200 text-emerald-700"
+                    : "bg-blue-50 border border-blue-200 text-blue-700"
+                }`}
+              >
+                {msg}
+              </div>
+            )}
+          </div>
 
           <div className="grid sm:grid-cols-2 gap-4 mt-4">
             <div>
-              <label className="text-sm text-slate-600">Select showtime</label>
+              <label htmlFor="showtime-select" className="text-sm text-slate-600">Select showtime</label>
               <select
+                id="showtime-select"
                 className="w-full mt-1 border rounded-xl p-2"
                 value={selectedId}
                 onChange={onSelect}
                 disabled={loading || showtimes.length === 0}
               >
-                {showtimes.length === 0 ? (
+                {loading ? (
+                  <option>Loading…</option>
+                ) : showtimes.length === 0 ? (
                   <option value="">No showtimes</option>
                 ) : (
                   showtimes.map((s) => {
                     const id = idOf(s);
-                    const label = `${titleOf(s.movie || { title: s.movieTitle })} — ${new Date(
-                      whenOf(s)
-                    ).toLocaleString()} — ₹${priceOf(s) || 200}`;
+                    const label = `${titleOf(s.movie || { title: s.movieTitle })} — ${
+                      whenOf(s) ? new Date(whenOf(s)).toLocaleString() : "—"
+                    } — ₹${priceOf(s) || 200}`;
                     return (
-                      <option key={id} value={id}>
+                      <option key={id || Math.random()} value={id}>
                         {label}
                       </option>
                     );
@@ -219,14 +258,17 @@ export default function TheatrePricing() {
             </div>
 
             <div>
-              <label className="text-sm text-slate-600">Base Price (₹)</label>
+              <label htmlFor="price" className="text-sm text-slate-600">Base Price (₹)</label>
               <input
+                id="price"
                 type="number"
                 min={0}
+                step="1"
                 className="w-full mt-1 border rounded-xl p-2"
                 value={price}
                 onChange={(e) => setPrice(e.target.value)}
-                disabled={!selectedId}
+                disabled={!selectedId || loading}
+                aria-label="Base price in rupees"
               />
             </div>
           </div>
@@ -234,10 +276,10 @@ export default function TheatrePricing() {
           <div className="mt-4">
             <button
               onClick={save}
-              disabled={!selectedId}
+              disabled={!selectedId || loading}
               className="bg-[#0071DC] text-white rounded-xl px-4 py-2 disabled:opacity-50"
             >
-              Save Pricing
+              {loading ? "Loading…" : "Save Pricing"}
             </button>
           </div>
         </Card>
@@ -246,17 +288,18 @@ export default function TheatrePricing() {
         <Card>
           <h2 className="font-semibold mb-3">Showtimes</h2>
           {loading ? (
-            <div>Loading…</div>
+            <div className="space-y-2">
+              <div className="h-3 w-1/3 bg-slate-200 rounded animate-pulse" />
+              <div className="h-3 w-1/2 bg-slate-200 rounded animate-pulse" />
+            </div>
           ) : showtimes.length === 0 ? (
             <div className="text-sm text-slate-600">No showtimes found.</div>
           ) : (
             <div className="divide-y">
               {showtimes.map((s) => (
-                <div key={idOf(s)} className="py-2 flex items-center justify-between">
+                <div key={idOf(s) || Math.random()} className="py-2 flex items-center justify-between">
                   <div className="min-w-0">
-                    <div className="font-medium truncate">
-                      {titleOf(s.movie || { title: s.movieTitle })}
-                    </div>
+                    <div className="font-medium truncate">{titleOf(s.movie || { title: s.movieTitle })}</div>
                     <div className="text-xs text-slate-600">
                       {whenOf(s) ? new Date(whenOf(s)).toLocaleString() : "—"}
                     </div>
