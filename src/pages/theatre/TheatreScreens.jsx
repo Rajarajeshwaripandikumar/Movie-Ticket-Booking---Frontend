@@ -1,5 +1,8 @@
-// src/pages/theatre/TheatreScreens.jsx — resilient + CRUD
-import React, { useEffect, useState } from "react";
+// src/pages/theatre/TheatreScreens.jsx — resilient + CRUD (polished)
+// - defensive probing endpoints
+// - optimistic updates with rollback
+// - loading UX, validation, accessibility
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import api from "../../api/api";
 import { useAuth } from "../../context/AuthContext";
 import { Navigate } from "react-router-dom";
@@ -8,40 +11,45 @@ const Card = ({ children, className = "" }) => (
   <div className={`bg-white border border-slate-200 rounded-2xl shadow-sm p-4 ${className}`}>{children}</div>
 );
 
-// helpers
+/* ------------------------------ helpers ------------------------------ */
 const A = (x) => (Array.isArray(x) ? x : Array.isArray(x?.items) ? x.items : Array.isArray(x?.data) ? x.data : []);
 const idOf = (x) => x?._id ?? x?.id ?? x?.uuid ?? "";
-const rowsOf = (x) => x?.rows ?? x?.seatRows ?? x?.numRows ?? "";
-const colsOf = (x) => x?.cols ?? x?.columns ?? x?.seatCols ?? x?.numCols ?? "";
+const rowsOf = (x) => x?.rows ?? x?.seatRows ?? x?.numRows ?? x?.rowsCount ?? "";
+const colsOf = (x) => x?.cols ?? x?.columns ?? x?.seatCols ?? x?.numCols ?? x?.colsCount ?? "";
 
 function decodeJwt(t) {
   try {
-    return JSON.parse(atob(String(t ?? "").split(".")[1])) || {};
+    if (!t) return {};
+    const p = String(t).split(".")[1];
+    return p ? JSON.parse(atob(p)) : {};
   } catch {
     return {};
   }
 }
 
-async function tryGet(endpoints) {
+async function tryGet(endpoints = []) {
   for (const ep of endpoints.filter(Boolean)) {
     try {
       const r = await api.get(ep);
       return r?.data ?? r;
-    } catch {}
+    } catch {
+      /* continue */
+    }
   }
   return undefined;
 }
-async function tryPost(endpoints, body) {
+async function tryPost(endpoints = [], body = {}) {
   for (const ep of endpoints.filter(Boolean)) {
     try {
       const r = await api.post(ep, body);
       return r?.data ?? r;
-    } catch {}
+    } catch {
+      /* continue */
+    }
   }
   throw new Error("Create endpoint not found");
 }
-async function tryPatchPut(endpoints, body) {
-  // try PATCH then PUT
+async function tryPatchPut(endpoints = [], body = {}) {
   for (const ep of endpoints.filter(Boolean)) {
     try {
       const r = await api.patch(ep, body);
@@ -50,24 +58,29 @@ async function tryPatchPut(endpoints, body) {
       try {
         const r2 = await api.put(ep, body);
         return r2?.data ?? r2;
-      } catch {}
+      } catch {
+        /* continue */
+      }
     }
   }
   throw new Error("Update endpoint not found");
 }
-async function tryDelete(endpoints) {
+async function tryDelete(endpoints = []) {
   for (const ep of endpoints.filter(Boolean)) {
     try {
       await api.delete(ep);
       return true;
-    } catch {}
+    } catch {
+      /* continue */
+    }
   }
   throw new Error("Delete endpoint not found");
 }
 
+/* ------------------------------ Component ------------------------------ */
 export default function TheatreScreens() {
   const { token, adminToken, user, isTheatreAdmin } = useAuth() || {};
-  const activeToken = adminToken || token || null; // ✅ use admin token if present
+  const activeToken = adminToken || token || null;
 
   const payload = decodeJwt(activeToken);
   const theatreId =
@@ -91,17 +104,26 @@ export default function TheatreScreens() {
   const [editRows, setEditRows] = useState("");
   const [editCols, setEditCols] = useState("");
 
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
   const [msgType, setMsgType] = useState("info");
 
-  useEffect(() => {
-    if (!activeToken || !isTheatreAdmin || !theatreId) return;
-    loadScreens();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeToken, isTheatreAdmin, theatreId]);
+  const mountedRef = useRef(true);
 
-  async function loadScreens() {
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const loadScreens = useCallback(async () => {
+    if (!activeToken || !isTheatreAdmin || !theatreId) {
+      setScreens([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setMsg("");
     try {
@@ -112,58 +134,95 @@ export default function TheatreScreens() {
           `/admin/theaters/${theatreId}/screens?ts=${ts}`,
           `/theaters/${theatreId}/screens?ts=${ts}`,
         ])) || [];
+
       const list = A(data).map((s) => ({
         ...s,
         _id: idOf(s),
         rows: rowsOf(s),
         cols: colsOf(s),
       }));
-      setScreens(list);
+      if (mountedRef.current) setScreens(list);
     } catch (err) {
       console.error("loadScreens error", err);
-      setMsgType("error");
-      setMsg("Failed to load screens");
-      setScreens([]);
+      if (mountedRef.current) {
+        setMsgType("error");
+        setMsg("Failed to load screens");
+        setScreens([]);
+      }
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
-  }
+  }, [activeToken, isTheatreAdmin, theatreId]);
 
-  async function createScreen(e) {
-    e?.preventDefault();
-    if (!name || !rows || !cols) {
-      setMsgType("error");
-      setMsg("Name, rows and cols are required.");
-      return;
-    }
-    try {
-      const body = { name: name.trim(), rows: Number(rows), cols: Number(cols), columns: Number(cols) };
-      await tryPost(
-        [
-          `/theatre/screens`, // body may need theatreId on some backends
-          `/admin/theaters/${theatreId}/screens`,
-          `/theaters/${theatreId}/screens`,
-        ],
-        { ...body, theatreId, theaterId: theatreId }
-      );
-      setName("");
-      setRows(8);
-      setCols(12);
-      setMsgType("success");
-      setMsg("Screen created");
-      await loadScreens();
-    } catch (err) {
-      console.error("createScreen err", err);
-      setMsgType("error");
-      setMsg(err?.response?.data?.message || err.message || "Failed to create screen");
-    }
-  }
+  useEffect(() => {
+    loadScreens();
+  }, [loadScreens]);
+
+  const resetFlash = useCallback(() => {
+    setTimeout(() => {
+      if (mountedRef.current) setMsg("");
+    }, 3000);
+  }, []);
+
+  const createScreen = useCallback(
+    async (e) => {
+      e?.preventDefault();
+      if (saving) return;
+      // validation
+      if (!name?.trim() || !Number(rows) || !Number(cols)) {
+        setMsgType("error");
+        setMsg("Name, rows and cols are required.");
+        resetFlash();
+        return;
+      }
+
+      setSaving(true);
+      setMsg("");
+      // optimistic: append provisional item
+      const provisional = {
+        _id: `tmp-${Date.now()}`,
+        name: name.trim(),
+        rows: Number(rows),
+        cols: Number(cols),
+        provisional: true,
+      };
+      const prev = [...screens];
+      setScreens((s) => [provisional, ...s]);
+
+      try {
+        await tryPost(
+          [
+            `/theatre/screens`,
+            `/admin/theaters/${theatreId}/screens`,
+            `/theaters/${theatreId}/screens`,
+          ],
+          { name: name.trim(), rows: Number(rows), cols: Number(cols), theatreId, theaterId: theatreId }
+        );
+        setName("");
+        setRows(8);
+        setCols(12);
+        setMsgType("success");
+        setMsg("Screen created");
+        await loadScreens();
+      } catch (err) {
+        console.error("createScreen err", err);
+        setScreens(prev);
+        setMsgType("error");
+        setMsg(err?.response?.data?.message || err.message || "Failed to create screen");
+      } finally {
+        setSaving(false);
+        resetFlash();
+      }
+    },
+    [name, rows, cols, theatreId, screens, saving, loadScreens, resetFlash]
+  );
 
   function startEdit(s) {
     setEditId(s._id);
     setEditName(s.name || "");
     setEditRows(rowsOf(s) || "");
     setEditCols(colsOf(s) || "");
+    setMsg("");
   }
   function cancelEdit() {
     setEditId("");
@@ -172,27 +231,29 @@ export default function TheatreScreens() {
     setEditCols("");
   }
 
-  async function saveEdit() {
+  const saveEdit = useCallback(async () => {
+    if (saving) return;
     if (!editId) return;
-    if (!editName || !editRows || !editCols) {
+    if (!editName?.trim() || !Number(editRows) || !Number(editCols)) {
       setMsgType("error");
       setMsg("All fields required to update.");
+      resetFlash();
       return;
     }
+
+    setSaving(true);
+    setMsg("");
+    const prev = [...screens];
+    setScreens((xs) => xs.map((x) => ((x._id || x.id) === editId ? { ...x, name: editName.trim(), rows: Number(editRows), cols: Number(editCols) } : x)));
+
     try {
-      const body = {
-        name: editName.trim(),
-        rows: Number(editRows),
-        cols: Number(editCols),
-        columns: Number(editCols),
-      };
       await tryPatchPut(
         [
           `/theatre/screens/${editId}`,
           `/admin/theaters/${theatreId}/screens/${editId}`,
           `/theaters/${theatreId}/screens/${editId}`,
         ],
-        body
+        { name: editName.trim(), rows: Number(editRows), cols: Number(editCols), columns: Number(editCols) }
       );
       setMsgType("success");
       setMsg("Screen updated");
@@ -200,31 +261,49 @@ export default function TheatreScreens() {
       await loadScreens();
     } catch (err) {
       console.error("saveEdit err", err);
+      setScreens(prev);
       setMsgType("error");
       setMsg(err?.response?.data?.message || err.message || "Failed to update screen");
+    } finally {
+      setSaving(false);
+      resetFlash();
     }
-  }
+  }, [editId, editName, editRows, editCols, theatreId, screens, loadScreens, saving, resetFlash]);
 
-  async function removeScreen(id) {
-    if (!id) return;
-    if (!window.confirm("Delete this screen?")) return;
-    try {
-      await tryDelete([
-        `/theatre/screens/${id}`,
-        `/admin/theaters/${theatreId}/screens/${id}`,
-        `/theaters/${theatreId}/screens/${id}`,
-      ]);
-      setMsgType("success");
-      setMsg("Screen deleted");
-      await loadScreens();
-    } catch (err) {
-      console.error("delete err", err);
-      setMsgType("error");
-      setMsg(err?.response?.data?.message || err.message || "Failed to delete screen");
-    }
-  }
+  const removeScreen = useCallback(
+    async (id) => {
+      if (saving) return;
+      if (!id) return;
+      if (!window.confirm("Delete this screen? This cannot be undone.")) return;
 
-  // ✅ Proper guards
+      setSaving(true);
+      setMsg("");
+      const prev = [...screens];
+      setScreens((s) => s.filter((x) => (x._id || x.id) !== id));
+
+      try {
+        await tryDelete([
+          `/theatre/screens/${id}`,
+          `/admin/theaters/${theatreId}/screens/${id}`,
+          `/theaters/${theatreId}/screens/${id}`,
+        ]);
+        setMsgType("success");
+        setMsg("Screen deleted");
+        await loadScreens();
+      } catch (err) {
+        console.error("delete err", err);
+        setScreens(prev);
+        setMsgType("error");
+        setMsg(err?.response?.data?.message || err.message || "Failed to delete screen");
+      } finally {
+        setSaving(false);
+        resetFlash();
+      }
+    },
+    [screens, theatreId, loadScreens, saving, resetFlash]
+  );
+
+  // Guards
   if (!activeToken) return <Navigate to="/admin/login" replace />;
   if (!isTheatreAdmin) {
     return <div className="p-8 text-center text-rose-600 font-semibold">Access Denied</div>;
@@ -247,44 +326,57 @@ export default function TheatreScreens() {
                 ? "bg-emerald-50 border-emerald-200 text-emerald-700"
                 : "bg-blue-50 border-blue-200 text-blue-700"
             }`}
+            role="status"
+            aria-live="polite"
           >
             {msg}
           </Card>
         )}
 
         <Card>
-          <form onSubmit={createScreen} className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+          <form onSubmit={createScreen} className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end" aria-label="Create screen form">
             <div>
-              <label className="text-xs font-semibold">Name</label>
+              <label className="text-xs font-semibold block">Name</label>
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 className="w-full border p-2 rounded-xl"
                 placeholder="e.g. Screen 1"
+                aria-label="Screen name"
               />
             </div>
             <div>
-              <label className="text-xs font-semibold">Rows</label>
+              <label className="text-xs font-semibold block">Rows</label>
               <input
                 type="number"
                 min="1"
                 value={rows}
                 onChange={(e) => setRows(e.target.value)}
                 className="w-full border p-2 rounded-xl"
+                aria-label="Number of rows"
               />
             </div>
             <div>
-              <label className="text-xs font-semibold">Cols</label>
+              <label className="text-xs font-semibold block">Cols</label>
               <input
                 type="number"
                 min="1"
                 value={cols}
                 onChange={(e) => setCols(e.target.value)}
                 className="w-full border p-2 rounded-xl"
+                aria-label="Number of columns"
               />
             </div>
+
             <div className="sm:col-span-3 mt-2">
-              <button className="bg-[#0071DC] text-white rounded-full px-4 py-2">Create Screen</button>
+              <button
+                type="submit"
+                className="bg-[#0071DC] text-white rounded-full px-4 py-2 disabled:opacity-50"
+                disabled={saving}
+                aria-disabled={saving}
+              >
+                {saving ? "Saving…" : "Create Screen"}
+              </button>
             </div>
           </form>
         </Card>
@@ -292,7 +384,10 @@ export default function TheatreScreens() {
         <Card>
           <h3 className="font-semibold mb-3">Existing Screens</h3>
           {loading ? (
-            <div>Loading...</div>
+            <div className="space-y-2">
+              <div className="h-3 w-1/3 bg-slate-200 rounded animate-pulse" />
+              <div className="h-3 w-1/2 bg-slate-200 rounded animate-pulse" />
+            </div>
           ) : screens.length === 0 ? (
             <div className="text-sm text-slate-600">No screens found.</div>
           ) : (
@@ -314,12 +409,14 @@ export default function TheatreScreens() {
                           <button
                             onClick={() => startEdit(s)}
                             className="px-3 py-1 rounded-full border border-slate-300"
+                            aria-label={`Edit ${s.name}`}
                           >
                             Edit
                           </button>
                           <button
                             onClick={() => removeScreen(sid)}
                             className="px-3 py-1 rounded-full border border-rose-200 text-rose-700"
+                            aria-label={`Delete ${s.name}`}
                           >
                             Delete
                           </button>
@@ -328,7 +425,7 @@ export default function TheatreScreens() {
                     ) : (
                       <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
                         <div>
-                          <label className="text-xs font-semibold">Name</label>
+                          <label className="text-xs font-semibold block">Name</label>
                           <input
                             value={editName}
                             onChange={(e) => setEditName(e.target.value)}
@@ -336,7 +433,7 @@ export default function TheatreScreens() {
                           />
                         </div>
                         <div>
-                          <label className="text-xs font-semibold">Rows</label>
+                          <label className="text-xs font-semibold block">Rows</label>
                           <input
                             type="number"
                             min="1"
@@ -346,7 +443,7 @@ export default function TheatreScreens() {
                           />
                         </div>
                         <div>
-                          <label className="text-xs font-semibold">Cols</label>
+                          <label className="text-xs font-semibold block">Cols</label>
                           <input
                             type="number"
                             min="1"
@@ -358,9 +455,10 @@ export default function TheatreScreens() {
                         <div className="flex gap-2">
                           <button
                             onClick={saveEdit}
-                            className="px-4 py-2 rounded-full bg-[#0071DC] text-white"
+                            disabled={saving}
+                            className="px-4 py-2 rounded-full bg-[#0071DC] text-white disabled:opacity-50"
                           >
-                            Save
+                            {saving ? "Saving…" : "Save"}
                           </button>
                           <button
                             onClick={cancelEdit}
