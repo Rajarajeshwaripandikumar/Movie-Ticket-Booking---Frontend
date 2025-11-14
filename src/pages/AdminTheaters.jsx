@@ -1,17 +1,28 @@
-// src/pages/AdminTheaters.jsx — uses /theaters/admin/theaters first, robust fallbacks
+// src/pages/AdminTheaters.jsx — updated with better endpoint fallbacks & logging
 
 import { useEffect, useMemo, useState } from "react";
-import api from "../api/api";
+import api, { API_DEBUG } from "../api/api";          // ⬅️ import API_DEBUG too
 import { useAuth } from "../context/AuthContext";
 import {
-  Building2, MapPin, Home, ListChecks,
-  Image as ImageIcon, RefreshCcw, PlusCircle,
-  Trash2, X, Check, PencilLine,
+  Building2,
+  MapPin,
+  Home,
+  ListChecks,
+  Image as ImageIcon,
+  RefreshCcw,
+  PlusCircle,
+  Trash2,
+  X,
+  Check,
+  PencilLine,
 } from "lucide-react";
 
 /* ----------------------------- UI Primitives ------------------------------ */
 const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
-  <Tag className={`bg-white border border-slate-200 rounded-2xl shadow-sm ${className}`} {...rest}>
+  <Tag
+    className={`bg-white border border-slate-200 rounded-2xl shadow-sm ${className}`}
+    {...rest}
+  >
     {children}
   </Tag>
 );
@@ -20,10 +31,17 @@ function Field({ as = "input", icon: Icon, className = "", label, ...props }) {
   const C = as;
   return (
     <div>
-      {label && <label className="block text-[12px] font-semibold text-slate-600 mb-1">{label}</label>}
+      {label && (
+        <label className="block text-[12px] font-semibold text-slate-600 mb-1">
+          {label}
+        </label>
+      )}
       <div className="flex items-center gap-2 border border-slate-300 rounded-xl bg-white px-3 py-2 focus-within:ring-2 focus-within:ring-[#0071DC]">
         {Icon && <Icon className="h-4 w-4 text-slate-700" />}
-        <C {...props} className={`w-full outline-none bg-transparent text-sm ${className}`} />
+        <C
+          {...props}
+          className={`w-full outline-none bg-transparent text-sm ${className}`}
+        />
       </div>
     </div>
   );
@@ -59,7 +77,14 @@ const DEFAULT_IMG =
   );
 
 const parseAmenities = (raw) =>
-  !raw ? [] : Array.isArray(raw) ? raw : String(raw).split(",").map((s) => s.trim()).filter(Boolean);
+  !raw
+    ? []
+    : Array.isArray(raw)
+    ? raw
+    : String(raw)
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
 
 const normalizeTheater = (t = {}) => ({
   ...t,
@@ -106,46 +131,96 @@ export default function AdminTheaters() {
     loadTheaters();
     const t = setTimeout(loadTheaters, 250);
     return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, role]);
 
   async function loadTheaters() {
     setMsg("");
     setMsgType("info");
     setListLoading(true);
+
     try {
-      // Prefer the new admin endpoint for both SUPER_ADMIN and THEATRE_ADMIN.
-      // Fall back to legacy routes if needed.
+      // 🔥 Expanded list of possible endpoints – covers the common spellings
+      //    and admin/superadmin variants. We stop on the first that returns
+      //    a non-empty list.
       const order = [
-        "/theaters/admin/theaters",   // ✅ your new backend list
-        "/theaters/admin/list",       // alias
+        "/theaters/admin/theaters",
+        "/theatres/admin/theatres",
+        "/theaters/admin/list",
+        "/theatres/admin/list",
+        "/admin/theaters",
+        "/admin/theatres",
         isSuperAdmin ? "/superadmin/theaters" : "/theaters/mine",
-        isSuperAdmin ? "/theaters/mine" : "/superadmin/theaters",
+        isSuperAdmin ? "/superadmin/theatres" : "/theatres/mine",
+        "/theaters",
+        "/theatres",
+        "/theaters/mine",
+        "/theatres/mine",
       ];
 
       let arr = [];
+
       for (const path of order) {
         try {
-          const resp = await api.getFresh(path);
+          if (API_DEBUG) console.debug("[AdminTheaters] trying", path);
+          const resp = await api.getFresh(path); // returns res.data
+
           const tmp =
-            resp?.data?.theaters ??
-            resp?.data ??
-            resp?.theaters ??
-            resp ?? [];
+            (Array.isArray(resp) && resp) ||
+            resp?.theaters ||
+            resp?.data?.theaters ||
+            resp?.data ||
+            resp?.theatres ||
+            resp?.theatre ||
+            resp ||
+            [];
+
           if (Array.isArray(tmp) && tmp.length) {
             arr = tmp;
+            if (API_DEBUG)
+              console.debug(
+                "[AdminTheaters] success at",
+                path,
+                "count:",
+                tmp.length
+              );
             break;
+          } else if (API_DEBUG) {
+            console.debug(
+              "[AdminTheaters] no items at",
+              path,
+              "resp shape:",
+              resp
+            );
           }
-        } catch {
-          // keep trying next option
+        } catch (err) {
+          if (API_DEBUG) {
+            console.warn(
+              "[AdminTheaters] error at",
+              path,
+              err?.response?.status || err?.message || err
+            );
+          }
+          // continue to next candidate
         }
       }
 
       setTheaters((arr || []).map(normalizeTheater));
+
+      if ((!arr || arr.length === 0) && API_DEBUG) {
+        console.warn(
+          "[AdminTheaters] all theater endpoints tried but no data found"
+        );
+      }
     } catch (e) {
-      setMsg(e?.response?.data?.message || "⚠️ Failed to load theaters");
+      if (API_DEBUG) console.error("[AdminTheaters] load failed:", e);
+      setMsg(
+        e?.response?.data?.message || "⚠️ Failed to load theaters. Check API."
+      );
       setMsgType("error");
+    } finally {
+      setListLoading(false);
     }
-    setListLoading(false);
   }
 
   function resetForm() {
@@ -189,11 +264,13 @@ export default function AdminTheaters() {
       resetForm();
       setMsg("✅ Theater created!");
       setMsgType("success");
-    } catch {
+    } catch (err) {
+      if (API_DEBUG) console.error("[AdminTheaters] create failed:", err);
       setMsg("❌ Create failed");
       setMsgType("error");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   async function updateTheaterById() {
@@ -212,11 +289,13 @@ export default function AdminTheaters() {
       setTheaters((t) => t.map((x) => (x._id === selectedId ? upd : x)));
       setMsg("✅ Updated!");
       setMsgType("success");
-    } catch {
+    } catch (err) {
+      if (API_DEBUG) console.error("[AdminTheaters] update failed:", err);
       setMsg("❌ Update failed");
       setMsgType("error");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   async function deleteTheater(id) {
@@ -233,14 +312,21 @@ export default function AdminTheaters() {
       if (selectedId === id) resetForm();
       setMsg("🗑️ Deleted");
       setMsgType("success");
-    } catch {
+    } catch (err) {
+      if (API_DEBUG) console.error("[AdminTheaters] delete failed:", err);
       setMsg("❌ Delete failed");
       setMsgType("error");
     }
   }
 
-  const names = useMemo(() => [...new Set(theaters.map((t) => t.name))], [theaters]);
-  const cities = useMemo(() => [...new Set(theaters.map((t) => t.city))], [theaters]);
+  const names = useMemo(
+    () => [...new Set(theaters.map((t) => t.name))],
+    [theaters]
+  );
+  const cities = useMemo(
+    () => [...new Set(theaters.map((t) => t.city))],
+    [theaters]
+  );
   const addresses = useMemo(
     () => [...new Set(theaters.map((t) => t.address).filter(Boolean))],
     [theaters]
@@ -297,13 +383,19 @@ export default function AdminTheaters() {
             </h2>
 
             <form onSubmit={createTheater} className="space-y-4">
-              {selectedId && <p className="text-xs text-slate-600">Editing: {selectedId}</p>}
+              {selectedId && (
+                <p className="text-xs text-slate-600">Editing: {selectedId}</p>
+              )}
 
               <Field
                 as="select"
                 label="Select Existing Name"
                 value={names.includes(name) ? name : ""}
-                onChange={(e) => fillFromTheater(theaters.find((t) => t.name === e.target.value))}
+                onChange={(e) =>
+                  fillFromTheater(
+                    theaters.find((t) => t.name === e.target.value)
+                  )
+                }
                 icon={Building2}
               >
                 <option value="">—</option>
@@ -324,7 +416,11 @@ export default function AdminTheaters() {
                 as="select"
                 label="Select Existing City"
                 value={cities.includes(city) ? city : ""}
-                onChange={(e) => fillFromTheater(theaters.find((t) => t.city === e.target.value))}
+                onChange={(e) =>
+                  fillFromTheater(
+                    theaters.find((t) => t.city === e.target.value)
+                  )
+                }
                 icon={MapPin}
               >
                 <option value="">—</option>
@@ -333,13 +429,23 @@ export default function AdminTheaters() {
                 ))}
               </Field>
 
-              <Field label="City" value={city} onChange={(e) => setCity(e.target.value)} icon={MapPin} required />
+              <Field
+                label="City"
+                value={city}
+                onChange={(e) => setCity(e.target.value)}
+                icon={MapPin}
+                required
+              />
 
               <Field
                 as="select"
                 label="Select Existing Address"
                 value={addresses.includes(address) ? address : ""}
-                onChange={(e) => fillFromTheater(theaters.find((t) => t.address === e.target.value))}
+                onChange={(e) =>
+                  fillFromTheater(
+                    theaters.find((t) => t.address === e.target.value)
+                  )
+                }
                 icon={Home}
               >
                 <option value="">—</option>
@@ -348,14 +454,29 @@ export default function AdminTheaters() {
                 ))}
               </Field>
 
-              <Field label="Address" value={address} onChange={(e) => setAddress(e.target.value)} icon={Home} />
+              <Field
+                label="Address"
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+                icon={Home}
+              />
 
-              <label className="block text-xs font-semibold text-slate-600">Amenities</label>
+              <label className="block text-xs font-semibold text-slate-600">
+                Amenities
+              </label>
               <div className="flex flex-wrap gap-2">
                 {amenitiesList.map((a) => (
-                  <span key={a} className="px-2 py-1 text-xs border rounded-full flex items-center gap-1">
+                  <span
+                    key={a}
+                    className="px-2 py-1 text-xs border rounded-full flex items-center gap-1"
+                  >
                     <Check className="h-3 w-3 text-emerald-600" /> {a}
-                    <X className="h-3 w-3 cursor-pointer" onClick={() => setAmenitiesList(amenitiesList.filter((x) => x !== a))} />
+                    <X
+                      className="h-3 w-3 cursor-pointer"
+                      onClick={() =>
+                        setAmenitiesList(amenitiesList.filter((x) => x !== a))
+                      }
+                    />
                   </span>
                 ))}
               </div>
@@ -368,7 +489,9 @@ export default function AdminTheaters() {
                   if (e.key === "Enter") {
                     e.preventDefault();
                     const val = amenityInput.trim();
-                    if (val && !amenitiesList.includes(val)) setAmenitiesList([...amenitiesList, val]);
+                    if (val && !amenitiesList.includes(val)) {
+                      setAmenitiesList([...amenitiesList, val]);
+                    }
                     setAmenityInput("");
                   }
                 }}
@@ -377,8 +500,19 @@ export default function AdminTheaters() {
 
               <label className="text-xs font-semibold">Poster (UI only)</label>
               <div className="flex gap-3 items-center">
-                <img key={previewKey} src={preview || DEFAULT_IMG} className="w-20 h-20 rounded-xl object-cover border" />
-                <input type="file" accept="image/*" className="hidden" id="img" onChange={onPickFile} />
+                <img
+                  key={previewKey}
+                  src={preview || DEFAULT_IMG}
+                  className="w-20 h-20 rounded-xl object-cover border"
+                  onError={(e) => (e.currentTarget.src = DEFAULT_IMG)}
+                />
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  id="img"
+                  onChange={onPickFile}
+                />
                 <label htmlFor="img">
                   <SecondaryBtn>
                     <ImageIcon className="h-4 w-4" /> Choose
@@ -394,6 +528,7 @@ export default function AdminTheaters() {
                   onClick={updateTheaterById}
                   disabled={!selectedId || loading || !isSuperAdmin}
                   className="bg-[#0A66C2] hover:bg-[#0956A3]"
+                  type="button"
                 >
                   <PencilLine className="h-4 w-4" /> Update
                 </PrimaryBtn>
@@ -413,7 +548,9 @@ export default function AdminTheaters() {
             {listLoading ? (
               <div className="text-sm text-slate-500">Loading theaters…</div>
             ) : theaters.length === 0 ? (
-              <div className="text-sm text-slate-500">No theaters found.</div>
+              <div className="text-sm text-slate-500">
+                No theaters found. Check API routes / role.
+              </div>
             ) : (
               <ul className="space-y-3 max-h-[60vh] overflow-auto pr-1">
                 {theaters.map((t) => (
