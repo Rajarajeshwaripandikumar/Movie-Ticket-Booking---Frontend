@@ -1,4 +1,6 @@
 // src/pages/AdminScreens.jsx — Walmart Style (clean, rounded, blue accents)
+// Updated: tolerate adminToken, use auth.initialized, endpoint fallbacks, debug logs
+
 import { useEffect, useMemo, useState } from "react";
 import api from "../api/api";
 import { useAuth } from "../context/AuthContext";
@@ -72,11 +74,31 @@ const normalizeScreen = (s = {}) => {
   return { ...s, rows: Number.isFinite(rows) ? rows : 0, cols: Number.isFinite(cols) ? cols : 0 };
 };
 
+/**
+ * Try to load screens with endpoint fallbacks:
+ * prefer /admin/theaters/:id/screens then /theaters/:id/screens
+ */
 async function fetchScreensForTheater(theaterId) {
-  // <-- corrected endpoint
-  const { data } = await api.get(`/theaters/${theaterId}/screens`);
-  const arr = Array.isArray(data) ? data : (data?.data || []);
-  return arr.map(normalizeScreen);
+  const candidates = [
+    `/admin/theaters/${theaterId}/screens`,
+    `/admin/theatres/${theaterId}/screens`,
+    `/theaters/${theaterId}/screens`,
+    `/theatres/${theaterId}/screens`,
+  ];
+  let lastErr = null;
+  for (const path of candidates) {
+    try {
+      const res = await api.get(path, { params: { _ts: Date.now() } });
+      const data = res?.data;
+      const arr = Array.isArray(data) ? data : data?.data || data?.screens || data?.items || [];
+      if (Array.isArray(arr)) return arr.map(normalizeScreen);
+    } catch (err) {
+      lastErr = err;
+      // try next
+    }
+  }
+  // rethrow last error so caller can react
+  throw lastErr || new Error("Failed to fetch screens");
 }
 
 /* Canonical role mapper */
@@ -93,13 +115,21 @@ const canonRole = (r = "") => {
 export default function AdminScreens() {
   const auth = useAuth() || {};
 
-  const token = auth.token;
-  const loading = auth.loading ?? !auth.initialized;
-  const isLoggedIn = auth.isLoggedIn ?? auth.isAuthenticated;
-  const rawRoles = auth.roles || auth.user?.roles || (auth.role ? [auth.role] : []);
+  // IMPORTANT: prefer adminToken when present
+  const token = auth.adminToken || auth.token || "";
+  // use the AuthContext's initialized flag
+  const loading = auth.initialized === false;
+  const isLoggedIn = !!(auth.isLoggedIn || token);
 
-  const roles = useMemo(() => rawRoles.map(canonRole), [rawRoles]);
+  // roles may be in auth.roles (array) or auth.role
+  const rawRoles = auth.roles || auth.user?.roles || (auth.role ? [auth.role] : []);
+  const roles = useMemo(() => (Array.isArray(rawRoles) ? rawRoles.map(canonRole) : []), [rawRoles]);
   const isAdminLike = roles.some((r) => ["SUPER_ADMIN", "ADMIN", "THEATRE_ADMIN"].includes(r));
+
+  // debug to help reason about redirects
+  // (leave in while you debug; remove later)
+  // eslint-disable-next-line no-console
+  console.debug("[AdminScreens] auth tokens:", { tokenPresent: !!token, role: auth.role, roles, initialized: auth.initialized });
 
   if (loading) return null;
   if (!token || !isLoggedIn) return <Navigate to="/admin/login" replace />;
@@ -128,13 +158,42 @@ export default function AdminScreens() {
     }
   }, [isTheatreAdmin, theatreIdFromJWT, selectedTheater]);
 
-  /* Load all theaters */
+  /* Load all theaters — with endpoint fallbacks */
   useEffect(() => {
     (async () => {
       try {
-        // <-- corrected endpoint
-        const { data } = await api.get(`/theaters`);
-        const list = Array.isArray(data) ? data : data?.data || [];
+        const candidates = [
+          "/admin/theaters",
+          "/admin/theatres",
+          "/theaters",
+          "/theatres",
+          "/theaters/mine",
+          "/theatres/mine",
+        ];
+        let list = [];
+        let lastErr = null;
+        for (const p of candidates) {
+          try {
+            const res = await api.get(p, { params: { _ts: Date.now() } });
+            const data = res?.data;
+            const arr =
+              (Array.isArray(data) && data) ||
+              data?.data ||
+              data?.theaters ||
+              data?.items ||
+              data?.results ||
+              data?.theatres ||
+              [];
+            if (Array.isArray(arr)) {
+              list = arr;
+              break;
+            }
+          } catch (err) {
+            lastErr = err;
+            // continue
+          }
+        }
+        if (!Array.isArray(list)) list = [];
         setTheaters(list);
       } catch {
         setMsgType("error");
@@ -157,11 +216,14 @@ export default function AdminScreens() {
     (async () => {
       try {
         setLoadingScreens(true);
+        setMsg("");
         const list = await fetchScreensForTheater(selectedTheater);
         setScreens(list);
-      } catch {
+      } catch (err) {
         setMsg("Could not load screens.");
         setMsgType("error");
+        // eslint-disable-next-line no-console
+        console.debug("[AdminScreens] fetchScreens error:", err?.message || err);
       } finally {
         setLoadingScreens(false);
       }
@@ -177,7 +239,7 @@ export default function AdminScreens() {
       return;
     }
 
-    const s = screens.find((x) => x._id === selectedScreen);
+    const s = screens.find((x) => x && (x._id === selectedScreen || x.id === selectedScreen));
     if (s) {
       setScreenName(S(s.name));
       setRows(S(s.rows));
@@ -206,11 +268,34 @@ export default function AdminScreens() {
 
     try {
       if (selectedScreen === NEW) {
-        // <-- corrected endpoint
-        await api.post(`/theaters/${selectedTheater}/screens`, body);
+        // try admin path first then public
+        const candidates = [
+          `/admin/theaters/${selectedTheater}/screens`,
+          `/theaters/${selectedTheater}/screens`,
+        ];
+        let ok = false;
+        for (const p of candidates) {
+          try {
+            await api.post(p, body);
+            ok = true;
+            break;
+          } catch {}
+        }
+        if (!ok) throw new Error("Create screen failed");
       } else {
-        // <-- corrected endpoint
-        await api.patch(`/theaters/${selectedTheater}/screens/${selectedScreen}`, body);
+        const candidates = [
+          `/admin/theaters/${selectedTheater}/screens/${selectedScreen}`,
+          `/theaters/${selectedTheater}/screens/${selectedScreen}`,
+        ];
+        let ok = false;
+        for (const p of candidates) {
+          try {
+            await api.patch(p, body);
+            ok = true;
+            break;
+          } catch {}
+        }
+        if (!ok) throw new Error("Update screen failed");
       }
 
       const updated = await fetchScreensForTheater(selectedTheater);
@@ -222,9 +307,11 @@ export default function AdminScreens() {
       setScreenName("");
       setRows("");
       setCols("");
-    } catch {
+    } catch (err) {
       setMsg("Save failed.");
       setMsgType("error");
+      // eslint-disable-next-line no-console
+      console.debug("[AdminScreens] save error:", err?.message || err);
     } finally {
       setLoadingAction(false);
     }
@@ -234,16 +321,30 @@ export default function AdminScreens() {
   async function deleteTheater(id) {
     if (!confirm("Delete this theater?")) return;
     try {
-      // <-- corrected endpoint
-      await api.delete(`/theaters/${id}`);
-      setTheaters((prev) => prev.filter((t) => t._id !== id));
+      const candidates = [
+        `/admin/theaters/${id}`,
+        `/theaters/${id}`,
+      ];
+      let ok = false;
+      for (const p of candidates) {
+        try {
+          await api.delete(p);
+          ok = true;
+          break;
+        } catch {}
+      }
+      if (!ok) throw new Error("Delete failed on all paths");
+
+      setTheaters((prev) => prev.filter((t) => t._id !== id && t.id !== id));
       if (selectedTheater === id) {
         setSelectedTheater("");
         setScreens([]);
       }
-    } catch {
+    } catch (err) {
       setMsg("Failed to delete theater.");
       setMsgType("error");
+      // eslint-disable-next-line no-console
+      console.debug("[AdminScreens] delete error:", err?.message || err);
     }
   }
 
@@ -265,15 +366,32 @@ export default function AdminScreens() {
             <SecondaryBtn
               onClick={async () => {
                 try {
-                  // <-- corrected endpoint
-                  const { data } = await api.get(`/theaters`);
-                  const list = Array.isArray(data) ? data : data?.data || [];
-                  setTheaters(list);
-                } catch {}
+                  // refresh theaters with fallback
+                  const candidates = [
+                    "/admin/theaters",
+                    "/theaters",
+                    "/theatres",
+                    "/admin/theatres",
+                  ];
+                  for (const p of candidates) {
+                    try {
+                      const { data } = await api.get(p, { params: { _ts: Date.now() } });
+                      const list = Array.isArray(data) ? data : data?.data || [];
+                      if (Array.isArray(list)) {
+                        setTheaters(list);
+                        break;
+                      }
+                    } catch {}
+                  }
+                } catch (err) {
+                  // ignore
+                }
 
                 if (selectedTheater) {
-                  const list = await fetchScreensForTheater(selectedTheater);
-                  setScreens(list);
+                  try {
+                    const list = await fetchScreensForTheater(selectedTheater);
+                    setScreens(list);
+                  } catch {}
                 }
               }}
             >
@@ -312,7 +430,7 @@ export default function AdminScreens() {
             >
               <option value="">-- Choose a theater --</option>
               {theaters.map((t) => (
-                <option key={t._id} value={t._id}>
+                <option key={t._id || t.id} value={t._id || t.id}>
                   {t.name} — {t.city}
                 </option>
               ))}
@@ -333,7 +451,7 @@ export default function AdminScreens() {
                 {screens.map((s) => {
                   const n = normalizeScreen(s);
                   return (
-                    <option key={s._id} value={s._id}>
+                    <option key={s._id || s.id} value={s._id || s.id}>
                       {s.name} ({n.rows}×{n.cols})
                     </option>
                   );
@@ -404,7 +522,7 @@ export default function AdminScreens() {
           ) : (
             <ul className="grid gap-4 sm:grid-cols-2">
               {theaters.map((t) => (
-                <li key={t._id}>
+                <li key={t._id || t.id}>
                   <Card className="p-4">
                     <div className="flex justify-between gap-3">
                       <div>
@@ -418,7 +536,7 @@ export default function AdminScreens() {
                         <PrimaryBtn
                           className="px-3 py-1 text-sm"
                           onClick={() => {
-                            setSelectedTheater(t._id);
+                            setSelectedTheater(t._id || t.id);
                             window.scrollTo({ top: 0, behavior: "smooth" });
                           }}
                         >
@@ -427,7 +545,7 @@ export default function AdminScreens() {
 
                         <SecondaryBtn
                           className="px-3 py-1 text-sm"
-                          onClick={() => deleteTheater(t._id)}
+                          onClick={() => deleteTheater(t._id || t.id)}
                         >
                           <Trash2 className="h-4 w-4" /> Delete
                         </SecondaryBtn>
@@ -444,7 +562,7 @@ export default function AdminScreens() {
                             const n = normalizeScreen(s);
                             return (
                               <span
-                                key={s._id}
+                                key={s._id || s.id}
                                 className="text-xs px-2 py-1 rounded-lg border bg-slate-50"
                               >
                                 {s.name} — {n.rows}×{n.cols}
