@@ -1,26 +1,33 @@
 // src/hooks/sseClient.js
 /**
- * Robust SSE client with:
+ * Robust SSE client (improved)
+ *
+ * Features:
  * - Named event support ("notification", "init", ...)
- * - Default message channel handling
- * - Optional jittered exponential backoff (browser retry is not always enough)
+ * - Default message handling and tolerant JSON parsing
+ * - Optional jittered exponential backoff (browser retry sometimes insufficient)
  * - Heartbeat watchdog to recover from silent stalls
- * - Clean JSON parsing (tolerant)
- * - cancel() closes and cleans timers/listeners
+ * - pauseWhenHidden support
+ * - Auto token discovery via getAuthFromStorage() if token not supplied
+ * - Exposes cancel(), reconnect(), getEventSource(), state()
  *
  * Usage:
- *   const s = connectSSE({ token, onMessage, onOpen, onError, pauseWhenHidden: true });
- *   // optionally s.reconnect();
- *   // when done: s.cancel();
+ *   const s = connectSSE({ onMessage, onOpen, onError });
+ *   s.reconnect();
+ *   s.cancel();
  */
+import { apiUrl, getAuthFromStorage, COOKIE_AUTH } from "../api/api";
+
+/* -------------------------- connectSSE -------------------------- */
 export function connectSSE({
   token,
   scope = "user",
-  urlBase = "https://movie-ticket-booking-backend-o1m2.onrender.com/api/notifications/stream",
+  urlBase = null, // defaults to apiUrl("/notifications/stream")
   onOpen,
-  onMessage,          // (data, meta)
-  onError,            // (error, attempt)
-  withCredentials = false,
+  onMessage, // (data, meta)
+  onError, // (error, attempt)
+  onState, // optional callback called with state updates
+  withCredentials = undefined, // if undefined, respects COOKIE_AUTH
   pauseWhenHidden = false,
 
   // reconnect/backoff controls
@@ -29,8 +36,19 @@ export function connectSSE({
   maxDelay = 30000,
   heartbeatTimeout = 45000, // ms without events -> recycle
 } = {}) {
-  const jwt = toJwtString(token);
-  if (!jwt) throw new Error("[sseClient] token is required");
+  // resolve defaults
+  const resolvedUrlBase = urlBase || (typeof apiUrl === "function" ? apiUrl("/notifications/stream") : "");
+  const resolvedWithCredentials = withCredentials === undefined ? !!COOKIE_AUTH : !!withCredentials;
+
+  // if no explicit token, try storage
+  const maybe = token || (getAuthFromStorage && getAuthFromStorage().token) || "";
+  const jwt = toJwtString(maybe);
+  if (!jwt) {
+    // Allow connecting without token only if backend supports cookie sessions
+    if (!resolvedWithCredentials) {
+      throw new Error("[sseClient] token is required (or enable cookie-based auth)");
+    }
+  }
 
   let attempt = 0;
   let es = null;
@@ -40,10 +58,13 @@ export function connectSSE({
   let visibilityHandler = null;
   let reconnectTimer = null;
 
-  // keep references to attached listeners so we can remove them later
+  // store attached listeners so we can remove them precisely
   let attachedListeners = [];
 
-  const base = `${urlBase.replace(/\?+.*$/, "")}?token=${encodeURIComponent(jwt)}&scope=${encodeURIComponent(scope)}`;
+  // seed URL (strip query + append token & scope)
+  const base = `${resolvedUrlBase.replace(/\?+.*$/, "")}${
+    resolvedUrlBase.includes("?") ? "&" : "?"
+  }scope=${encodeURIComponent(scope)}${jwt ? `&token=${encodeURIComponent(jwt)}` : ""}`;
 
   function safeCall(fn, ...args) {
     try {
@@ -57,12 +78,12 @@ export function connectSSE({
 
   function touch() {
     lastBeat = Date.now();
+    emitState();
   }
 
   function parsePayload(raw) {
     if (raw == null) return raw;
     if (typeof raw !== "string") return raw;
-    // ignore very small heartbeats
     const t = raw.trim();
     if (!t) return raw;
     try {
@@ -73,7 +94,6 @@ export function connectSSE({
   }
 
   function deliver(payload, evt) {
-    // ignore known heartbeat tokens
     if (payload === "ping" || payload === ":keep-alive" || payload === "💓" || payload === ": hello") {
       return;
     }
@@ -86,47 +106,48 @@ export function connectSSE({
   }
 
   function attachListeners(currentEs) {
-    // store refs so we can remove later
     attachedListeners = [];
 
-    // default onopen
-    const openHandler = () => {
+    // onopen
+    const openHandler = (evt) => {
       attempt = 0;
       touch();
-      safeCall(onOpen);
+      safeCall(onOpen, evt);
       armHeartbeatWatchdog();
       // eslint-disable-next-line no-console
-      console.debug?.("[SSE] connected", { scope, urlBase });
+      console.debug?.("[SSE] connected", { scope, urlBase: resolvedUrlBase });
     };
     currentEs.onopen = openHandler;
-    attachedListeners.push({ type: "open", fn: openHandler, method: "onopen" });
+    attachedListeners.push({ method: "onopen", type: "open", fn: openHandler });
 
-    // default onmessage (data event)
+    // onmessage
     const messageHandler = (evt) => {
       touch();
       deliver(evt?.data, evt);
     };
     currentEs.onmessage = messageHandler;
-    attachedListeners.push({ type: "message", fn: messageHandler, method: "onmessage" });
+    attachedListeners.push({ method: "onmessage", type: "message", fn: messageHandler });
 
-    // named events — attach with addEventListener so multiple types supported
+    // named events
     const named = ["notification", "init", "error", "warning", "info"];
     named.forEach((name) => {
       const handler = (evt) => {
         touch();
         deliver(evt?.data, evt);
       };
-      currentEs.addEventListener(name, handler);
-      attachedListeners.push({ type: name, fn: handler, method: "addEventListener" });
+      try {
+        currentEs.addEventListener(name, handler);
+        attachedListeners.push({ method: "addEventListener", type: name, fn: handler });
+      } catch (e) {
+        // skip if not supported
+      }
     });
 
-    // error handling
+    // onerror
     const errorHandler = (err) => {
-      // don't bubble up huge error objects
       safeCall(onError, err, attempt);
-      // touch so watchdog isn't too aggressive on transient errors
       touch();
-      // if browser closed the connection, schedule reconnect if using backoff
+      // schedule reconnect when closed
       try {
         if (backoff && currentEs && currentEs.readyState === EventSource.CLOSED) {
           scheduleReconnect();
@@ -138,14 +159,15 @@ export function connectSSE({
       console.debug?.("[SSE] error event", err);
     };
     currentEs.onerror = errorHandler;
-    attachedListeners.push({ type: "error", fn: errorHandler, method: "onerror" });
+    attachedListeners.push({ method: "onerror", type: "error", fn: errorHandler });
+
+    emitState();
   }
 
   function detachListeners(currentEs) {
     if (!currentEs) return;
     try {
-      // remove named listeners registered with addEventListener
-      for (const l of attachedListeners) {
+      for (const l of attachedListeners.slice()) {
         try {
           if (l.method === "addEventListener") currentEs.removeEventListener(l.type, l.fn);
           else if (l.method === "onmessage") currentEs.onmessage = null;
@@ -157,6 +179,7 @@ export function connectSSE({
       }
     } finally {
       attachedListeners = [];
+      emitState();
     }
   }
 
@@ -175,20 +198,21 @@ export function connectSSE({
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
     }
+    emitState();
   }
 
   function open() {
     if (disposed) return;
     cleanupES();
 
-    // increment seed on retries to avoid caching/proxy sticky issues
+    // seed query param to avoid caching/proxy sticky issues
     const seed = attempt > 0 ? attempt : Date.now();
-    const url = `${base}&seed=${encodeURIComponent(seed)}`;
+    const url = `${base}${base.includes("?") ? "&" : "?"}seed=${encodeURIComponent(seed)}`;
 
     try {
-      es = new EventSource(url, { withCredentials });
+      es = new EventSource(url, { withCredentials: resolvedWithCredentials });
     } catch (err) {
-      // older browsers may throw when options not supported — fallback
+      // fallback for older browsers that ignore options
       try {
         es = new EventSource(url);
       } catch (err2) {
@@ -198,12 +222,10 @@ export function connectSSE({
       }
     }
 
-    // attach listeners (keeps refs for removal)
     attachListeners(es);
   }
 
   function computeBackoffDelayLocal(attemptNum) {
-    // exponential with cap + jitter (0..33%)
     const exp = Math.min(maxDelay, minDelay * Math.pow(2, Math.max(0, attemptNum - 1)));
     const jitter = exp * (Math.random() * 0.33);
     return Math.min(maxDelay, Math.floor(exp + jitter));
@@ -221,6 +243,7 @@ export function connectSSE({
       if (disposed) return;
       open();
     }, delay);
+    emitState();
   }
 
   function armHeartbeatWatchdog() {
@@ -244,7 +267,7 @@ export function connectSSE({
     }
   }
 
-  // Optional visibility pause/resume
+  // visibility pause/resume
   if (pauseWhenHidden && typeof document !== "undefined") {
     visibilityHandler = () => {
       if (disposed) return;
@@ -264,8 +287,16 @@ export function connectSSE({
     } catch {}
   }
 
-  // Start the connection
+  // start
   open();
+
+  function emitState() {
+    try {
+      if (typeof onState === "function") {
+        onState({ attempt, readyState: es?.readyState ?? (disposed ? -1 : 0), lastBeat, disposed });
+      }
+    } catch (e) {}
+  }
 
   // public API
   const cancel = () => {
@@ -279,6 +310,7 @@ export function connectSSE({
     }
     // eslint-disable-next-line no-console
     console.debug?.("[SSE] connection closed by cancel()");
+    emitState();
   };
 
   const reconnect = () => {
@@ -286,11 +318,14 @@ export function connectSSE({
     attempt = 0;
     cleanupES();
     open();
+    emitState();
   };
 
   const getEventSource = () => es;
 
-  return { cancel, reconnect, getEventSource };
+  const state = () => ({ attempt, readyState: es?.readyState ?? (disposed ? -1 : 0), lastBeat, disposed });
+
+  return { cancel, reconnect, getEventSource, state };
 }
 
 /* ---------------- helpers ---------------- */
