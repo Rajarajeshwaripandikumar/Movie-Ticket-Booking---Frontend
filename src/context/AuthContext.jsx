@@ -7,12 +7,16 @@ import React, {
   useEffect,
   useCallback,
 } from "react";
-import api, { primeAuth, getAuthFromStorage, COOKIE_AUTH } from "../api/api";
+import api, { primeAuth, getAuthFromStorage } from "../api/api";
 
 export const AuthContext = createContext(null);
 export const useAuth = () => useContext(AuthContext);
 
-/* ---------------- helpers to decode jwt (safe) ---------------- */
+/* ---------------- feature flag: cookie-based auth ----------------------- */
+// Enable by setting VITE_COOKIE_AUTH="true" in your .env
+const COOKIE_AUTH = String(import.meta.env?.VITE_COOKIE_AUTH || "false").toLowerCase() === "true";
+
+/* ---------------- helpers to decode jwt (safe) ------------------------- */
 function safeJsonBase64Decode(payload) {
   try {
     const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
@@ -32,7 +36,7 @@ function decodeJwt(token) {
   return safeJsonBase64Decode(parts[1]);
 }
 
-/* ---------------- normalize role helper ---------------- */
+/* ---------------- normalize role helper ------------------------------- */
 function normalizeRole(raw) {
   if (raw === undefined || raw === null) return null;
   try {
@@ -61,7 +65,7 @@ function defaultLandingFor(role) {
   return "/";
 }
 
-/* ---------------- localStorage helpers ---------------- */
+/* ---------------- localStorage helpers -------------------------------- */
 const LS_KEYS = {
   token: "token",
   adminToken: "adminToken",
@@ -85,7 +89,7 @@ function readJSON(k, fallback) {
   }
 }
 
-/* ---------------- AuthProvider ---------------- */
+/* ---------------- AuthProvider ---------------------------------------- */
 export function AuthProvider({ children }) {
   // tokens
   const [token, setToken] = useState(() => localStorage.getItem(LS_KEYS.token));
