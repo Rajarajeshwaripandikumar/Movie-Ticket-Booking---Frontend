@@ -3,6 +3,7 @@ import React, { useEffect } from "react";
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "./context/AuthContext";
 
+import api, { getAuthFromStorage } from "./api/api"; // <-- ADDED: api priming
 import Navbar from "./components/Navbar";
 import Footer from "./components/Footer";
 import GlobalBackdrop from "./components/GlobalBackdrop";
@@ -153,7 +154,8 @@ function RequireAuth({ children, role }) {
   // ----- NEW: allow admin/theatre subpath access when it matches role -----
   // This prevents bouncing when the user directly opens nested admin/theatre URLs.
   const isRequestingAdminSubpath = location.pathname.startsWith("/admin/");
-  const isRequestingTheatreSubpath = location.pathname.startsWith("/theatre/");
+  const isRequestingAdminRoot = location.pathname === "/admin" || location.pathname === "/admin/";
+  const isRequestingTheatreSubpath = location.pathname.startsWith("/theatre/") || location.pathname.startsWith("/theatre");
 
   // Theatre admins can access /theatre/* if the route allows THEATRE_ADMIN
   if (currentRole === "THEATRE_ADMIN" && isRequestingTheatreSubpath) {
@@ -161,7 +163,7 @@ function RequireAuth({ children, role }) {
   }
 
   // Admin-like roles can access /admin/* when the route allows admin-like access
-  if ((currentRole === "ADMIN" || currentRole === "THEATRE_ADMIN") && isRequestingAdminSubpath) {
+  if ((currentRole === "ADMIN" || currentRole === "THEATRE_ADMIN") && (isRequestingAdminSubpath || isRequestingAdminRoot)) {
     if (allowed.some(r => ["ADMIN", "THEATRE_ADMIN", "SUPER_ADMIN"].includes(r))) return children;
   }
   // ------------------------------------------------------------------------
@@ -265,6 +267,21 @@ function RoleProfileRouter() {
 
 /* ---------------------------------- App ---------------------------------- */
 export default function App() {
+  // Prime axios from any auth found in storage on initial paint.
+  // This helps avoid cases where AuthContext hydrates after components issue requests.
+  useEffect(() => {
+    try {
+      const { token } = getAuthFromStorage();
+      if (token) {
+        api.setAuthToken(token);
+        // eslint-disable-next-line no-console
+        console.debug("[App] primed axios with token from storage");
+      }
+    } catch (e) {
+      console.debug("[App] priming failed", e);
+    }
+  }, []);
+
   return (
     <div className="flex flex-col min-h-screen text-gray-800 overflow-x-hidden bg-transparent">
       <Navbar />
