@@ -22,7 +22,11 @@ const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
   </Tag>
 );
 
-function Field({ as = "input", icon: Icon, label, className = "", ...props }) {
+/**
+ * Field component — fixed to forward children into the rendered element.
+ * Supports `as` prop to render <input>, <select>, <textarea>, etc.
+ */
+function Field({ as = "input", icon: Icon, label, className = "", children, ...props }) {
   const C = as;
   return (
     <div>
@@ -36,7 +40,9 @@ function Field({ as = "input", icon: Icon, label, className = "", ...props }) {
         <C
           {...props}
           className={`w-full outline-none bg-transparent text-sm text-slate-900 placeholder:text-slate-400 ${className}`}
-        />
+        >
+          {children}
+        </C>
       </div>
     </div>
   );
