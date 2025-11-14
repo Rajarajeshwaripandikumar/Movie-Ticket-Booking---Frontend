@@ -1,5 +1,7 @@
 // src/pages/AdminTheaters.jsx — full updated (uses activeToken + safer API handling)
-import { useEffect, useMemo, useState } from "react";
+// Updated: AbortController for loadTheaters, FormData uploads for create/update, revokeObjectURL cleanup
+
+import { useEffect, useMemo, useRef, useState } from "react";
 import api, { API_DEBUG } from "../api/api";
 import { useAuth } from "../context/AuthContext";
 import {
@@ -27,9 +29,7 @@ const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
 );
 
 /**
- * Field component
- * - forwards children into the rendered element so <select> works
- * - supports 'as' prop to render select/textarea/input etc.
+ * Field component (handles `as` prop)
  */
 function Field({ as = "input", icon: Icon, className = "", label, children, ...props }) {
   const C = as;
@@ -109,9 +109,8 @@ const ROLE = {
 /* ========================================================================= */
 
 export default function AdminTheaters() {
-  // prefer centralized flags from AuthContext
+  // auth & token
   const { activeToken, user, isSuperAdmin: ctxIsSuper, initialized } = useAuth() || {};
-  // keep backward-compatible role check too if needed
   const isSuperAdmin =
     ctxIsSuper ||
     (user && (user.role === ROLE.SUPER_ADMIN || user?.data?.role === ROLE.SUPER_ADMIN));
@@ -119,7 +118,6 @@ export default function AdminTheaters() {
   const [theaters, setTheaters] = useState([]);
   const [listLoading, setListLoading] = useState(false);
 
-  // prefer /theaters first; detection will overwrite if needed
   const [theaterBase, setTheaterBase] = useState("/theaters");
 
   const [selectedId, setSelectedId] = useState(null);
@@ -131,129 +129,168 @@ export default function AdminTheaters() {
 
   const [preview, setPreview] = useState("");
   const [previewKey, setPreviewKey] = useState(0);
+  const [pickedFile, setPickedFile] = useState(null);
 
   const [msg, setMsg] = useState("");
   const [msgType, setMsgType] = useState("info");
   const [loading, setLoading] = useState(false);
 
-  // Try immediately and once more shortly after, because role can hydrate async
+  const mountedRef = useRef(true);
+
   useEffect(() => {
-    // wait until auth initialized to avoid noisy unauthorized calls
-    if (!initialized) {
-      // still attempt quick probe in case backend is public
-      loadTheaters();
-      const t = setTimeout(loadTheaters, 250);
-      return () => clearTimeout(t);
-    }
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  // revoke preview URL on unmount to avoid memory leaks
+  useEffect(() => {
+    return () => {
+      if (preview && preview.startsWith("blob:")) {
+        try {
+          URL.revokeObjectURL(preview);
+        } catch {}
+      }
+    };
+  }, [preview]);
+
+  /* tryGet supports `signal` and includes token header when available */
+  async function tryGet(path, opts = {}, signal = undefined) {
+    const headers = opts.headers || {};
+    if (activeToken) headers.Authorization = `Bearer ${activeToken}`;
+    const params = { ...opts, headers };
+    if (signal) params.signal = signal;
+    // api.getFresh expected to return various shapes, normalize in caller
+    return api.getFresh(path, params);
+  }
+
+  /* ----------------------------- loadTheaters ----------------------------- */
+  // self-contained loader that aborts previous requests
+  const loadTheaters = (() => {
+    let currentController = null;
+
+    return async function _loadTheaters() {
+      // abort previous request
+      if (currentController) {
+        try {
+          currentController.abort();
+        } catch {}
+      }
+      currentController = new AbortController();
+      const signal = currentController.signal;
+
+      setMsg("");
+      setMsgType("info");
+      setListLoading(true);
+
+      try {
+        const order = [
+          "/theaters",
+          "/theatres",
+          "/theaters/mine",
+          "/theatres/mine",
+          "/theaters/admin/theaters",
+          "/theatres/admin/theatres",
+          "/theaters/admin/list",
+          "/theatres/admin/list",
+          "/admin/theaters",
+          "/admin/theatres",
+          "/superadmin/theaters",
+          "/superadmin/theatres",
+          "/super/theatre-admins",
+        ];
+
+        let arr = [];
+        let chosenBase = "/theaters";
+
+        for (const path of order) {
+          try {
+            if (API_DEBUG) console.debug("[AdminTheaters] trying", path);
+            const resp = await tryGet(path, {}, signal);
+
+            const body =
+              resp === undefined || resp === null
+                ? {}
+                : Array.isArray(resp)
+                ? resp
+                : resp?.data ?? resp;
+
+            const tmp =
+              (Array.isArray(body) && body) ||
+              body?.theaters ||
+              body?.data?.theaters ||
+              body?.data ||
+              body?.items ||
+              body?.results ||
+              body?.theatres ||
+              body?.theatre ||
+              [];
+
+            if (Array.isArray(tmp) && tmp.length) {
+              arr = tmp;
+              chosenBase = path.includes("/theatres") ? "/theatres" : "/theaters";
+              setTheaterBase(chosenBase);
+              if (API_DEBUG)
+                console.debug(
+                  "[AdminTheaters] success at",
+                  path,
+                  "count:",
+                  tmp.length,
+                  "base:",
+                  chosenBase
+                );
+              break;
+            } else if (API_DEBUG) {
+              console.debug("[AdminTheaters] no items at", path, "resp shape:", body);
+            }
+          } catch (err) {
+            // abort -> stop trying
+            if (
+              err?.name === "CanceledError" ||
+              err?.name === "AbortError" ||
+              err?.message === "canceled"
+            ) {
+              if (API_DEBUG) console.debug("[AdminTheaters] load aborted");
+              return;
+            }
+            if (API_DEBUG)
+              console.warn(
+                "[AdminTheaters] error at",
+                path,
+                err?.response?.status || err?.message || err
+              );
+            // continue trying next path
+          }
+        }
+
+        if (!mountedRef.current) return;
+        setTheaters((arr || []).map(normalizeTheater));
+
+        if ((!arr || arr.length === 0) && API_DEBUG) {
+          console.warn("[AdminTheaters] all theater endpoints tried but no data found");
+          setMsg("No theaters returned from any endpoint. Check API & token.");
+          setMsgType("error");
+        }
+      } catch (e) {
+        if (API_DEBUG) console.error("[AdminTheaters] load failed:", e);
+        if (e?.name === "CanceledError" || e?.name === "AbortError") return;
+        setMsg(e?.response?.data?.message || "⚠️ Failed to load theaters. Check API.");
+        setMsgType("error");
+      } finally {
+        if (mountedRef.current) setListLoading(false);
+      }
+    };
+  })();
+
+  // initial load: wait for auth init but also attempt quick probes as before
+  useEffect(() => {
+    // call immediately (probe) and once more shortly after to pick up async roles/claims
     loadTheaters();
-    const t = setTimeout(loadTheaters, 250);
+    const t = setTimeout(() => loadTheaters(), 250);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeToken, user, initialized]);
-
-  async function tryGet(path) {
-    // helper: use activeToken if available
-    const opts = {};
-    if (activeToken) opts.headers = { Authorization: `Bearer ${activeToken}` };
-
-    // api.getFresh may return res.data or the full response depending on implementation.
-    const resp = await api.getFresh(path, opts);
-    return resp;
-  }
-
-  async function loadTheaters() {
-    setMsg("");
-    setMsgType("info");
-    setListLoading(true);
-
-    try {
-      // Expanded list of possible endpoints – covers common spellings & admin variants.
-      const order = [
-        "/theaters",
-        "/theatres",
-        "/theaters/mine",
-        "/theatres/mine",
-        "/theaters/admin/theaters",
-        "/theatres/admin/theatres",
-        "/theaters/admin/list",
-        "/theatres/admin/list",
-        "/admin/theaters",
-        "/admin/theatres",
-        "/superadmin/theaters",
-        "/superadmin/theatres",
-        "/super/theatre-admins",
-      ];
-
-      let arr = [];
-      let chosenBase = "/theaters";
-
-      for (const path of order) {
-        try {
-          if (API_DEBUG) console.debug("[AdminTheaters] trying", path);
-          const resp = await tryGet(path);
-
-          // resp may be already the body or an axios response — normalize:
-          const body =
-            resp === undefined || resp === null
-              ? {}
-              : Array.isArray(resp)
-              ? resp
-              : resp?.data ?? resp;
-
-          // possible shapes
-          const tmp =
-            (Array.isArray(body) && body) ||
-            body?.theaters ||
-            body?.data?.theaters ||
-            body?.data ||
-            body?.items ||
-            body?.results ||
-            body?.theatres ||
-            body?.theatre ||
-            [];
-
-          if (Array.isArray(tmp) && tmp.length) {
-            arr = tmp;
-            // derive canonical base: prefer simple /theaters or /theatres when possible,
-            // otherwise use the admin/superadmin path that returned data.
-            if (
-              path.includes("/admin") ||
-              path.includes("/superadmin") ||
-              path.includes("/super")
-            ) {
-              chosenBase = path.split("?")[0].replace(/\/(theaters|theatres|admin|superadmin|super).*$/i, "/theaters");
-            } else {
-              chosenBase = path.startsWith("/theatres") ? "/theatres" : "/theaters";
-            }
-            setTheaterBase(chosenBase);
-            if (API_DEBUG) console.debug("[AdminTheaters] success at", path, "count:", tmp.length, "base:", chosenBase);
-            break;
-          } else if (API_DEBUG) {
-            console.debug("[AdminTheaters] no items at", path, "resp shape:", body);
-          }
-        } catch (err) {
-          if (API_DEBUG) {
-            console.warn("[AdminTheaters] error at", path, err?.response?.status || err?.message || err);
-          }
-          // continue to next candidate
-        }
-      }
-
-      setTheaters((arr || []).map(normalizeTheater));
-
-      if ((!arr || arr.length === 0) && API_DEBUG) {
-        console.warn("[AdminTheaters] all theater endpoints tried but no data found");
-        setMsg("No theaters returned from any endpoint. Check API & token.");
-        setMsgType("error");
-      }
-    } catch (e) {
-      if (API_DEBUG) console.error("[AdminTheaters] load failed:", e);
-      setMsg(e?.response?.data?.message || "⚠️ Failed to load theaters. Check API.");
-      setMsgType("error");
-    } finally {
-      setListLoading(false);
-    }
-  }
 
   function resetForm() {
     setSelectedId(null);
@@ -263,13 +300,24 @@ export default function AdminTheaters() {
     setAmenitiesList([]);
     setAmenityInput("");
     setPreview("");
+    setPickedFile(null);
     setPreviewKey((k) => k + 1);
   }
 
   function onPickFile(e) {
     const f = e.target.files?.[0];
     if (!f) return;
-    setPreview(URL.createObjectURL(f));
+
+    // revoke previous blob URL if any
+    if (preview && preview.startsWith("blob:")) {
+      try {
+        URL.revokeObjectURL(preview);
+      } catch {}
+    }
+
+    const blobUrl = URL.createObjectURL(f);
+    setPreview(blobUrl);
+    setPickedFile(f);
     setPreviewKey((k) => k + 1);
   }
 
@@ -289,12 +337,24 @@ export default function AdminTheaters() {
 
     setLoading(true);
     try {
-      const payload = { name, city, address, amenities: amenitiesList };
       const path = theaterBase || "/theaters";
-      const opts = {};
-      if (activeToken) opts.headers = { Authorization: `Bearer ${activeToken}` };
+      const headers = {};
+      if (activeToken) headers.Authorization = `Bearer ${activeToken}`;
 
-      const res = await api.post(path, payload, opts);
+      let res;
+      if (pickedFile) {
+        const fd = new FormData();
+        fd.append("name", name);
+        fd.append("city", city);
+        if (address) fd.append("address", address);
+        if (amenitiesList?.length) fd.append("amenities", JSON.stringify(amenitiesList));
+        fd.append("image", pickedFile); // backend: upload.single("image")
+        res = await api.post(path, fd, { headers });
+      } else {
+        const payload = { name, city, address, amenities: amenitiesList };
+        res = await api.post(path, payload, { headers });
+      }
+
       const createdRaw = res?.data ?? res;
       const created = normalizeTheater(createdRaw?.theater || createdRaw);
       setTheaters((t) => [created, ...t]);
@@ -303,11 +363,12 @@ export default function AdminTheaters() {
       setMsgType("success");
     } catch (err) {
       if (API_DEBUG) console.error("[AdminTheaters] create failed:", err);
-      const text = err?.response?.data?.message || "❌ Create failed";
-      setMsg(text);
+      const code = err?.response?.status;
+      if (code === 409) setMsg("A theater with that name & city already exists (duplicate).");
+      else setMsg(err?.response?.data?.message || "❌ Create failed");
       setMsgType("error");
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
   }
 
@@ -321,12 +382,24 @@ export default function AdminTheaters() {
 
     setLoading(true);
     try {
-      const payload = { name, city, address, amenities: amenitiesList };
       const base = theaterBase || "/theaters";
-      const opts = {};
-      if (activeToken) opts.headers = { Authorization: `Bearer ${activeToken}` };
+      const headers = {};
+      if (activeToken) headers.Authorization = `Bearer ${activeToken}`;
 
-      const res = await api.put(`${base}/${selectedId}`, payload, opts);
+      let res;
+      if (pickedFile) {
+        const fd = new FormData();
+        fd.append("name", name);
+        fd.append("city", city);
+        if (address) fd.append("address", address);
+        if (amenitiesList?.length) fd.append("amenities", JSON.stringify(amenitiesList));
+        fd.append("image", pickedFile);
+        res = await api.put(`${base}/${selectedId}`, fd, { headers });
+      } else {
+        const payload = { name, city, address, amenities: amenitiesList };
+        res = await api.put(`${base}/${selectedId}`, payload, { headers });
+      }
+
       const raw = res?.data ?? res;
       const upd = normalizeTheater(raw?.theater || raw);
       setTheaters((t) => t.map((x) => (x._id === selectedId ? upd : x)));
@@ -334,10 +407,12 @@ export default function AdminTheaters() {
       setMsgType("success");
     } catch (err) {
       if (API_DEBUG) console.error("[AdminTheaters] update failed:", err);
-      setMsg(err?.response?.data?.message || "❌ Update failed");
+      const code = err?.response?.status;
+      if (code === 409) setMsg("Update conflict: duplicate theater for name & city.");
+      else setMsg(err?.response?.data?.message || "❌ Update failed");
       setMsgType("error");
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
   }
 
@@ -351,10 +426,10 @@ export default function AdminTheaters() {
 
     try {
       const base = theaterBase || "/theaters";
-      const opts = {};
-      if (activeToken) opts.headers = { Authorization: `Bearer ${activeToken}` };
+      const headers = {};
+      if (activeToken) headers.Authorization = `Bearer ${activeToken}`;
 
-      await api.delete(`${base}/${id}`, opts);
+      await api.delete(`${base}/${id}`, { headers });
       setTheaters((t) => t.filter((x) => x._id !== id));
       if (selectedId === id) resetForm();
       setMsg("🗑️ Deleted");
@@ -381,6 +456,7 @@ export default function AdminTheaters() {
     setAddress(t.address || "");
     setAmenitiesList(t.amenities || []);
     setPreview(t.imageUrl || "");
+    setPickedFile(null);
     setPreviewKey((k) => k + 1);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -411,6 +487,8 @@ export default function AdminTheaters() {
                 ? "bg-rose-50 border-rose-200 text-rose-700"
                 : "bg-blue-50 border-blue-200 text-blue-700"
             }`}
+            role="status"
+            aria-live={msgType === "error" ? "assertive" : "polite"}
           >
             {msg}
           </Card>
@@ -570,7 +648,13 @@ export default function AdminTheaters() {
               </div>
 
               <div className="flex gap-2">
-                <PrimaryBtn type="submit" disabled={loading || !isSuperAdmin} title="Create theater" aria-label="Create theater">
+                <PrimaryBtn
+                  type="submit"
+                  disabled={loading || !isSuperAdmin}
+                  title="Create theater"
+                  aria-label="Create theater"
+                  aria-busy={loading}
+                >
                   {loading ? "Saving..." : "Create"}
                 </PrimaryBtn>
                 <PrimaryBtn
@@ -580,6 +664,7 @@ export default function AdminTheaters() {
                   type="button"
                   title="Update theater"
                   aria-label="Update theater"
+                  aria-busy={loading}
                 >
                   <PencilLine className="h-4 w-4" /> Update
                 </PrimaryBtn>
