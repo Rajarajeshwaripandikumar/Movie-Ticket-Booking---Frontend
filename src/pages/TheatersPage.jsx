@@ -1,4 +1,6 @@
 // src/pages/TheatersPage.jsx — Walmart Style (clean, rounded, blue accents)
+// Updated: debounce search, AbortController in loadTheaters, robust parsing & response handling
+
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import api from "../api/api";
@@ -51,16 +53,26 @@ const titleCase = (s = "") =>
     .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : ""))
     .join(" ");
 
+/* ---------- debounce hook ---------- */
+function useDebounce(value, delay = 300) {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const id = setTimeout(() => setV(value), delay);
+    return () => clearTimeout(id);
+  }, [value, delay]);
+  return v;
+}
+
 export default function TheatersPage() {
   const navigate = useNavigate();
   const { search } = useLocation();
 
   const [query, setQuery] = useState("");
+  const debouncedQuery = useDebounce(query, 450);
   const [cityFilter, setCityFilter] = useState("All");
   const [amenityFilter, setAmenityFilter] = useState("All");
 
   const [theaters, setTheaters] = useState([]);
-  // start empty; populate after first successful reset load
   const [cities, setCities] = useState([]);
   const [amenities, setAmenities] = useState(["All", ...MASTER_AMENITIES]);
 
@@ -70,6 +82,7 @@ export default function TheatersPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  // derive API base origin for relative image paths
   const apiBase = useMemo(() => {
     try {
       const u = new URL(api?.defaults?.baseURL || window.location.origin);
@@ -77,6 +90,14 @@ export default function TheatersPage() {
     } catch {
       return window.location.origin;
     }
+  }, []);
+
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
   }, []);
 
   const resolveImageUrl = (t) => {
@@ -87,48 +108,47 @@ export default function TheatersPage() {
     return v ? `${full}${full.includes("?") ? "&" : "?"}v=${v}` : full;
   };
 
-  const normalizeTheater = (t) => {
-    let rawAmenities =
-      Array.isArray(t?.amenities)
-        ? t.amenities
-        : Array.isArray(t?.amentities)
-        ? t.amentities
-        : typeof t?.amenities === "string"
-        ? t.amenities
-        : typeof t?.amentities === "string"
-        ? t.amentities
-        : [];
-
-    if (typeof rawAmenities === "string") {
-      const s = rawAmenities.trim();
+  const normalizeAmenitiesRaw = (raw) => {
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw.map((a) => String(a || "").trim()).filter(Boolean);
+    if (typeof raw === "string") {
+      const s = raw.trim();
+      if (!s) return [];
       if (s.startsWith("[") && s.endsWith("]")) {
         try {
           const parsed = JSON.parse(s);
-          if (Array.isArray(parsed)) rawAmenities = parsed;
-        } catch {
-          rawAmenities = s.split(",").map((x) => x.trim());
-        }
-      } else {
-        rawAmenities = s.split(",").map((x) => x.trim());
+          if (Array.isArray(parsed)) return parsed.map((a) => String(a || "").trim()).filter(Boolean);
+        } catch {}
       }
+      return s.split(",").map((x) => String(x || "").trim()).filter(Boolean);
     }
+    // fallback: try to coerce object values
+    if (typeof raw === "object") return Object.values(raw).map(String).map((x) => x.trim()).filter(Boolean);
+    return [];
+  };
 
-    const normAmenities = Array.from(new Set((rawAmenities || []).map((a) => String(a || "").trim()).filter(Boolean)));
+  const normalizeTheater = (t) => {
+    const rawAmenities = normalizeAmenitiesRaw(t?.amenities ?? t?.amentities ?? t?.amenties ?? []);
+    const normAmenities = Array.from(new Set(rawAmenities.map((a) => String(a || "").trim()).filter(Boolean)));
     const city = titleCase(t?.city || "");
     return { ...t, amenities: normAmenities, imageUrl: resolveImageUrl(t), city };
   };
 
-  const applyFilters = (items, localQuery = query, localCity = cityFilter, localAmen = amenityFilter) => {
+  const applyFilters = (items, localQuery = debouncedQuery, localCity = cityFilter, localAmen = amenityFilter) => {
     const q = norm(localQuery);
     const cityN = norm(localCity);
     const amenN = norm(localAmen);
 
     return items.filter((t) => {
-      const tCity = norm(t.city);
-      const tName = norm(t.name || t.title);
+      const tCity = norm(t.city || "");
+      const tName = norm(t.name || t.title || "");
       const tAmenities = (t.amenities || []).map(norm);
 
-      const matchesQuery = !q || tName.includes(q) || tCity.includes(q);
+      const matchesQuery =
+        !q ||
+        tName.includes(q) ||
+        tCity.includes(q) ||
+        (t.description || "").toLowerCase().includes(q);
       const matchesCity = localCity === "All" || tCity === cityN;
       const matchesAmenity = localAmen === "All" || tAmenities.includes(amenN);
 
@@ -139,7 +159,7 @@ export default function TheatersPage() {
   const setUrlParams = (overrides = {}) => {
     const sp = new URLSearchParams(search);
     const next = {
-      q: query || "",
+      q: debouncedQuery || "",
       city: cityFilter !== "All" ? cityFilter : "",
       amenity: amenityFilter !== "All" ? amenityFilter : "",
       ...overrides,
@@ -151,19 +171,15 @@ export default function TheatersPage() {
     navigate({ search: `?${sp.toString()}` }, { replace: true });
   };
 
-  // --- NEW: track first cities load to avoid racing validation resets
+  // firstCitiesLoad to avoid stomping initial param-driven selection
   const firstCitiesLoad = useRef(true);
 
   useEffect(() => {
-    // if cities not loaded yet, do nothing
     if (!Array.isArray(cities) || cities.length === 0) return;
-
-    // skip the very first arrival (allow initial URL params / user selection to persist)
     if (firstCitiesLoad.current) {
       firstCitiesLoad.current = false;
       return;
     }
-
     if (cityFilter && cityFilter !== "All") {
       const found = cities.some((c) => String(c).trim().toLowerCase() === String(cityFilter).trim().toLowerCase());
       if (!found) {
@@ -188,13 +204,23 @@ export default function TheatersPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
 
-  // allow override object so onChange can call immediately
+  /* ---------- loadTheaters with abort and robust response parsing ---------- */
+  const loaderRef = useRef({ controller: null });
+
   async function loadTheaters({ reset = false, override = {} } = {}) {
+    // abort previous
+    try {
+      if (loaderRef.current.controller) loaderRef.current.controller.abort();
+    } catch {}
+    loaderRef.current.controller = new AbortController();
+    const signal = loaderRef.current.controller.signal;
+
     setLoading(true);
     setError("");
+
     try {
       const params = {
-        q: override.q ?? query ?? undefined,
+        q: override.q ?? debouncedQuery || undefined,
         city: override.city ?? (cityFilter === "All" ? undefined : cityFilter),
         amenity: override.amenity ?? (amenityFilter === "All" ? undefined : amenityFilter),
         page: reset ? 1 : page,
@@ -202,24 +228,16 @@ export default function TheatersPage() {
         ts: Date.now(),
       };
 
-      // debug
-      console.debug("[loadTheaters] params:", params);
+      const resp = await api.get("/theaters", { params, signal });
 
-      const resp = await api.get("/theaters", { params });
+      // support multiple response shapes
+      const body = resp?.data ?? resp;
+      const fetched =
+        Array.isArray(body) ? body : body?.theaters ?? body?.data?.theaters ?? body?.data ?? body?.items ?? body?.results ?? [];
 
-      console.debug("[loadTheaters] response:", resp?.data);
-
-      const fetched = resp?.data?.theaters ?? resp?.data ?? [];
       const normalized = Array.isArray(fetched) ? fetched.map(normalizeTheater) : [];
 
-      // use applyFilters client-side so UI stays consistent if backend ignores params
-      const filtered = applyFilters(
-        normalized,
-        override.q ?? query,
-        override.city ?? cityFilter,
-        override.amenity ?? amenityFilter
-      );
-
+      // update cities & amenities only on reset (fresh list)
       if (reset) {
         const cityArr = normalized
           .map((t) => (t.city || "").trim())
@@ -229,10 +247,19 @@ export default function TheatersPage() {
         const uniqueCities = Array.from(new Set(cityArr));
         setCities(["All", ...uniqueCities]);
 
+        // ensure MASTER_AMENITIES are first and preserve extras from data
         const amenSet = new Set(MASTER_AMENITIES);
         normalized.forEach((t) => (t.amenities || []).forEach((a) => a && amenSet.add(String(a).trim())));
         setAmenities(["All", ...Array.from(amenSet)]);
       }
+
+      // apply client-side filters as a fallback
+      const filtered = applyFilters(
+        normalized,
+        override.q ?? debouncedQuery,
+        override.city ?? cityFilter,
+        override.amenity ?? amenityFilter
+      );
 
       if (reset) {
         setTheaters(filtered);
@@ -242,33 +269,35 @@ export default function TheatersPage() {
         setPage((p) => p + 1);
       }
 
-      const apiHasMore = typeof resp?.data?.hasMore === "boolean" ? resp.data.hasMore : null;
+      const apiHasMore = typeof body?.hasMore === "boolean" ? body.hasMore : null;
       setHasMore(apiHasMore ?? (Array.isArray(fetched) && fetched.length > 0));
-
       setUrlParams({
         q: override.q ?? undefined,
         city: override.city ?? undefined,
         amenity: override.amenity ?? undefined,
       });
     } catch (e) {
+      if (e?.name === "CanceledError" || e?.name === "AbortError") {
+        // silently ignore aborted requests
+        return;
+      }
       console.error("❌ Failed to load theaters:", e);
-      setError("Unable to load theaters. Please try again later.");
+      if (mountedRef.current) setError("Unable to load theaters. Please try again later.");
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
   }
 
-  // initial load and when filters change (fallback)
+  /* initial load & when filters (debounced) change */
   useEffect(() => {
     loadTheaters({ reset: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, cityFilter, amenityFilter]);
+  }, [debouncedQuery, cityFilter, amenityFilter]);
 
-  // immediate handlers that clear UI and call load with overrides so there's no race
   const handleCityChange = (value) => {
     const v = value || "All";
     setCityFilter(v);
-    setTheaters([]); // clear old items immediately
+    setTheaters([]); // clear immediately for snappy UI
     loadTheaters({ reset: true, override: { city: v === "All" ? undefined : v } });
   };
 
@@ -300,6 +329,7 @@ export default function TheatersPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /* ------------------------------ Navigation helpers ------------------------------ */
   const handleViewShowtimes = (t) => {
     const ymd = new Date().toISOString().slice(0, 10);
     const city = t.city || (cityFilter !== "All" ? cityFilter : "");
@@ -311,8 +341,9 @@ export default function TheatersPage() {
 
   const handleViewFirstScreen = async (t) => {
     try {
-      const { data } = await api.get(`/theaters/${t._id}/screens`);
-      const screens = Array.isArray(data?.data) ? data.data : [];
+      const resp = await api.get(`/theaters/${t._id}/screens`);
+      const body = resp?.data ?? resp;
+      const screens = Array.isArray(body) ? body : body?.data ?? body?.items ?? [];
       if (!screens.length) {
         alert("No screens found for this theater yet.");
         return;
@@ -352,7 +383,6 @@ export default function TheatersPage() {
                     className="bg-transparent outline-none text-sm w-full min-w-[120px]"
                     aria-label="Filter by city"
                   >
-                    {/* fallback to ["All"] while cities loading */}
                     {(cities.length ? cities : ["All"]).map((c) => (
                       <option key={c} value={c}>
                         {c === "All" ? "All Cities" : c}
@@ -428,6 +458,8 @@ export default function TheatersPage() {
                     ...t,
                     imageUrl: t.imageUrl,
                   }}
+                  onViewShowtimes={() => handleViewShowtimes(t)}
+                  onViewFirstScreen={() => handleViewFirstScreen(t)}
                 />
               ))
             )}
@@ -442,8 +474,6 @@ export default function TheatersPage() {
           </div>
         )}
       </section>
-
-      {/* removed admin amenities overview by design — no bottom list */}
     </main>
   );
 }
