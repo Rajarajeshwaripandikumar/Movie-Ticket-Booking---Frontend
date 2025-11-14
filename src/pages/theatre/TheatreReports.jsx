@@ -1,9 +1,17 @@
-// src/pages/theatre/TheatreReports.jsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+// src/pages/theatre/TheatreReports.jsx — polished (District / Walmart style)
+import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { Link, Navigate } from "react-router-dom";
 import api from "../../api/api";
 import { useAuth } from "../../context/AuthContext";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
 
 /* --- local date formatters (no date-fns) --- */
 function fmtDateShort(d) {
@@ -37,24 +45,24 @@ function decodeJwt(t) {
   }
 }
 
-async function tryGet(endpoints) {
+async function tryGet(endpoints = []) {
   for (const ep of endpoints.filter(Boolean)) {
     try {
       const res = await api.get(ep);
       return res?.data ?? res;
     } catch {
-      /* continue */
+      // continue
     }
   }
   return undefined;
 }
 
+/* ------------------------------ Component ------------------------------ */
 export default function TheatreReports() {
   const { token, adminToken, user, isTheatreAdmin } = useAuth() || {};
-  const activeToken = adminToken || token || null;               // ✅ use admin token when present
+  const activeToken = adminToken || token || null;
   const payload = decodeJwt(activeToken);
 
-  // ✅ consistent theatreId detection (same as other theatre pages)
   const theatreId =
     user?.theatreId ||
     user?.theaterId ||
@@ -86,58 +94,67 @@ export default function TheatreReports() {
     return `${y}-${m}-${day}`;
   });
   const [query, setQuery] = useState("");
-
   const [page, setPage] = useState(1);
   const pageSize = 12;
 
-  const csvRef = useRef(null);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
     document.title = "Theatre Reports | Cinema";
+    return () => {
+      mountedRef.current = false;
+    };
   }, []);
 
-  useEffect(() => {
-    if (!activeToken || !isTheatreAdmin || !theatreId) return;
+  const loadReports = useCallback(async () => {
+    if (!activeToken || !isTheatreAdmin || !theatreId) {
+      setLoading(false);
+      return;
+    }
 
-    (async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const q = `start=${encodeURIComponent(startDate)}&end=${encodeURIComponent(endDate)}`;
-        const base = theatreId ? `theatre=${encodeURIComponent(theatreId)}&` : "";
+    setLoading(true);
+    setError(null);
+    try {
+      const q = `start=${encodeURIComponent(startDate)}&end=${encodeURIComponent(endDate)}`;
+      const base = theatreId ? `theatre=${encodeURIComponent(theatreId)}&` : "";
 
-        const data =
-          (await tryGet([
-            // Theatre-admin scoped
-            `/theatre/reports?${base}${q}`,
-            // Admin scoped with theatre filter
-            `/admin/reports?${base}${q}`,
-            // Generic with theatre filter
-            `/reports?${base}${q}`,
-          ])) || {};
+      const data =
+        (await tryGet([
+          `/theatre/reports?${base}${q}`,
+          `/admin/reports?${base}${q}`,
+          `/reports?${base}${q}`,
+        ])) || {};
 
-        setReports(data);
-      } catch (err) {
-        console.error(err);
-        setReports(null);
-        setError(err?.response?.data?.message || err?.message || "Failed to load reports");
-      } finally {
-        setLoading(false);
-      }
-    })();
+      if (!mountedRef.current) return;
+      setReports(data);
+      setPage(1);
+    } catch (err) {
+      console.error("Reports load error", err?.response || err);
+      if (!mountedRef.current) return;
+      setReports(null);
+      setError(err?.response?.data?.message || err?.message || "Failed to load reports");
+    } finally {
+      if (mountedRef.current) setLoading(false);
+    }
   }, [activeToken, isTheatreAdmin, theatreId, startDate, endDate]);
+
+  useEffect(() => {
+    loadReports();
+  }, [loadReports]);
 
   const summary = reports?.summary || { revenue: 0, ticketsSold: 0, avgPrice: 0 };
   const salesByDay = reports?.salesByDay || [];
-  const bookings = reports?.bookings || [];
+  const bookings = A(reports?.bookings || []);
 
   const filteredBookings = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = String(query || "").trim().toLowerCase();
     if (!q) return bookings;
     return bookings.filter((b) => {
-      const seatsStr = Array.isArray(b.seats) ? b.seats.join(" ") : (b.seats || "");
+      const seatsStr = Array.isArray(b.seats) ? b.seats.join(" ") : b.seats || "";
       return (
-        String(b.id ?? b._id ?? "").toLowerCase().includes(q) ||
+        String(b.id ?? b._id ?? "")
+          .toLowerCase()
+          .includes(q) ||
         (b.customerName || "").toLowerCase().includes(q) ||
         seatsStr.toLowerCase().includes(q) ||
         (b.showTitle || "").toLowerCase().includes(q)
@@ -146,6 +163,10 @@ export default function TheatreReports() {
   }, [bookings, query]);
 
   const totalPages = Math.max(1, Math.ceil(filteredBookings.length / pageSize));
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
   const pageItems = filteredBookings.slice((page - 1) * pageSize, page * pageSize);
 
   function setRangeDays(days) {
@@ -160,7 +181,10 @@ export default function TheatreReports() {
     };
     setStartDate(toYMD(start));
     setEndDate(toYMD(end));
-    setPage(1);
+  }
+
+  function sanitizeFilename(name) {
+    return String(name || "theatre").replace(/[^a-z0-9_\-]/gi, "_").toLowerCase();
   }
 
   function downloadCSV() {
@@ -173,21 +197,23 @@ export default function TheatreReports() {
         b.customerName || "",
         b.showTitle || "",
         b.showTime || "",
-        Array.isArray(b.seats) ? b.seats.join("|") : (b.seats || ""),
-        b.quantity || "",
-        b.total || "",
+        Array.isArray(b.seats) ? b.seats.join("|") : b.seats || "",
+        b.quantity ?? "",
+        b.total ?? "",
         b.createdAt ? new Date(b.createdAt).toISOString() : "",
       ]);
     }
-    const csv = rows
-      .map((r) => r.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
-      .join("\n");
+    const csv =
+      "\uFEFF" + // BOM for Excel UTF-8
+      rows
+        .map((r) => r.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+        .join("\n");
 
-    const blob = new Blob([csv], { type: "text/csv" });
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    const namePart = reports?.theatreId || theatreId || "theatre";
+    const namePart = sanitizeFilename(reports?.theatreName || theatreId || "theatre");
     a.download = `${namePart}_bookings_${startDate}_to_${endDate}.csv`;
     document.body.appendChild(a);
     a.click();
@@ -195,7 +221,7 @@ export default function TheatreReports() {
     URL.revokeObjectURL(url);
   }
 
-  // ✅ Proper guards
+  // Guards
   if (!activeToken) return <Navigate to="/admin/login" replace />;
   if (!isTheatreAdmin) {
     return <div className="p-8 text-center text-rose-600 font-semibold">Access Denied</div>;
@@ -205,7 +231,7 @@ export default function TheatreReports() {
     return (
       <div className="p-6">
         <div className="max-w-6xl mx-auto">
-          <div className="animate-pulse h-8 bg-gray-200 rounded w-1/4 mb-4" />
+          <div role="status" aria-live="polite" className="animate-pulse h-8 bg-gray-200 rounded w-1/4 mb-4" />
           <div className="grid grid-cols-3 gap-4">
             <div className="h-28 bg-gray-200 rounded" />
             <div className="h-28 bg-gray-200 rounded" />
@@ -240,6 +266,7 @@ export default function TheatreReports() {
             <h1 className="text-2xl font-extrabold text-[#111827]">Theatre Reports</h1>
             <p className="text-sm text-slate-600 mt-1">{reports?.theatreName || "—"}</p>
           </div>
+
           <div className="flex items-center gap-2">
             <button onClick={() => setRangeDays(7)} className="px-3 py-2 rounded-lg bg-white border">
               Last 7d
@@ -265,9 +292,7 @@ export default function TheatreReports() {
           <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
             <div className="text-[11px] text-slate-500">Tickets sold</div>
             <div className="text-2xl font-bold mt-1">{Number(summary.ticketsSold || 0).toLocaleString()}</div>
-            <div className="text-sm text-slate-500 mt-2">
-              Avg price: ₹{Number(summary.avgPrice || 0).toFixed(2)}
-            </div>
+            <div className="text-sm text-slate-500 mt-2">Avg price: ₹{Number(summary.avgPrice || 0).toFixed(2)}</div>
           </div>
 
           <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex flex-col">
@@ -296,6 +321,7 @@ export default function TheatreReports() {
                 {startDate} → {endDate}
               </div>
             </div>
+
             <div style={{ height: 260 }} className="mt-4">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={salesByDay}>
@@ -314,7 +340,9 @@ export default function TheatreReports() {
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold">Bookings</h3>
               <div className="flex items-center gap-2">
+                <label htmlFor="booking-search" className="sr-only">Search bookings</label>
                 <input
+                  id="booking-search"
                   value={query}
                   onChange={(e) => {
                     setQuery(e.target.value);
@@ -347,14 +375,10 @@ export default function TheatreReports() {
                         <td className="py-2 text-xs text-slate-700">{b.id ?? b._id}</td>
                         <td className="py-2">{b.customerName || "—"}</td>
                         <td className="py-2">{b.showTitle || "—"}</td>
-                        <td className="py-2 text-xs">
-                          {Array.isArray(b.seats) ? b.seats.join(", ") : b.seats}
-                        </td>
-                        <td className="py-2">{b.quantity}</td>
-                        <td className="py-2">₹{b.total}</td>
-                        <td className="py-2 text-xs text-slate-500">
-                          {b.createdAt ? fmtDateLong(b.createdAt) : "—"}
-                        </td>
+                        <td className="py-2 text-xs">{Array.isArray(b.seats) ? b.seats.join(", ") : b.seats}</td>
+                        <td className="py-2">{b.quantity ?? "—"}</td>
+                        <td className="py-2">₹{b.total ?? "—"}</td>
+                        <td className="py-2 text-xs text-slate-500">{b.createdAt ? fmtDateLong(b.createdAt) : "—"}</td>
                       </tr>
                     ))}
                     {pageItems.length === 0 && (
@@ -373,16 +397,10 @@ export default function TheatreReports() {
                   Page {page} / {totalPages}
                 </div>
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    className="px-3 py-1 rounded border"
-                  >
+                  <button onClick={() => setPage((p) => Math.max(1, p - 1))} className="px-3 py-1 rounded border">
                     Prev
                   </button>
-                  <button
-                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                    className="px-3 py-1 rounded border"
-                  >
+                  <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} className="px-3 py-1 rounded border">
                     Next
                   </button>
                 </div>
