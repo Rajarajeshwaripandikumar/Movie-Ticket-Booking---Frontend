@@ -62,51 +62,29 @@ function Money({ value }) {
 }
 
 /* ----------------------- Seat formatting helper ----------------------- */
-/**
- * Robust formatter for booking.seats used in list view.
- * Accepts:
- * - [{row:"A",col:6}, ...]
- * - ["A-6","A-7"]
- * - [5,6,7] (numeric seat ids; converted to row/col using seatsPerRow)
- * - "5-8" or "5,6,7" (single string)
- * - 6 (single number)
- *
- * Returns human-friendly: "A-5, A-6, A-7" or "—" when none.
- */
+/* (unchanged logic — kept as-is) */
 const formatSeats = (rawInput, { seatsPerRow = 10, rows = "ABCDEFGHIJKLMNOPQRSTUVWXYZ" } = {}) => {
   if (rawInput == null) return "—";
-
-  // Normalize to an array
   const input = Array.isArray(rawInput) ? rawInput : [rawInput];
 
   const expandToken = (token) => {
     if (token == null) return [];
-
-    // object {row, col}
     if (typeof token === "object" && !Array.isArray(token)) {
       if ("row" in token && "col" in token) {
         return [`${String(token.row).toUpperCase()}-${token.col}`];
       }
       return [];
     }
-
-    // number
     if (typeof token === "number" && Number.isFinite(token)) {
       return [token];
     }
-
-    // string
     if (typeof token === "string") {
       const s = token.trim();
-
-      // letter-number like "A-6", "A 6", "a_6", "A6"
       if (/^[A-Za-z]+\s*[-_\s]?\s*\d+$/.test(s) || /^[A-Za-z]+\d+$/.test(s)) {
         const parts = s.split(/[-_\s]+/).filter(Boolean);
         if (parts.length >= 2) return [`${parts[0].toUpperCase()}-${parts[1]}`];
         return [s.toUpperCase()];
       }
-
-      // numeric range "5-10"
       if (/^\d+\s*-\s*\d+$/.test(s)) {
         const [a, b] = s.split("-").map((x) => parseInt(x.trim(), 10)).sort((x, y) => x - y);
         if (Number.isFinite(a) && Number.isFinite(b)) {
@@ -115,25 +93,17 @@ const formatSeats = (rawInput, { seatsPerRow = 10, rows = "ABCDEFGHIJKLMNOPQRSTU
           return out;
         }
       }
-
-      // comma list "5,6,7" or "A-6,B-3"
       if (s.includes(",")) {
         return s.split(",").map((p) => p.trim()).flatMap(expandToken);
       }
-
-      // single numeric string
       if (/^\d+$/.test(s)) return [Number(s)];
-
-      // fallback
       return [s];
     }
-
     return [];
   };
 
   const flat = input.flatMap(expandToken).filter((x) => x != null);
 
-  // Convert numeric ids to row-col
   const mapped = flat.map((item) => {
     if (typeof item === "number") {
       const idx = item - 1;
@@ -142,18 +112,14 @@ const formatSeats = (rawInput, { seatsPerRow = 10, rows = "ABCDEFGHIJKLMNOPQRSTU
       const colNumber = (idx % seatsPerRow) + 1;
       return `${rowLetter}-${colNumber}`;
     }
-
     if (typeof item === "string" && /^[A-Za-z]+-\d+$/.test(item)) {
       const parts = item.split("-");
       return `${parts[0].toUpperCase()}-${parts[1]}`;
     }
-
     return String(item);
   });
 
   const unique = Array.from(new Set(mapped));
-
-  // Sort: group by row then numeric col
   unique.sort((a, b) => {
     const [ra, ca] = a.split("-");
     const [rb, cb] = b.split("-");
@@ -176,22 +142,29 @@ export default function MyBookings() {
   const [msg, setMsg] = useState("");
   const [msgType, setMsgType] = useState("info");
   const [cancellingId, setCancellingId] = useState(null);
-  const { token } = useAuth();
+  // Use auth only for optional UI behaviors; api will attach token itself
+  const auth = useAuth();
   const navigate = useNavigate();
-
-  const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
   const loadBookings = async () => {
     setLoading(true);
     setMsg("");
     try {
-      const { data } = await api.get("/bookings/me", { headers });
+      // Let api instance attach Authorization/header as it is configured to do
+      const res = await api.get("/bookings/me");
+      const data = res?.data ?? {};
       if (Array.isArray(data)) setBookings(data);
       else if (Array.isArray(data.bookings)) setBookings(data.bookings);
       else setBookings([]);
     } catch (e) {
       console.error("Error fetching bookings", e);
-      setMsg("❌ Failed to load bookings.");
+      // If 401, provide helpful message
+      const status = e?.response?.status;
+      if (status === 401) {
+        setMsg("You must be logged in to view bookings.");
+      } else {
+        setMsg("❌ Failed to load bookings.");
+      }
       setMsgType("error");
     } finally {
       setLoading(false);
@@ -199,20 +172,17 @@ export default function MyBookings() {
   };
 
   useEffect(() => {
-    if (token) loadBookings();
+    // Try to load bookings on mount — api will attach tokens from storage if available
+    loadBookings();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+  }, []);
 
   const cancelBooking = async (id) => {
     if (!window.confirm("Are you sure you want to cancel this booking?")) return;
     try {
       setCancellingId(id);
       setMsg("");
-      const res = await api.patch(
-        `/bookings/${id}/cancel`,
-        {},
-        { headers: { ...headers, "Content-Type": "application/json" } }
-      );
+      const res = await api.patch(`/bookings/${id}/cancel`, {});
       const successMsg = res?.data?.message || "✅ Booking cancelled successfully.";
       setMsg(successMsg);
       setMsgType("success");
@@ -259,23 +229,26 @@ export default function MyBookings() {
             <div className="text-5xl mb-2">🍿</div>
             <h2 className="text-xl font-extrabold mb-1">No Bookings Found</h2>
             <p className="text-slate-600 mb-4">You haven’t booked any tickets yet.</p>
-            <PrimaryBtn as={Link} to="/movies" className="rounded-full">
+
+            {/* Use a real Link (styled like the primary button) */}
+            <Link
+              to="/movies"
+              className="inline-flex items-center justify-center gap-2 rounded-full px-5 py-2 font-semibold text-white bg-[#0071DC] hover:bg-[#0654BA]"
+            >
               Browse Movies
-            </PrimaryBtn>
+            </Link>
           </Card>
         </div>
       ) : (
         <div className="grid gap-4 sm:gap-5 max-w-5xl mx-auto">
           {bookings.map((b) => {
             const show = b.showtime || {};
-            const movie = show.movie?.title || "Unknown Movie";
+            const movie = show.movie?.title || b.movie?.title || "Unknown Movie";
             const theater = show.screen?.name || "—";
 
-            // Format seats robustly:
-            // IMPORTANT: If your auditorium has a different layout, change seatsPerRow.
-            const seats = formatSeats(b.seats, { seatsPerRow: 10 });
+            const seats = formatSeats(b.seats, { seatsPerRow: show?.screen?.cols || 10 });
 
-            const date = show.time || show.startTime || show.date || null;
+            const date = show.startTime || show.time || show.date || null;
             const dateStr = date
               ? new Date(date).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })
               : "—";
@@ -284,7 +257,6 @@ export default function MyBookings() {
             return (
               <Card key={b._id} className="p-4 sm:p-5">
                 <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                  {/* Left: Movie & meta (clickable) */}
                   <button
                     className="flex-1 text-left"
                     onClick={() => navigate(`/bookings/${b._id}`)}
@@ -299,11 +271,8 @@ export default function MyBookings() {
                       <span className="font-semibold">Seats:</span> {seats}
                     </p>
                     <p className="text-xs text-slate-600 mt-1">Showtime: {dateStr}</p>
-                    {/* DEBUG: Uncomment to inspect raw seats data in UI */}
-                    {/* <div className="text-xs text-slate-400 mt-1">RAW: <code>{JSON.stringify(b.seats)}</code></div> */}
                   </button>
 
-                  {/* Right: Status + actions */}
                   <div className="flex flex-col items-end gap-2">
                     <Badge status={b.status} />
 
