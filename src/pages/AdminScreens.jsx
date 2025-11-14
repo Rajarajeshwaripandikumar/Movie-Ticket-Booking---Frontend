@@ -13,6 +13,9 @@ import {
   RefreshCcw,
   Trash2,
   PlusCircle,
+  Eye,
+  CreditCard,
+  AlertTriangle,
 } from "lucide-react";
 
 /* --------------------------- Walmart primitives --------------------------- */
@@ -22,19 +25,11 @@ const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
   </Tag>
 );
 
-/**
- * Field component — fixed to forward children into the rendered element.
- * Supports `as` prop to render <input>, <select>, <textarea>, etc.
- */
 function Field({ as = "input", icon: Icon, label, className = "", children, ...props }) {
   const C = as;
   return (
     <div>
-      {label && (
-        <label className="block text-[12px] font-semibold text-slate-600 mb-1">
-          {label}
-        </label>
-      )}
+      {label && <label className="block text-[12px] font-semibold text-slate-600 mb-1">{label}</label>}
       <div className="flex items-center gap-2 border border-slate-300 rounded-xl bg-white px-3 py-2 focus-within:ring-2 focus-within:ring-[#0071DC]">
         {Icon && <Icon className="h-4 w-4 text-slate-500" />}
         <C
@@ -107,7 +102,6 @@ function extractTheaterArray(payload) {
 /* ----------------------------- networking ----------------------------- */
 /**
  * Try to load screens with endpoint fallbacks.
- * Includes compatibility aliases used by your backend.
  */
 async function fetchScreensForTheater(theaterId) {
   const candidates = [
@@ -135,6 +129,41 @@ async function fetchScreensForTheater(theaterId) {
   throw lastErr || new Error("Failed to fetch screens");
 }
 
+/* Get seats for a screen with fallbacks (admin/public). Returns { seats, rows, cols } */
+async function fetchSeatsForScreen(theaterId, screenId) {
+  // try admin scoped first if theaterId available (keeps scoped permission flow)
+  const candidates = [];
+  if (theaterId) candidates.push(`/admin/theaters/${theaterId}/screens/${screenId}/seats`);
+  candidates.push(`/screens/${screenId}/seats`);
+  candidates.push(`/screens/${screenId}?_ts=${Date.now()}`); // fallback: get screen and compute client-side
+  for (const p of candidates) {
+    try {
+      const res = await api.get(p, { params: { _ts: Date.now() } });
+      // /seats endpoints return { ok: true, data: [...], rows, cols }
+      if (res?.data && Array.isArray(res.data.data)) {
+        return { seats: res.data.data, rows: res.data.rows, cols: res.data.cols };
+      }
+      // Alias: some endpoints return raw array
+      if (Array.isArray(res.data)) {
+        return { seats: res.data, rows: undefined, cols: undefined };
+      }
+      // screen object returned — client can build seat labels
+      const obj = res?.data?.data ?? res?.data;
+      if (obj && (obj.rows || obj.cols)) {
+        const rows = Number(obj.rows || obj.row || 0);
+        const cols = Number(obj.cols || obj.columns || obj.col || 0);
+        if (rows > 0 && cols > 0) {
+          const seats = buildSeatLabels(rows, cols);
+          return { seats, rows, cols };
+        }
+      }
+    } catch (err) {
+      console.debug("[AdminScreens] fetchSeats candidate failed:", p, err?.response?.status ?? err?.message ?? err);
+    }
+  }
+  throw new Error("Failed to load seats for screen");
+}
+
 /* Canonical role mapper (simple) */
 const canonRole = (r = "") => {
   let v = String(r).toUpperCase().replace("ROLE_", "").trim();
@@ -148,17 +177,13 @@ export default function AdminScreens() {
 
   // IMPORTANT: prefer adminToken when present
   const token = auth.adminToken || auth.token || "";
-  // Use the AuthContext initialized flag
   const loading = auth.initialized === false;
   const isLoggedIn = !!(auth.isLoggedIn || token);
 
-  // roles may be in auth.roles (array) or auth.role
   const rawRoles = auth.roles || auth.user?.roles || (auth.role ? [auth.role] : []);
   const roles = useMemo(() => (Array.isArray(rawRoles) ? rawRoles.map(canonRole) : []), [rawRoles]);
   const isAdminLike = roles.some((r) => ["SUPER_ADMIN", "ADMIN", "THEATRE_ADMIN"].includes(r));
 
-  // debug
-  // eslint-disable-next-line no-console
   console.debug("[AdminScreens] auth summary:", {
     tokenPresent: !!token,
     tokenExcerpt: token ? (token.slice ? token.slice(0, 8) + "..." : "(token)") : null,
@@ -185,14 +210,13 @@ export default function AdminScreens() {
   const [msg, setMsg] = useState("");
   const [msgType, setMsgType] = useState("info");
 
-  /* Auto-select theatre for theatre admins */
   useEffect(() => {
     if (isTheatreAdmin && theatreIdFromJWT && !selectedTheater) {
       setSelectedTheater(theatreIdFromJWT);
     }
   }, [isTheatreAdmin, theatreIdFromJWT, selectedTheater]);
 
-  /* Load all theaters — with endpoint fallbacks (debugging enabled) */
+  /* Load all theaters (fallbacks) */
   useEffect(() => {
     (async () => {
       try {
@@ -265,7 +289,7 @@ export default function AdminScreens() {
     })();
   }, [selectedTheater]);
 
-  /* When selecting screen dropdown */
+  /* When selecting screen from dropdown */
   useEffect(() => {
     if (selectedScreen === NEW) {
       setScreenName("");
@@ -303,7 +327,6 @@ export default function AdminScreens() {
 
     try {
       if (selectedScreen === NEW) {
-        // try admin path first then public
         const candidates = [
           `/admin/theaters/${selectedTheater}/screens`,
           `/theaters/${selectedTheater}/screens`,
@@ -337,6 +360,8 @@ export default function AdminScreens() {
         if (!ok) throw new Error("Update screen failed");
       }
 
+      // Refresh both theaters & screens so UI reflects new data
+      await refreshTheaters();
       const updated = await fetchScreensForTheater(selectedTheater);
       setScreens(updated);
 
@@ -355,14 +380,11 @@ export default function AdminScreens() {
     }
   }
 
-  /* Delete theatre */
+  /* Delete theater */
   async function deleteTheater(id) {
     if (!confirm("Delete this theater?")) return;
     try {
-      const candidates = [
-        `/admin/theaters/${id}`,
-        `/theaters/${id}`,
-      ];
+      const candidates = [`/admin/theaters/${id}`, `/theaters/${id}`];
       let ok = false;
       for (const p of candidates) {
         try {
@@ -387,9 +409,58 @@ export default function AdminScreens() {
     }
   }
 
+  /* Delete a screen (scoped) */
+  async function deleteScreen(screenId) {
+    if (!confirm("Delete this screen?")) return;
+    if (!selectedTheater) {
+      setMsg("Select a theater first.");
+      setMsgType("error");
+      return;
+    }
+    try {
+      const candidates = [
+        `/admin/theaters/${selectedTheater}/screens/${screenId}`,
+        `/theaters/${selectedTheater}/screens/${screenId}`,
+      ];
+      let ok = false;
+      for (const p of candidates) {
+        try {
+          await api.delete(p);
+          ok = true;
+          break;
+        } catch (e) {
+          console.debug("[AdminScreens] delete screen candidate failed:", p, e?.response?.status ?? e?.message ?? e);
+        }
+      }
+      if (!ok) throw new Error("Delete screen failed");
+
+      const updated = await fetchScreensForTheater(selectedTheater);
+      setScreens(updated);
+      setMsg("Screen deleted");
+      setMsgType("success");
+    } catch (err) {
+      setMsg("Failed to delete screen.");
+      setMsgType("error");
+      console.debug("[AdminScreens] delete screen error:", err?.response?.data ?? err?.message ?? err);
+    }
+  }
+
+  /* View seats for a screen (shows a preview) */
+  async function viewSeats(screenId, sTheatreId) {
+    try {
+      const id = screenId || selectedScreen;
+      if (!id) return alert("No screen id");
+      const { seats, rows: r, cols: c } = await fetchSeatsForScreen(sTheatreId || selectedTheater, id);
+      const preview = Array.isArray(seats) ? seats.slice(0, 120).join(", ") : "No seats";
+      alert(`Seats preview (${r || "?"}×${c || "?"}):\n\n${preview}${Array.isArray(seats) && seats.length > 120 ? "\n… (truncated)" : ""}`);
+    } catch (err) {
+      console.debug("[AdminScreens] viewSeats failed:", err?.response?.data ?? err?.message ?? err);
+      alert("Failed to load seats for this screen (see console).");
+    }
+  }
+
   /* --------------------------- Diagnostics & refresh helpers --------------------------- */
 
-  // Diagnostics: print local auth sources and do a raw fetch to admin endpoint
   async function runDiagnostics() {
     try {
       console.group("[AdminScreens] DIAGNOSTICS");
@@ -413,16 +484,9 @@ export default function AdminScreens() {
     }
   }
 
-  // Refresh theaters (same fallback logic used at mount)
   async function refreshTheaters() {
     try {
-      const candidates = [
-        "/admin/theaters",
-        "/admin/theatres",
-        "/api/admin/theaters",
-        "/theaters",
-        "/theatres",
-      ];
+      const candidates = ["/admin/theaters", "/admin/theatres", "/api/admin/theaters", "/theaters", "/theatres"];
       for (const p of candidates) {
         try {
           const { data, status } = await api.get(p, { params: { _ts: Date.now() } });
@@ -436,7 +500,6 @@ export default function AdminScreens() {
           console.debug("[AdminScreens][refresh] failed", p, e?.response?.status ?? e?.message ?? e);
         }
       }
-      // if none found, keep existing theaters and show a message
       setMsg("Could not refresh theaters from backend.");
       setMsgType("error");
     } catch (e) {
@@ -480,7 +543,11 @@ export default function AdminScreens() {
                 : "bg-blue-50 border-blue-200 text-blue-700"
             }`}
           >
-            {msg}
+            <div className="flex items-center gap-2">
+              {msgType === "error" && <AlertTriangle className="h-4 w-4" />}
+              {msgType === "success" && <CreditCard className="h-4 w-4" />}
+              <span>{msg}</span>
+            </div>
           </Card>
         )}
 
@@ -506,17 +573,10 @@ export default function AdminScreens() {
               ))}
             </Field>
 
-            {loadingScreens && selectedTheater && (
-              <div className="text-xs text-slate-600 mt-1">Loading screens…</div>
-            )}
+            {loadingScreens && selectedTheater && <div className="text-xs text-slate-600 mt-1">Loading screens…</div>}
 
             {selectedTheater ? (
-              <Field
-                as="select"
-                label="Select Screen"
-                value={selectedScreen}
-                onChange={(e) => setSelectedScreen(e.target.value)}
-              >
+              <Field as="select" label="Select Screen" value={selectedScreen} onChange={(e) => setSelectedScreen(e.target.value)}>
                 <option value={NEW}>➕ Create New Screen</option>
                 {screens.map((s) => {
                   const n = normalizeScreen(s);
@@ -529,34 +589,15 @@ export default function AdminScreens() {
               </Field>
             ) : null}
 
-            <Field
-              label="Screen Name"
-              placeholder="e.g. Screen 1"
-              value={screenName}
-              onChange={(e) => setScreenName(e.target.value)}
-            />
+            <Field label="Screen Name" placeholder="e.g. Screen 1" value={screenName} onChange={(e) => setScreenName(e.target.value)} />
 
             <div className="grid grid-cols-2 gap-3">
-              <Field
-                type="number"
-                min="1"
-                placeholder="Rows"
-                icon={Rows3}
-                value={rows}
-                onChange={(e) => setRows(e.target.value)}
-              />
-              <Field
-                type="number"
-                min="1"
-                placeholder="Columns"
-                icon={Columns3}
-                value={cols}
-                onChange={(e) => setCols(e.target.value)}
-              />
+              <Field type="number" min="1" placeholder="Rows" icon={Rows3} value={rows} onChange={(e) => setRows(e.target.value)} />
+              <Field type="number" min="1" placeholder="Columns" icon={Columns3} value={cols} onChange={(e) => setCols(e.target.value)} />
             </div>
 
             <div className="flex items-center justify-between">
-              <PrimaryBtn type="submit" disabled={loadingAction}>
+              <PrimaryBtn type="submit" disabled={loadingAction || !selectedTheater}>
                 {loadingAction ? "Saving…" : selectedScreen === NEW ? (
                   <>
                     <PlusCircle className="h-4 w-4" /> Create Screen
@@ -566,17 +607,29 @@ export default function AdminScreens() {
                 )}
               </PrimaryBtn>
 
-              <SecondaryBtn
-                type="button"
-                onClick={() => {
-                  setSelectedScreen(NEW);
-                  setScreenName("");
-                  setRows("");
-                  setCols("");
-                }}
-              >
-                Clear
-              </SecondaryBtn>
+              <div className="flex gap-2">
+                <SecondaryBtn
+                  type="button"
+                  onClick={() => {
+                    setSelectedScreen(NEW);
+                    setScreenName("");
+                    setRows("");
+                    setCols("");
+                  }}
+                >
+                  Clear
+                </SecondaryBtn>
+
+                <SecondaryBtn type="button" onClick={() => viewSeats(selectedScreen, selectedTheater)} disabled={selectedScreen === NEW}>
+                  <Eye className="h-4 w-4" /> View Seats
+                </SecondaryBtn>
+
+                {selectedScreen !== NEW && (
+                  <SecondaryBtn type="button" onClick={() => deleteScreen(selectedScreen)} className="text-rose-700 border-rose-200">
+                    <Trash2 className="h-4 w-4" /> Delete Screen
+                  </SecondaryBtn>
+                )}
+              </div>
             </div>
           </form>
         </Card>
@@ -597,9 +650,7 @@ export default function AdminScreens() {
                     <div className="flex justify-between gap-3">
                       <div>
                         <div className="font-extrabold">{t.name}</div>
-                        <div className="text-sm text-slate-600">
-                          {t.city} — {t.address || "No address"}
-                        </div>
+                        <div className="text-sm text-slate-600">{t.city} — {t.address || "No address"}</div>
                       </div>
 
                       <div className="flex gap-2">
@@ -613,10 +664,7 @@ export default function AdminScreens() {
                           Use
                         </PrimaryBtn>
 
-                        <SecondaryBtn
-                          className="px-3 py-1 text-sm"
-                          onClick={() => deleteTheater(t._id || t.id)}
-                        >
+                        <SecondaryBtn className="px-3 py-1 text-sm" onClick={() => deleteTheater(t._id || t.id)}>
                           <Trash2 className="h-4 w-4" /> Delete
                         </SecondaryBtn>
                       </div>
@@ -631,11 +679,19 @@ export default function AdminScreens() {
                           {t.screens.map((s) => {
                             const n = normalizeScreen(s);
                             return (
-                              <span
-                                key={s._id || s.id}
-                                className="text-xs px-2 py-1 rounded-lg border bg-slate-50"
-                              >
-                                {s.name} — {n.rows}×{n.cols}
+                              <span key={s._id || s.id} className="text-xs px-2 py-1 rounded-lg border bg-slate-50 flex items-center gap-2">
+                                <span>{s.name} — {n.rows}×{n.cols}</span>
+                                <button
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border bg-white"
+                                  onClick={() => {
+                                    // quick actions per-screen: select & view seats
+                                    setSelectedTheater(t._id || t.id);
+                                    setSelectedScreen(s._id || s.id);
+                                    setTimeout(() => viewSeats(s._id || s.id, t._id || t.id), 200);
+                                  }}
+                                >
+                                  <Eye className="h-3 w-3" /> Seats
+                                </button>
                               </span>
                             );
                           })}
@@ -651,4 +707,28 @@ export default function AdminScreens() {
       </div>
     </main>
   );
+}
+
+/* ---------------------------
+ * small utils (seat labels)
+ * --------------------------- */
+function buildSeatLabels(rows, cols) {
+  const labels = [];
+  const toRowLabel = (n) => {
+    let label = "";
+    let x = n;
+    while (x > 0) {
+      x -= 1;
+      label = String.fromCharCode(65 + (x % 26)) + label;
+      x = Math.floor(x / 26);
+    }
+    return label;
+  };
+  for (let r = 1; r <= rows; r++) {
+    const rowLabel = toRowLabel(r);
+    for (let c = 1; c <= cols; c++) {
+      labels.push(`${rowLabel}${c}`);
+    }
+  }
+  return labels;
 }
