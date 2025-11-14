@@ -94,18 +94,9 @@ const QuickCard = ({ title, desc, to, cta, Icon }) => (
   </Card>
 );
 
-/* ------------------------------- Tailwind-friendly LandscapeCarousel ----------------------- */
+/* ------------------------------- LandscapeCarousel ----------------------- */
 function LandscapeCarousel({
-  images = [
-    { jpg: "/Poster1_land.jpg" },
-    { jpg: "/Poster2_land.jpg" },
-    { jpg: "/Poster3_land.jpg" },
-    { jpg: "/Poster4_land.jpg" },
-    { jpg: "/Poster5_land.jpg" },
-    { jpg: "/Poster6_land.jpg" },
-    { jpg: "/Poster7_land.jpg" },
-    { jpg: "/Poster8_land.jpg" }
-  ],
+  images = [],
   interval = 3200,
   fitMode = "cover",
   objectPosition = "center right",
@@ -117,7 +108,7 @@ function LandscapeCarousel({
   const hoveringRef = useRef(false);
   const touchingRef = useRef(false);
   const rootRef = useRef(null);
-  const length = images.length;
+  const length = Math.max(1, images.length); // guard against zero
 
   useEffect(() => {
     startTimer();
@@ -130,14 +121,14 @@ function LandscapeCarousel({
       stopTimer();
       window.removeEventListener("keydown", handleKey);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [length]);
+    // length intentionally included to restart when images change
+  }, [length, interval]);
 
   const startTimer = () => {
     stopTimer();
     timerRef.current = setInterval(() => {
-      if (!hoveringRef.current && !touchingRef.current) {
-        setIndex(i => (i + 1) % length);
+      if (!hoveringRef.current && !touchingRef.current && images.length > 0) {
+        setIndex(i => (i + 1) % images.length);
       }
     }, interval);
   };
@@ -160,8 +151,8 @@ function LandscapeCarousel({
       if (!moved) return;
       const endX = (e.changedTouches && e.changedTouches[0].clientX) || 0;
       const dx = endX - startX;
-      if (dx < -40) setIndex(i => (i + 1) % length);
-      else if (dx > 40) setIndex(i => (i - 1 + length) % length);
+      if (dx < -40) setIndex(i => (i + 1) % Math.max(1, images.length));
+      else if (dx > 40) setIndex(i => (i - 1 + Math.max(1, images.length)) % Math.max(1, images.length));
     };
     el.addEventListener("touchstart", onTouchStart, { passive: true });
     el.addEventListener("touchmove", onTouchMove, { passive: true });
@@ -171,12 +162,12 @@ function LandscapeCarousel({
       el.removeEventListener("touchmove", onTouchMove);
       el.removeEventListener("touchend", onTouchEnd);
     };
-  }, [length]);
+  }, [images.length]);
 
-  const slidePercent = 100 / length;
+  const slidePercent = images.length > 0 ? 100 / images.length : 100;
   const trackStyle = {
-    width: `${length * 100}%`,
-    transform: `translateX(-${index * slidePercent}%)`,
+    width: `${Math.max(1, images.length) * 100}%`,
+    transform: `translateX(-${(images.length > 0 ? index : 0) * slidePercent}%)`,
     transition: "transform 700ms cubic-bezier(.2,.9,.2,1)",
     height: "100%",
   };
@@ -192,8 +183,8 @@ function LandscapeCarousel({
     >
       {/* track — above overlay */}
       <div style={trackStyle} className="relative z-10 flex">
-        {images.map((img, i) => {
-          const src = errorStates[i] ? fallback : img.jpg;
+        {(images.length > 0 ? images : [{ jpg: fallback, title: "Featured" }]).map((img, i) => {
+          const src = errorStates[i] ? fallback : img.jpg || fallback;
           return (
             <div
               key={i}
@@ -201,7 +192,6 @@ function LandscapeCarousel({
               style={{ flex: `0 0 ${slidePercent}%`, width: `${slidePercent}%`, boxSizing: "border-box" }}
             >
               <img
-                key={img.jpg}
                 src={src}
                 alt={img.title || `Poster ${i + 1}`}
                 loading="lazy"
@@ -212,14 +202,24 @@ function LandscapeCarousel({
                   objectPosition,
                 }}
                 onError={(e) => {
-                  e.target.src = fallback;
-                  setErrorStates(prev => { const n = [...prev]; n[i] = true; return n; });
+                  // guard: only fallback once
+                  const idx = i;
+                  setErrorStates(prev => {
+                    const n = Array.from({ length: Math.max(prev.length, images.length) }, (_, k) => prev[k] || false);
+                    if (n[idx]) return n; // already errored
+                    n[idx] = true;
+                    return n;
+                  });
+                  // replace src with fallback but avoid infinite loops if fallback is missing
+                  if (e?.target && e.target.src !== fallback) e.target.src = fallback;
                 }}
               />
 
-              <div className="pointer-events-none absolute left-6 bottom-6 bg-black/30 backdrop-blur-sm px-3 py-1.5 rounded-md text-sm text-white/90 z-20">
-                {img.title}
-              </div>
+              {img.title && (
+                <div className="pointer-events-none absolute left-6 bottom-6 bg-black/30 backdrop-blur-sm px-3 py-1.5 rounded-md text-sm text-white/90 z-20">
+                  {img.title}
+                </div>
+              )}
             </div>
           );
         })}
@@ -233,12 +233,13 @@ function LandscapeCarousel({
       </div>
 
       {/* indicators */}
-      <div className="absolute left-1/2 bottom-4 transform -translate-x-1/2 flex gap-2 z-20">
-        {images.map((_, i) => (
+      <div className="absolute left-1/2 bottom-4 transform -translate-x-1/2 flex gap-2 z-20" aria-hidden={images.length === 0 ? "true" : "false"}>
+        {(images.length > 0 ? images : [null]).map((_, i) => (
           <button
             key={i}
             onClick={() => setIndex(i)}
             aria-label={`Go to slide ${i + 1}`}
+            aria-pressed={i === index}
             className={`w-8 h-1.5 rounded-full transition-all duration-200 ${i === index ? "bg-white/90" : "bg-white/30"}`}
             style={{ pointerEvents: "auto" }}
           />
@@ -247,14 +248,14 @@ function LandscapeCarousel({
 
       {/* nav buttons */}
       <button
-        onClick={() => setIndex((i) => (i - 1 + length) % length)}
+        onClick={() => setIndex((i) => (i - 1 + Math.max(1, images.length)) % Math.max(1, images.length))}
         aria-label="Previous slide"
         className="pointer-events-auto absolute left-3 top-1/2 -translate-y-1/2 rounded-full bg-black/30 p-2 text-white hover:bg-black/45"
         style={{ backdropFilter: "blur(4px)", zIndex: 30 }}
       >‹</button>
 
       <button
-        onClick={() => setIndex((i) => (i + 1) % length)}
+        onClick={() => setIndex((i) => (i + 1) % Math.max(1, images.length))}
         aria-label="Next slide"
         className="pointer-events-auto absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-black/30 p-2 text-white hover:bg-black/45"
         style={{ backdropFilter: "blur(4px)", zIndex: 30 }}
@@ -268,16 +269,15 @@ export default function Home() {
   const HEADER_H = 64;
 
   // configure images used by the carousel (edit names to match your public/ files)
-  // NOTE: ensure these files exist in public/ or your hosting setup.
   const carouselImages = [
-    { jpg: "/Poster1_land.jpg" },
-    { jpg: "/Poster2_land.jpg" },
-    { jpg: "/Poster3_land.jpg" },
-    { jpg: "/Poster4_land.jpg" },
-    { jpg: "/Poster5_land.jpg" },
-    { jpg: "/Poster6_land.jpg" },
-    { jpg: "/Poster7_land.jpg" },
-    { jpg: "/Poster8_land.jpg" }
+    { jpg: "/Poster1_land.jpg", title: "Poster 1" },
+    { jpg: "/Poster2_land.jpg", title: "Poster 2" },
+    { jpg: "/Poster3_land.jpg", title: "Poster 3" },
+    { jpg: "/Poster4_land.jpg", title: "Poster 4" },
+    { jpg: "/Poster5_land.jpg", title: "Poster 5" },
+    { jpg: "/Poster6_land.jpg", title: "Poster 6" },
+    { jpg: "/Poster7_land.jpg", title: "Poster 7" },
+    { jpg: "/Poster8_land.jpg", title: "Poster 8" }
   ];
 
   return (
@@ -369,7 +369,7 @@ export default function Home() {
           <QuickCard
             title="Showtimes"
             desc="Filter by city, date, and theater to land the perfect slot."
-            to="/Showtimes"
+            to="/showtimes"
             cta="Find"
             Icon={IconClock}
           />
