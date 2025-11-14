@@ -73,7 +73,8 @@ const normalizeScreen = (s = {}) => {
 };
 
 async function fetchScreensForTheater(theaterId) {
-  const { data } = await api.get(`/admin/theaters/${theaterId}/screens`);
+  // <-- corrected endpoint
+  const { data } = await api.get(`/theaters/${theaterId}/screens`);
   const arr = Array.isArray(data) ? data : (data?.data || []);
   return arr.map(normalizeScreen);
 }
@@ -131,7 +132,8 @@ export default function AdminScreens() {
   useEffect(() => {
     (async () => {
       try {
-        const { data } = await api.get(`/admin/theaters`);
+        // <-- corrected endpoint
+        const { data } = await api.get(`/theaters`);
         const list = Array.isArray(data) ? data : data?.data || [];
         setTheaters(list);
       } catch {
@@ -204,9 +206,11 @@ export default function AdminScreens() {
 
     try {
       if (selectedScreen === NEW) {
-        await api.post(`/admin/theaters/${selectedTheater}/screens`, body);
+        // <-- corrected endpoint
+        await api.post(`/theaters/${selectedTheater}/screens`, body);
       } else {
-        await api.patch(`/admin/theaters/${selectedTheater}/screens/${selectedScreen}`, body);
+        // <-- corrected endpoint
+        await api.patch(`/theaters/${selectedTheater}/screens/${selectedScreen}`, body);
       }
 
       const updated = await fetchScreensForTheater(selectedTheater);
@@ -230,7 +234,8 @@ export default function AdminScreens() {
   async function deleteTheater(id) {
     if (!confirm("Delete this theater?")) return;
     try {
-      await api.delete(`/admin/theaters/${id}`);
+      // <-- corrected endpoint
+      await api.delete(`/theaters/${id}`);
       setTheaters((prev) => prev.filter((t) => t._id !== id));
       if (selectedTheater === id) {
         setSelectedTheater("");
@@ -260,7 +265,8 @@ export default function AdminScreens() {
             <SecondaryBtn
               onClick={async () => {
                 try {
-                  const { data } = await api.get(`/admin/theaters`);
+                  // <-- corrected endpoint
+                  const { data } = await api.get(`/theaters`);
                   const list = Array.isArray(data) ? data : data?.data || [];
                   setTheaters(list);
                 } catch {}
