@@ -1,4 +1,4 @@
-// src/App.jsx (FULL UPDATED CODE — Option B canonical /admin/dashboard)
+// src/App.jsx (FULL UPDATED CODE — with patched RequireAuth to avoid bouncing admin/theatre nested routes)
 import React, { useEffect } from "react";
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "./context/AuthContext";
@@ -94,10 +94,10 @@ function NavigationWatcher() {
 }
 
 /* ------------------------- Guarded auth components ------------------------ */
-/* NOTE: These have been updated to rely on the AuthContext shape:
-   - auth.initialized (instead of auth.loading)
-   - auth.isLoggedIn (instead of auth.isAuthenticated)
-   - auth.role / auth.user (instead of auth.user.role)
+/* NOTE: These rely on the AuthContext shape:
+   - auth.initialized
+   - auth.isLoggedIn
+   - auth.role / auth.user
    - auth.isAdmin, auth.isTheatreAdmin, auth.isSuperAdmin where available
 */
 
@@ -135,8 +135,36 @@ function RequireAuth({ children, role }) {
 
   const allowed = Array.isArray(role) ? role.map(normalizeRole) : [normalizeRole(role)];
 
+  // DEBUG: help trace redirect decisions in console
+  // eslint-disable-next-line no-console
+  console.debug("[RequireAuth debug]", {
+    currentRole,
+    allowed,
+    location: location.pathname,
+    auth: { isLoggedIn: auth.isLoggedIn, role: auth.role, userRole: auth.user?.role },
+  });
+
+  // Super admin always allowed
   if (currentRole === "SUPER_ADMIN") return children;
+
+  // If user role is directly allowed, allow
   if (currentRole && allowed.includes(currentRole)) return children;
+
+  // ----- NEW: allow admin/theatre subpath access when it matches role -----
+  // This prevents bouncing when the user directly opens nested admin/theatre URLs.
+  const isRequestingAdminSubpath = location.pathname.startsWith("/admin/");
+  const isRequestingTheatreSubpath = location.pathname.startsWith("/theatre/");
+
+  // Theatre admins can access /theatre/* if the route allows THEATRE_ADMIN
+  if (currentRole === "THEATRE_ADMIN" && isRequestingTheatreSubpath) {
+    if (allowed.includes("THEATRE_ADMIN") || allowed.includes("SUPER_ADMIN")) return children;
+  }
+
+  // Admin-like roles can access /admin/* when the route allows admin-like access
+  if ((currentRole === "ADMIN" || currentRole === "THEATRE_ADMIN") && isRequestingAdminSubpath) {
+    if (allowed.some(r => ["ADMIN", "THEATRE_ADMIN", "SUPER_ADMIN"].includes(r))) return children;
+  }
+  // ------------------------------------------------------------------------
 
   // route user to role-specific home (but avoid re-navigation)
   if (currentRole === "THEATRE_ADMIN") {
