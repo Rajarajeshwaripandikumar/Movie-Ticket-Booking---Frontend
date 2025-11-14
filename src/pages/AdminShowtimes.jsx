@@ -832,7 +832,6 @@ export default function AdminShowtimes() {
 }
 
 /* --------------------------- small extra components --------------------------- */
-
-function CalendarClock() {
+ function CalendarClockIcon() {
   return <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 8h18M21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V10" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M16 3v4M8 3v4" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>;
 }
