@@ -1,4 +1,4 @@
-// src/pages/AdminTheaters.jsx — updated (uses activeToken + safer API handling)
+// src/pages/AdminTheaters.jsx — full updated (uses activeToken + safer API handling)
 import { useEffect, useMemo, useState } from "react";
 import api, { API_DEBUG } from "../api/api";
 import { useAuth } from "../context/AuthContext";
@@ -26,7 +26,12 @@ const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
   </Tag>
 );
 
-function Field({ as = "input", icon: Icon, className = "", label, ...props }) {
+/**
+ * Field component
+ * - forwards children into the rendered element so <select> works
+ * - supports 'as' prop to render select/textarea/input etc.
+ */
+function Field({ as = "input", icon: Icon, className = "", label, children, ...props }) {
   const C = as;
   return (
     <div>
@@ -40,7 +45,9 @@ function Field({ as = "input", icon: Icon, className = "", label, ...props }) {
         <C
           {...props}
           className={`w-full outline-none bg-transparent text-sm ${className}`}
-        />
+        >
+          {children}
+        </C>
       </div>
     </div>
   );
@@ -105,7 +112,9 @@ export default function AdminTheaters() {
   // prefer centralized flags from AuthContext
   const { activeToken, user, isSuperAdmin: ctxIsSuper, initialized } = useAuth() || {};
   // keep backward-compatible role check too if needed
-  const isSuperAdmin = ctxIsSuper || (user && (user.role === ROLE.SUPER_ADMIN || user?.data?.role === ROLE.SUPER_ADMIN));
+  const isSuperAdmin =
+    ctxIsSuper ||
+    (user && (user.role === ROLE.SUPER_ADMIN || user?.data?.role === ROLE.SUPER_ADMIN));
 
   const [theaters, setTheaters] = useState([]);
   const [listLoading, setListLoading] = useState(false);
@@ -172,7 +181,7 @@ export default function AdminTheaters() {
         "/admin/theatres",
         "/superadmin/theaters",
         "/superadmin/theatres",
-        "/super/theatre-admins", // sometimes super endpoints
+        "/super/theatre-admins",
       ];
 
       let arr = [];
@@ -207,7 +216,11 @@ export default function AdminTheaters() {
             arr = tmp;
             // derive canonical base: prefer simple /theaters or /theatres when possible,
             // otherwise use the admin/superadmin path that returned data.
-            if (path.includes("/admin") || path.includes("/superadmin") || path.includes("/super")) {
+            if (
+              path.includes("/admin") ||
+              path.includes("/superadmin") ||
+              path.includes("/super")
+            ) {
               chosenBase = path.split("?")[0].replace(/\/(theaters|theatres|admin|superadmin|super).*$/i, "/theaters");
             } else {
               chosenBase = path.startsWith("/theatres") ? "/theatres" : "/theaters";
@@ -353,14 +366,8 @@ export default function AdminTheaters() {
     }
   }
 
-  const names = useMemo(
-    () => [...new Set(theaters.map((t) => t.name))],
-    [theaters]
-  );
-  const cities = useMemo(
-    () => [...new Set(theaters.map((t) => t.city))],
-    [theaters]
-  );
+  const names = useMemo(() => [...new Set(theaters.map((t) => t.name))], [theaters]);
+  const cities = useMemo(() => [...new Set(theaters.map((t) => t.city))], [theaters]);
   const addresses = useMemo(
     () => [...new Set(theaters.map((t) => t.address).filter(Boolean))],
     [theaters]
@@ -389,7 +396,7 @@ export default function AdminTheaters() {
             <span className="text-xs text-slate-500">
               Showing: {isSuperAdmin ? "All theaters" : "Your theaters"}
             </span>
-            <SecondaryBtn onClick={loadTheaters}>
+            <SecondaryBtn onClick={loadTheaters} title="Refresh theaters" aria-label="Refresh theaters">
               <RefreshCcw className="h-4 w-4" /> Refresh
             </SecondaryBtn>
           </div>
@@ -426,15 +433,17 @@ export default function AdminTheaters() {
                 label="Select Existing Name"
                 value={names.includes(name) ? name : ""}
                 onChange={(e) =>
-                  fillFromTheater(
-                    theaters.find((t) => t.name === e.target.value)
-                  )
+                  fillFromTheater(theaters.find((t) => t.name === e.target.value))
                 }
                 icon={Building2}
+                disabled={listLoading}
+                aria-busy={listLoading}
               >
                 <option value="">—</option>
                 {names.map((n) => (
-                  <option key={n}>{n}</option>
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
                 ))}
               </Field>
 
@@ -451,15 +460,17 @@ export default function AdminTheaters() {
                 label="Select Existing City"
                 value={cities.includes(city) ? city : ""}
                 onChange={(e) =>
-                  fillFromTheater(
-                    theaters.find((t) => t.city === e.target.value)
-                  )
+                  fillFromTheater(theaters.find((t) => t.city === e.target.value))
                 }
                 icon={MapPin}
+                disabled={listLoading}
+                aria-busy={listLoading}
               >
                 <option value="">—</option>
                 {cities.map((c) => (
-                  <option key={c}>{c}</option>
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
                 ))}
               </Field>
 
@@ -476,15 +487,17 @@ export default function AdminTheaters() {
                 label="Select Existing Address"
                 value={addresses.includes(address) ? address : ""}
                 onChange={(e) =>
-                  fillFromTheater(
-                    theaters.find((t) => t.address === e.target.value)
-                  )
+                  fillFromTheater(theaters.find((t) => t.address === e.target.value))
                 }
                 icon={Home}
+                disabled={listLoading}
+                aria-busy={listLoading}
               >
                 <option value="">—</option>
                 {addresses.map((a) => (
-                  <option key={a}>{a}</option>
+                  <option key={a} value={a}>
+                    {a}
+                  </option>
                 ))}
               </Field>
 
@@ -510,6 +523,8 @@ export default function AdminTheaters() {
                       onClick={() =>
                         setAmenitiesList(amenitiesList.filter((x) => x !== a))
                       }
+                      title={`Remove ${a}`}
+                      aria-label={`Remove ${a}`}
                     />
                   </span>
                 ))}
@@ -555,7 +570,7 @@ export default function AdminTheaters() {
               </div>
 
               <div className="flex gap-2">
-                <PrimaryBtn type="submit" disabled={loading || !isSuperAdmin}>
+                <PrimaryBtn type="submit" disabled={loading || !isSuperAdmin} title="Create theater" aria-label="Create theater">
                   {loading ? "Saving..." : "Create"}
                 </PrimaryBtn>
                 <PrimaryBtn
@@ -563,10 +578,12 @@ export default function AdminTheaters() {
                   disabled={!selectedId || loading || !isSuperAdmin}
                   className="bg-[#0A66C2] hover:bg-[#0956A3]"
                   type="button"
+                  title="Update theater"
+                  aria-label="Update theater"
                 >
                   <PencilLine className="h-4 w-4" /> Update
                 </PrimaryBtn>
-                <SecondaryBtn type="button" onClick={resetForm}>
+                <SecondaryBtn type="button" onClick={resetForm} title="Clear form" aria-label="Clear form">
                   Clear
                 </SecondaryBtn>
               </div>
@@ -617,6 +634,8 @@ export default function AdminTheaters() {
                           type="button"
                           onClick={() => fillFromTheater(t)}
                           className="inline-flex items-center justify-center w-9 h-9 rounded-full border border-slate-300 bg-white hover:bg-slate-50"
+                          title="Edit theater"
+                          aria-label={`Edit ${t.name}`}
                         >
                           <PencilLine className="h-4 w-4" />
                         </button>
@@ -624,6 +643,8 @@ export default function AdminTheaters() {
                           type="button"
                           onClick={() => deleteTheater(t._id)}
                           className="inline-flex items-center justify-center w-9 h-9 rounded-full border border-rose-300 bg-white hover:bg-rose-50 text-rose-600"
+                          title="Delete theater"
+                          aria-label={`Delete ${t.name}`}
                         >
                           <Trash2 className="h-4 w-4" />
                         </button>
