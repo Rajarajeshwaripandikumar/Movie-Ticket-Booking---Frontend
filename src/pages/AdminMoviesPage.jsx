@@ -1,6 +1,7 @@
-// src/pages/AdminMovies.jsx
+// src/pages/AdminMovies.jsx — resilient admin movies page with endpoint detection
+
 import React, { useEffect, useRef, useState } from "react";
-import api from "../api/api";
+import api, { API_DEBUG } from "../api/api";
 import Layout from "../components/Layout";
 
 /* --------------------------- Walmart primitives --------------------------- */
@@ -56,18 +57,24 @@ const DEFAULT_POSTER =
     </svg>
   `);
 
-/* -------------------------- Backend base URL -------------------------- */
-const API_BASE = import.meta.env.VITE_API_BASE || "https://movie-ticket-booking-backend-o1m2.onrender.com/api";
-const FILES_BASE = API_BASE.replace(/\/api\/?$/, "");
-
 /* ----------------------- Upload / Credentials Flags --------------------- */
 const MAX_UPLOAD_RETRIES = 2;
 const UPLOAD_WITH_CREDENTIALS = false;
 
-/* ----------------------------- Helpers -------------------------------- */
+/* -------------------------------- Helpers -------------------------------- */
 function resolvePosterUrl(url) {
   if (!url) return null;
-  return /^https?:\/\//i.test(url) ? url : `${FILES_BASE}${url}`;
+  // api module has BASE_URL and API_PREFIX internally, but this replicates previous logic
+  // If absolute, return as-is; otherwise prefix with api base origin
+  try {
+    if (/^https?:\/\//i.test(url)) return url;
+    // derive base origin from api.defaults.baseURL if present
+    const base = api?.defaults?.baseURL || "";
+    // base likely like https://host/api -> remove trailing /api
+    return String(base).replace(/\/api\/?$/, "") + url;
+  } catch {
+    return url;
+  }
 }
 
 function toArray(v) {
@@ -94,10 +101,8 @@ function normalizeMovie(m = {}) {
   const genresStr = genresArr.join(", ");
   const languages = Array.isArray(m.languages) ? m.languages : toArray(m.languages ?? m.language ?? "");
 
-  // Defensive, shape-normalizing cast array
   const cast = Array.isArray(m.cast)
     ? m.cast.map((c) => {
-        // handle many shapes: string, { name }, { actorName }, { actor: { name } }, { person: { name } }
         if (typeof c === "string") return { actorName: String(c), character: "" };
         if (!c || typeof c !== "object") return { actorName: String(c || ""), character: "" };
         const actorName =
@@ -111,7 +116,6 @@ function normalizeMovie(m = {}) {
       })
     : [];
 
-  // Defensive crew normalization
   const crew = Array.isArray(m.crew)
     ? m.crew.map((c) => {
         if (!c || typeof c !== "object") return { name: String(c || ""), role: "" };
@@ -494,35 +498,89 @@ export default function AdminMoviesPage() {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
 
-  async function fetchMovies() {
+  // detected read endpoint (list) and admin/write base
+  const [movieListPath, setMovieListPath] = useState("/movies");
+  const [movieAdminBase, setMovieAdminBase] = useState("/movies/admin"); // where create/update/delete will be attempted
+
+  async function detectAndFetchMovies() {
     setLoading(true);
     setError("");
     try {
-      const token = localStorage.getItem("token");
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      // candidate list endpoints — prefer admin list if present, then simple /movies
+      const candidates = [
+        "/movies/admin/list",
+        "/movies/admin",
+        "/admin/movies",
+        "/movies",
+        "/movies/list",
+        "/movies/mine",
+      ];
 
-      const resp = await api.get("/movies/admin/list", { headers, params: { limit: 50, q } });
+      let list = [];
+      let detected = null;
 
-      const list = resp?.data?.data || resp?.data?.movies || resp?.data || [];
-      setMovies((Array.isArray(list) ? list : []).map(normalizeMovie));
-    } catch (err) {
-      console.error("fetchMovies failed:", err);
-      const server = err?.response?.data;
-      if (server) {
-        console.error("server response:", server);
-        setError(server?.message || JSON.stringify(server));
-      } else if (err?.request && !err?.response) {
-        setError("No response from server (network/CORS).");
-      } else {
-        setError("Unable to fetch movies");
+      for (const p of candidates) {
+        try {
+          if (API_DEBUG) console.debug("[AdminMovies] trying", p);
+          const resp = await api.getFresh(p, { params: { q, limit: 50 } }); // api.getFresh returns res.data
+          const tmp =
+            (Array.isArray(resp) && resp) ||
+            resp?.movies ||
+            resp?.data?.movies ||
+            resp?.data?.data ||
+            resp?.data ||
+            resp?.items ||
+            resp?.results ||
+            resp ||
+            [];
+
+          if (Array.isArray(tmp) && tmp.length) {
+            list = tmp;
+            detected = p;
+            if (API_DEBUG) console.debug("[AdminMovies] success at", p, "count:", tmp.length);
+            break;
+          } else if (API_DEBUG) {
+            console.debug("[AdminMovies] no items at", p, "resp:", resp);
+          }
+        } catch (err) {
+          if (API_DEBUG) console.warn("[AdminMovies] error at", p, err?.response?.status || err?.message || err);
+        }
       }
+
+      setMovies((Array.isArray(list) ? list : []).map(normalizeMovie));
+
+      // decide admin base for writes:
+      // prefer explicit admin path if detected, else try /movies/admin and fall back to /movies
+      if (detected) {
+        if (detected.includes("admin") || detected.includes("/admin")) {
+          // if detected was /movies/admin/list -> derive /movies/admin
+          const base = detected.replace(/\/list$/, "").replace(/\/$/, "");
+          setMovieListPath(detected);
+          setMovieAdminBase(base.startsWith("/admin") ? `/movies${base}` : base.split("/list")[0].split("?")[0]);
+        } else {
+          setMovieListPath(detected);
+          // try /movies/admin first for writes; fallback to /movies below when using it
+          setMovieAdminBase(detected.includes("/movies") ? "/movies/admin" : "/movies");
+        }
+      } else {
+        // default
+        setMovieListPath("/movies");
+        setMovieAdminBase("/movies/admin");
+        if (API_DEBUG) console.warn("[AdminMovies] no candidate returned movies — using defaults");
+      }
+    } catch (err) {
+      console.error("detectAndFetchMovies failed:", err);
+      const server = err?.response?.data;
+      if (server) setError(server?.message || JSON.stringify(server));
+      else if (err?.request && !err?.response) setError("No response from server (network/CORS).");
+      else setError("Unable to fetch movies");
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    fetchMovies();
+    detectAndFetchMovies();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -537,6 +595,7 @@ export default function AdminMoviesPage() {
         setEditing(normalizeMovie(movieItem));
         return;
       }
+      // try canonical read by id (backend may use /movies/:id)
       const resp = await api.get(`/movies/${id}`, { headers });
       const serverMovie = resp?.data?.data || resp?.data || movieItem;
       setEditing(normalizeMovie(serverMovie));
@@ -554,6 +613,7 @@ export default function AdminMoviesPage() {
     if (submittingRef.current) return;
     submittingRef.current = true;
     try {
+      // Attempt create: prefer movieAdminBase, but if that fails fall back to /movies
       const token = localStorage.getItem("token");
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
@@ -561,7 +621,22 @@ export default function AdminMoviesPage() {
         if (api?.defaults?.headers?.post) delete api.defaults.headers.post["Content-Type"];
       } catch (e) {}
 
-      const resp = await api.post("/movies/admin", formData, { headers, withCredentials: UPLOAD_WITH_CREDENTIALS });
+      const tryPaths = [movieAdminBase, "/movies/admin", "/movies"];
+      let resp = null;
+      let done = false;
+      for (const p of tryPaths) {
+        try {
+          if (API_DEBUG) console.debug("[AdminMovies] creating via", p);
+          resp = await api.post(p, formData, { headers, withCredentials: UPLOAD_WITH_CREDENTIALS });
+          done = true;
+          break;
+        } catch (err) {
+          if (API_DEBUG) console.warn("[AdminMovies] create failed at", p, err?.response?.status || err?.message || err);
+          // try next
+        }
+      }
+      if (!done) throw new Error("Create failed on all candidate endpoints");
+
       const created = resp?.data?.data || resp?.data?.movie || resp?.data;
       if (created) setMovies((m) => [normalizeMovie(created), ...m]);
       setCreating(false);
@@ -594,14 +669,33 @@ export default function AdminMoviesPage() {
         if (api?.defaults?.headers?.post) delete api.defaults.headers.post["Content-Type"];
       } catch (e) {}
 
-      const resp = await api.put(`/movies/admin/${id}`, formData, { headers, withCredentials: UPLOAD_WITH_CREDENTIALS });
+      // attempt several plausible update endpoints
+      const tryPaths = [
+        `${movieAdminBase}/${id}`,
+        `/movies/admin/${id}`,
+        `/movies/${id}`,
+      ];
+
+      let resp = null;
+      let done = false;
+      for (const p of tryPaths) {
+        try {
+          if (API_DEBUG) console.debug("[AdminMovies] updating via", p);
+          resp = await api.put(p, formData, { headers, withCredentials: UPLOAD_WITH_CREDENTIALS });
+          done = true;
+          break;
+        } catch (err) {
+          if (API_DEBUG) console.warn("[AdminMovies] update failed at", p, err?.response?.status || err?.message || err);
+        }
+      }
+      if (!done) throw new Error("Update failed on all candidate endpoints");
+
       const updatedRaw = resp?.data?.data || resp?.data?.movie || resp?.data;
       const updated = normalizeMovie(updatedRaw);
       setMovies((m) => m.map((x) => ((x._id || x.id) === (updated._id || updated.id) ? updated : x)));
       setEditing(null);
     } catch (err) {
       console.error("Update failed (full error):", err);
-
       const serverMsg = err?.response?.data;
       if (serverMsg) {
         console.error("server response:", serverMsg);
@@ -625,7 +719,27 @@ export default function AdminMoviesPage() {
     try {
       const token = localStorage.getItem("token");
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      await api.delete(`/movies/admin/${m._id || m.id}`, { headers });
+
+      const id = m._id || m.id;
+      const tryPaths = [
+        `${movieAdminBase}/${id}`,
+        `/movies/admin/${id}`,
+        `/movies/${id}`,
+      ];
+
+      let done = false;
+      for (const p of tryPaths) {
+        try {
+          if (API_DEBUG) console.debug("[AdminMovies] deleting via", p);
+          await api.delete(p, { headers });
+          done = true;
+          break;
+        } catch (err) {
+          if (API_DEBUG) console.warn("[AdminMovies] delete failed at", p, err?.response?.status || err?.message || err);
+        }
+      }
+      if (!done) throw new Error("Delete failed on all candidate endpoints");
+
       setMovies((x) => x.filter((t) => (t._id || t.id) !== (m._id || m.id)));
     } catch (err) {
       console.error("Delete failed:", err);
@@ -664,7 +778,7 @@ export default function AdminMoviesPage() {
               <div className="w-56">
                 <Field placeholder="Search title" value={q} onChange={(e) => setQ(e.target.value)} />
               </div>
-              <SecondaryBtn onClick={fetchMovies}>Search</SecondaryBtn>
+              <SecondaryBtn onClick={() => detectAndFetchMovies()}>Search</SecondaryBtn>
               <PrimaryBtn onClick={() => setCreating(true)}>Add Movie</PrimaryBtn>
             </div>
           </div>
