@@ -1,4 +1,10 @@
 // src/pages/Showtimes.jsx — Walmart Style (clean, rounded, blue accents)
+// Full updated file with:
+// - memoized grouping (useMemo)
+// - sold-out slots rendered as non-interactive blocks (no Link)
+// - poster URL fallback robustness
+// - small accessibility and minor UX fixes
+
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams, useLocation, useNavigate, useParams } from "react-router-dom";
 import api from "../api/api";
@@ -6,19 +12,27 @@ import useNotifications from "../hooks/useNotifications";
 
 /* --------------------------- Walmart primitives --------------------------- */
 const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
-  <Tag className={`bg-white border border-slate-200 rounded-2xl shadow-sm ${className}`} {...rest}>{children}</Tag>
+  <Tag className={`bg-white border border-slate-200 rounded-2xl shadow-sm ${className}`} {...rest}>
+    {children}
+  </Tag>
 );
 
 const Chip = ({ children, className = "" }) => (
-  <span className={`inline-flex items-center rounded-full border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-800 ${className}`}>{children}</span>
+  <span className={`inline-flex items-center rounded-full border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-800 ${className}`}>
+    {children}
+  </span>
 );
 
 const PrimaryBtn = ({ children, className = "", ...props }) => (
-  <button className={`inline-flex items-center justify-center gap-2 rounded-full px-5 py-2 font-semibold text-white bg-[#0071DC] hover:bg-[#0654BA] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071DC] disabled:opacity-60 ${className}`} {...props}>{children}</button>
+  <button className={`inline-flex items-center justify-center gap-2 rounded-full px-5 py-2 font-semibold text-white bg-[#0071DC] hover:bg-[#0654BA] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071DC] disabled:opacity-60 ${className}`} {...props}>
+    {children}
+  </button>
 );
 
 const GhostBtn = ({ children, className = "", ...props }) => (
-  <button className={`inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 font-semibold border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071DC] ${className}`} {...props}>{children}</button>
+  <button className={`inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 font-semibold border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071DC] ${className}`} {...props}>
+    {children}
+  </button>
 );
 
 /* ------------------------------ Date helpers ------------------------------ */
@@ -31,8 +45,15 @@ const fmtMonthDay = (d) => d.toLocaleDateString(undefined, { month: "short", day
 
 /* ------------------------------ Media helpers ------------------------------ */
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8080/api";
-const FILES_BASE = API_BASE.replace(/\/api\/?$/, "");
-const resolvePosterUrl = (url) => (!url ? null : /^https?:\/\//i.test(url) ? url : `${FILES_BASE}${url}`);
+const FILES_BASE = API_BASE.replace(/\/api\/?$/, "") || ""; // be defensive
+const resolvePosterUrl = (url) => {
+  if (!url) return null;
+  try {
+    return /^https?:\/\//i.test(url) ? url : `${FILES_BASE}${url}`;
+  } catch {
+    return null;
+  }
+};
 const DEFAULT_POSTER =
   "data:image/svg+xml;utf8," +
   encodeURIComponent(`
@@ -53,7 +74,9 @@ function ViewToggle({ view, onChange }) {
           onClick={() => onChange(v)}
           className={`px-3 py-1.5 rounded-full text-sm font-semibold transition-colors ${view===v ? "bg-[#E6F0FE] text-[#0654BA]" : "hover:bg-slate-50"}`}
           aria-pressed={view===v}
-        >{v === "calendar" ? "Calendar" : "List"}</button>
+        >
+          {v === "calendar" ? "Calendar" : "List"}
+        </button>
       ))}
     </div>
   );
@@ -347,9 +370,12 @@ export default function Showtimes() {
     }
   });
 
-  /* ------------------------------ Render ------------------------------ */
+  /* ------------------------------ Render helpers ------------------------------ */
   const nothingSelected = !selectedMovie && !selectedTheater && !selectedScreen;
   const headerMovie = moviesAll.find((m) => m._id === selectedMovie) || moviesAvail.find((m) => m._id === selectedMovie);
+
+  // memoize grouping to avoid recalculation every render
+  const theaterGroups = useMemo(() => groupByTheater(rows), [rows]);
 
   return (
     <main className="min-h-screen w-screen [margin-inline:calc(50%-50vw)] bg-slate-50 text-slate-900">
@@ -494,7 +520,7 @@ export default function Showtimes() {
             ) : (
               /* ---------- CALENDAR VIEW ---------- */
               <div className="space-y-4">
-                {Object.entries(groupByTheater(rows)).map(([theaterKey, block]) => (
+                {Object.entries(theaterGroups).map(([theaterKey, block]) => (
                   <Card key={theaterKey}>
                     <div className="px-4 py-3 border-b border-slate-200 rounded-t-2xl bg-white">
                       <h3 className="text-base font-extrabold">{block.name || "Theater"}</h3>
@@ -510,6 +536,21 @@ export default function Showtimes() {
                                 .sort((a,b) => new Date(a.start) - new Date(b.start))
                                 .map((s) => {
                                   const isSoldOut = Number.isFinite(s.seatsAvailable) && s.seatsAvailable <= 0;
+                                  const timeLabel = new Date(s.start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                                  if (isSoldOut) {
+                                    // non-interactive sold-out pill
+                                    return (
+                                      <div
+                                        key={s._id}
+                                        className={`px-3 py-1.5 text-sm rounded-full border bg-slate-200 cursor-not-allowed ${seatStatusClass(s.seatsAvailable)}`}
+                                        title={`Sold out • ${timeLabel}`}
+                                        aria-disabled="true"
+                                      >
+                                        {timeLabel}
+                                        <span className="ml-2 text-xs opacity-80">(Sold out)</span>
+                                      </div>
+                                    );
+                                  }
                                   return (
                                     <Link
                                       key={s._id}
@@ -522,11 +563,10 @@ export default function Showtimes() {
                                         date: toYmdLocal(fromYmdLocal(date)),
                                         city: selectedCity
                                       }}
-                                      className={`px-3 py-1.5 text-sm rounded-full border ${isSoldOut ? "bg-slate-200 cursor-not-allowed border-slate-200" : "bg-white hover:bg-slate-50 border-slate-300"} ${seatStatusClass(s.seatsAvailable)}`}
-                                      title={`${new Date(s.start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • ${s.format || ''} ${s.language || ''}${Number.isFinite(s.seatsAvailable) ? ` • ${s.seatsAvailable} seats left` : ''}`}
+                                      className={`px-3 py-1.5 text-sm rounded-full border bg-white hover:bg-slate-50 ${seatStatusClass(s.seatsAvailable)}`}
+                                      title={`${timeLabel} • ${s.format || ''} ${s.language || ''}${Number.isFinite(s.seatsAvailable) ? ` • ${s.seatsAvailable} seats left` : ''}`}
                                     >
-                                      {new Date(s.start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                      {isSoldOut && <span className="ml-2 text-xs opacity-80">(Sold out)</span>}
+                                      {timeLabel}
                                     </Link>
                                   );
                                 })}
