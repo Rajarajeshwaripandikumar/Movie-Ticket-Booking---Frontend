@@ -58,7 +58,7 @@ function normalizeRole(raw) {
 function defaultLandingFor(role) {
   const r = normalizeRole(role);
   if (r === "SUPER_ADMIN") return "/admin/dashboard";
-  if (r === "THEATRE_ADMIN") return "/admin";
+  if (r === "THEATRE_ADMIN") return "/theatre/my"; // <-- corrected to match App.jsx
   if (r === "ADMIN") return "/admin/dashboard";
   return "/";
 }
@@ -71,6 +71,7 @@ const LS_KEYS = {
   roles: "roles",
   perms: "perms",
   user: "user",
+  activeSession: "activeSession",
 };
 function writeJSON(k, v) {
   try {
@@ -111,9 +112,15 @@ export function AuthProvider({ children }) {
 
   const [initialized, setInitialized] = useState(false);
 
-  const activeToken = adminToken || token || null;
+  // activeSession: "admin" | "user" — persisted, choose which token is applied to axios
+  const [activeSession, setActiveSession] = useState(() =>
+    localStorage.getItem(LS_KEYS.activeSession) || (localStorage.getItem(LS_KEYS.adminToken) ? "admin" : "user")
+  );
 
-  /* Set axios header */
+  // compute the active token (explicit session switch)
+  const activeToken = activeSession === "admin" ? adminToken || token : token || adminToken || null;
+
+  /* Set axios header according to activeToken */
   useEffect(() => {
     if (activeToken) {
       api.setAuthToken?.(activeToken);
@@ -123,7 +130,11 @@ export function AuthProvider({ children }) {
       api.setAuthToken?.(null);
       if (api.defaults) delete api.defaults.headers.common.Authorization;
     }
-  }, [activeToken]);
+    // persist session choice
+    try {
+      localStorage.setItem(LS_KEYS.activeSession, activeSession);
+    } catch {}
+  }, [activeToken, activeSession]);
 
   /* Persist tokens */
   useEffect(() => {
@@ -165,13 +176,20 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     const rawAdmin = localStorage.getItem(LS_KEYS.adminToken);
     const rawUser = localStorage.getItem(LS_KEYS.token);
+    const persistedSession = localStorage.getItem(LS_KEYS.activeSession);
 
+    // prefer persisted session if present
+    if (persistedSession) setActiveSession(persistedSession);
+
+    // if admin token exists and session prefers admin, initialize admin
     if (rawAdmin) {
       const claims = decodeJwt(rawAdmin) || {};
       const r = normalizeRole(claims.role);
       if (r) {
         setAdminToken(rawAdmin);
-        setToken(null);
+        // only set token null if admin session should be primary; otherwise keep both
+        if (!rawUser) setToken(null);
+
         setRole(r);
         setRoles([r]);
 
@@ -240,8 +258,10 @@ export function AuthProvider({ children }) {
       theaterId: claims.theatreId || claims.theaterId || null,
     };
 
+    // clear admin session when logging in as user (keep adminToken if you want both; here we favor single active)
     setAdminToken(null);
     setToken(t);
+    setActiveSession("user");
     setRole(finalRole);
     setRoles([finalRole]);
     setPerms(finalUser.perms);
@@ -281,8 +301,10 @@ export function AuthProvider({ children }) {
       theaterId: claims.theatreId || claims.theaterId || null,
     };
 
-    setToken(null);
+    // keep user token separate but set active session to admin
+    setToken(null); // optional: clear user token to avoid ambiguity
     setAdminToken(t);
+    setActiveSession("admin");
     setRole(finalRole);
     setRoles([finalRole]);
     setPerms(finalUser.perms);
@@ -304,6 +326,7 @@ export function AuthProvider({ children }) {
     setRoles([]);
     setPerms([]);
     setUser(null);
+    setActiveSession("user");
 
     Object.values(LS_KEYS).forEach((k) => localStorage.removeItem(k));
 
@@ -320,7 +343,7 @@ export function AuthProvider({ children }) {
       try {
         if (!activeToken) return null;
 
-        const path = adminToken ? "/api/admin/me" : "/api/auth/me";
+        const path = activeSession === "admin" ? "/api/admin/me" : "/api/auth/me";
         const res = await api.get(path);
         const u = res?.data?.user || res?.data;
 
@@ -347,7 +370,7 @@ export function AuthProvider({ children }) {
         return null;
       }
     },
-    [activeToken, adminToken, perms, logout]
+    [activeToken, activeSession, perms, logout]
   );
 
   /* Derived flags */
@@ -357,7 +380,7 @@ export function AuthProvider({ children }) {
   const isTheatreAdmin = role === "THEATRE_ADMIN";
   const isAdminLike = isAdmin || isSuperAdmin || isTheatreAdmin;
 
-  /* ---------- FIXED REDIRECT LOGIC (removed /admin) ---------- */
+  /* ---------- FIXED REDIRECT LOGIC (safe) ---------- */
   useEffect(() => {
     if (!initialized) return;
 
@@ -365,7 +388,7 @@ export function AuthProvider({ children }) {
       const here = window.location.pathname;
       const target = defaultLandingFor(role);
 
-      // Only redirect from public login pages (NOT /admin)
+      // Only redirect from public login pages (NOT arbitrary admin children)
       if (
         (here === "/" ||
           here === "/login" ||
@@ -381,6 +404,9 @@ export function AuthProvider({ children }) {
     () => ({
       token,
       adminToken,
+      activeToken,
+      activeSession,
+      setActiveSession,
       role,
       roles,
       perms,
@@ -402,6 +428,8 @@ export function AuthProvider({ children }) {
     [
       token,
       adminToken,
+      activeToken,
+      activeSession,
       role,
       roles,
       perms,
