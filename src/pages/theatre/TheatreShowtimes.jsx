@@ -97,7 +97,7 @@ function toLocalDatetimeInputValue(iso) {
 /* ------------------------------ Component ------------------------------ */
 export default function TheatreShowtimes() {
   const { token, adminToken, user, isTheatreAdmin } = useAuth() || {};
-  const activeToken = adminToken || token || null; // prefer adminToken if present;
+  const activeToken = adminToken || token || null; // prefer adminToken if present
   const payload = decodeJwt(activeToken);
 
   const theatreId =
