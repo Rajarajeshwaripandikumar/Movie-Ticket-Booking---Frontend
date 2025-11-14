@@ -1,5 +1,4 @@
-// src/pages/AdminTheaters.jsx — updated with better endpoint fallbacks, logging, and write-path detection
-
+// src/pages/AdminTheaters.jsx — updated (uses activeToken + safer API handling)
 import { useEffect, useMemo, useState } from "react";
 import api, { API_DEBUG } from "../api/api";
 import { useAuth } from "../context/AuthContext";
@@ -100,14 +99,13 @@ const ROLE = {
   USER: "USER",
 };
 
-const getRole = (u) => u?.role || u?.data?.role || u?.data?.user?.role;
-
 /* ========================================================================= */
 
 export default function AdminTheaters() {
-  const { token, user } = useAuth() || {};
-  const role = getRole(user);
-  const isSuperAdmin = role === ROLE.SUPER_ADMIN;
+  // prefer centralized flags from AuthContext
+  const { activeToken, user, isSuperAdmin: ctxIsSuper, initialized } = useAuth() || {};
+  // keep backward-compatible role check too if needed
+  const isSuperAdmin = ctxIsSuper || (user && (user.role === ROLE.SUPER_ADMIN || user?.data?.role === ROLE.SUPER_ADMIN));
 
   const [theaters, setTheaters] = useState([]);
   const [listLoading, setListLoading] = useState(false);
@@ -131,11 +129,28 @@ export default function AdminTheaters() {
 
   // Try immediately and once more shortly after, because role can hydrate async
   useEffect(() => {
+    // wait until auth initialized to avoid noisy unauthorized calls
+    if (!initialized) {
+      // still attempt quick probe in case backend is public
+      loadTheaters();
+      const t = setTimeout(loadTheaters, 250);
+      return () => clearTimeout(t);
+    }
     loadTheaters();
     const t = setTimeout(loadTheaters, 250);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, role]);
+  }, [activeToken, user, initialized]);
+
+  async function tryGet(path) {
+    // helper: use activeToken if available
+    const opts = {};
+    if (activeToken) opts.headers = { Authorization: `Bearer ${activeToken}` };
+
+    // api.getFresh may return res.data or the full response depending on implementation.
+    const resp = await api.getFresh(path, opts);
+    return resp;
+  }
 
   async function loadTheaters() {
     setMsg("");
@@ -143,9 +158,7 @@ export default function AdminTheaters() {
     setListLoading(true);
 
     try {
-      // 🔥 Expanded list of possible endpoints – covers the common spellings
-      //    and admin/superadmin variants. We stop on the first that returns
-      //    a non-empty list.
+      // Expanded list of possible endpoints – covers common spellings & admin variants.
       const order = [
         "/theaters",
         "/theatres",
@@ -159,60 +172,55 @@ export default function AdminTheaters() {
         "/admin/theatres",
         "/superadmin/theaters",
         "/superadmin/theatres",
+        "/super/theatre-admins", // sometimes super endpoints
       ];
 
       let arr = [];
+      let chosenBase = "/theaters";
 
       for (const path of order) {
         try {
           if (API_DEBUG) console.debug("[AdminTheaters] trying", path);
-          const resp = await api.getFresh(path); // returns res.data
+          const resp = await tryGet(path);
 
+          // resp may be already the body or an axios response — normalize:
+          const body =
+            resp === undefined || resp === null
+              ? {}
+              : Array.isArray(resp)
+              ? resp
+              : resp?.data ?? resp;
+
+          // possible shapes
           const tmp =
-            (Array.isArray(resp) && resp) ||
-            resp?.theaters ||
-            resp?.data?.theaters ||
-            resp?.data ||
-            resp?.items ||
-            resp?.results ||
-            resp?.theatres ||
-            resp?.theatre ||
-            resp ||
+            (Array.isArray(body) && body) ||
+            body?.theaters ||
+            body?.data?.theaters ||
+            body?.data ||
+            body?.items ||
+            body?.results ||
+            body?.theatres ||
+            body?.theatre ||
             [];
 
           if (Array.isArray(tmp) && tmp.length) {
             arr = tmp;
             // derive canonical base: prefer simple /theaters or /theatres when possible,
             // otherwise use the admin/superadmin path that returned data.
-            const base = path.includes("/admin") || path.includes("/superadmin")
-              ? path.split("?")[0]
-              : (path.startsWith("/theatre") ? "/theatres" : "/theaters");
-            setTheaterBase(base);
-            if (API_DEBUG)
-              console.debug(
-                "[AdminTheaters] success at",
-                path,
-                "count:",
-                tmp.length,
-                "base:",
-                base
-              );
+            if (path.includes("/admin") || path.includes("/superadmin") || path.includes("/super")) {
+              chosenBase = path.split("?")[0].replace(/\/(theaters|theatres|admin|superadmin|super).*$/i, "/theaters");
+            } else {
+              chosenBase = path.startsWith("/theatres") ? "/theatres" : "/theaters";
+            }
+            setTheaterBase(chosenBase);
+            if (API_DEBUG) console.debug("[AdminTheaters] success at", path, "count:", tmp.length, "base:", chosenBase);
             break;
           } else if (API_DEBUG) {
-            console.debug(
-              "[AdminTheaters] no items at",
-              path,
-              "resp shape:",
-              resp
-            );
+            console.debug("[AdminTheaters] no items at", path, "resp shape:", body);
           }
         } catch (err) {
           if (API_DEBUG) {
-            console.warn(
-              "[AdminTheaters] error at",
-              path,
-              err?.response?.status || err?.message || err
-            );
+            console.warn("[AdminTheaters] error at", path, err?.response?.status || err?.message || err);
           }
           // continue to next candidate
         }
@@ -221,15 +229,13 @@ export default function AdminTheaters() {
       setTheaters((arr || []).map(normalizeTheater));
 
       if ((!arr || arr.length === 0) && API_DEBUG) {
-        console.warn(
-          "[AdminTheaters] all theater endpoints tried but no data found"
-        );
+        console.warn("[AdminTheaters] all theater endpoints tried but no data found");
+        setMsg("No theaters returned from any endpoint. Check API & token.");
+        setMsgType("error");
       }
     } catch (e) {
       if (API_DEBUG) console.error("[AdminTheaters] load failed:", e);
-      setMsg(
-        e?.response?.data?.message || "⚠️ Failed to load theaters. Check API."
-      );
+      setMsg(e?.response?.data?.message || "⚠️ Failed to load theaters. Check API.");
       setMsgType("error");
     } finally {
       setListLoading(false);
@@ -272,15 +278,20 @@ export default function AdminTheaters() {
     try {
       const payload = { name, city, address, amenities: amenitiesList };
       const path = theaterBase || "/theaters";
-      const res = await api.post(path, payload);
-      const created = normalizeTheater(res.data?.theater || res.data);
+      const opts = {};
+      if (activeToken) opts.headers = { Authorization: `Bearer ${activeToken}` };
+
+      const res = await api.post(path, payload, opts);
+      const createdRaw = res?.data ?? res;
+      const created = normalizeTheater(createdRaw?.theater || createdRaw);
       setTheaters((t) => [created, ...t]);
       resetForm();
       setMsg("✅ Theater created!");
       setMsgType("success");
     } catch (err) {
       if (API_DEBUG) console.error("[AdminTheaters] create failed:", err);
-      setMsg("❌ Create failed");
+      const text = err?.response?.data?.message || "❌ Create failed";
+      setMsg(text);
       setMsgType("error");
     } finally {
       setLoading(false);
@@ -299,14 +310,18 @@ export default function AdminTheaters() {
     try {
       const payload = { name, city, address, amenities: amenitiesList };
       const base = theaterBase || "/theaters";
-      const res = await api.put(`${base}/${selectedId}`, payload);
-      const upd = normalizeTheater(res.data?.theater || res.data);
+      const opts = {};
+      if (activeToken) opts.headers = { Authorization: `Bearer ${activeToken}` };
+
+      const res = await api.put(`${base}/${selectedId}`, payload, opts);
+      const raw = res?.data ?? res;
+      const upd = normalizeTheater(raw?.theater || raw);
       setTheaters((t) => t.map((x) => (x._id === selectedId ? upd : x)));
       setMsg("✅ Updated!");
       setMsgType("success");
     } catch (err) {
       if (API_DEBUG) console.error("[AdminTheaters] update failed:", err);
-      setMsg("❌ Update failed");
+      setMsg(err?.response?.data?.message || "❌ Update failed");
       setMsgType("error");
     } finally {
       setLoading(false);
@@ -323,14 +338,17 @@ export default function AdminTheaters() {
 
     try {
       const base = theaterBase || "/theaters";
-      await api.delete(`${base}/${id}`);
+      const opts = {};
+      if (activeToken) opts.headers = { Authorization: `Bearer ${activeToken}` };
+
+      await api.delete(`${base}/${id}`, opts);
       setTheaters((t) => t.filter((x) => x._id !== id));
       if (selectedId === id) resetForm();
       setMsg("🗑️ Deleted");
       setMsgType("success");
     } catch (err) {
       if (API_DEBUG) console.error("[AdminTheaters] delete failed:", err);
-      setMsg("❌ Delete failed");
+      setMsg(err?.response?.data?.message || "❌ Delete failed");
       setMsgType("error");
     }
   }
