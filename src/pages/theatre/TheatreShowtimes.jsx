@@ -130,12 +130,17 @@ export default function TheatreShowtimes() {
   const [saving, setSaving] = useState(false);
 
   const mountedRef = useRef(true);
+  const flashTimeoutRef = useRef(null);
 
   useEffect(() => {
     mountedRef.current = true;
     document.title = "Manage Showtimes | Theatre";
     return () => {
       mountedRef.current = false;
+      if (flashTimeoutRef.current) {
+        clearTimeout(flashTimeoutRef.current);
+        flashTimeoutRef.current = null;
+      }
     };
   }, []);
 
@@ -228,8 +233,13 @@ export default function TheatreShowtimes() {
   }, [refreshAll]);
 
   const resetFlash = useCallback(() => {
-    setTimeout(() => {
+    if (flashTimeoutRef.current) {
+      clearTimeout(flashTimeoutRef.current);
+      flashTimeoutRef.current = null;
+    }
+    flashTimeoutRef.current = setTimeout(() => {
       if (mountedRef.current) setMsg("");
+      flashTimeoutRef.current = null;
     }, 3000);
   }, []);
 
@@ -377,7 +387,11 @@ export default function TheatreShowtimes() {
       <div className="max-w-4xl mx-auto px-4 space-y-5">
         <Card>
           <h2 className="text-lg font-extrabold text-[#111827]">Create Showtime</h2>
-          <form onSubmit={createShowtime} className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3" aria-label="Create showtime form">
+          <form
+            onSubmit={createShowtime}
+            className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3"
+            aria-label="Create showtime form"
+          >
             <div>
               <label className="text-xs font-semibold block">Movie</label>
               <select
@@ -385,6 +399,8 @@ export default function TheatreShowtimes() {
                 onChange={(e) => setMovieId(e.target.value)}
                 className="w-full border p-2 rounded-xl"
                 disabled={loading}
+                required
+                aria-required="true"
               >
                 <option value="">Select movie</option>
                 {movies.map((m) => (
@@ -402,6 +418,8 @@ export default function TheatreShowtimes() {
                 onChange={(e) => setScreenId(e.target.value)}
                 className="w-full border p-2 rounded-xl"
                 disabled={loading}
+                required
+                aria-required="true"
               >
                 <option value="">Select screen</option>
                 {screens.map((s) => (
@@ -420,6 +438,8 @@ export default function TheatreShowtimes() {
                 onChange={(e) => setStartTime(e.target.value)}
                 className="w-full border p-2 rounded-xl"
                 disabled={loading}
+                required
+                aria-required="true"
               />
             </div>
 
@@ -429,8 +449,8 @@ export default function TheatreShowtimes() {
                 type="number"
                 min="0"
                 step="1"
-                value={basePrice}
-                onChange={(e) => setBasePrice(e.target.value)}
+                value={Number(basePrice)}
+                onChange={(e) => setBasePrice(Number(e.target.value || 0))}
                 className="w-full border p-2 rounded-xl"
                 disabled={loading}
               />
@@ -442,6 +462,7 @@ export default function TheatreShowtimes() {
                 disabled={!formValid || saving}
                 className="bg-[#0071DC] text-white rounded-full px-4 py-2 disabled:opacity-50"
                 aria-disabled={!formValid || saving}
+                aria-busy={saving}
               >
                 {saving ? "Saving..." : "Create Showtime"}
               </button>
@@ -476,7 +497,7 @@ export default function TheatreShowtimes() {
             <div className="text-sm text-slate-600">No showtimes found.</div>
           ) : (
             <ul className="space-y-3">
-              {showtimes.map((s) => {
+              {showtimes.map((s, idx) => {
                 const sid = idOf(s);
                 const movieTitle =
                   s.movie?.title || s.movie?.name || (typeof s.movie === "string" ? s.movie : titleOf(s));
@@ -485,7 +506,7 @@ export default function TheatreShowtimes() {
                 const editing = editId === sid;
 
                 return (
-                  <li key={sid || Math.random()} className="p-3 border rounded-xl flex flex-col gap-2">
+                  <li key={sid || `showtime-temp-${idx}`} className="p-3 border rounded-xl flex flex-col gap-2">
                     {!editing ? (
                       <div className="flex items-center justify-between gap-3">
                         <div>
@@ -528,6 +549,7 @@ export default function TheatreShowtimes() {
                             onClick={saveEdit}
                             disabled={saving}
                             className="px-4 py-2 rounded-full bg-[#0071DC] text-white disabled:opacity-50"
+                            aria-busy={saving}
                           >
                             {saving ? "Saving..." : "Save"}
                           </button>
