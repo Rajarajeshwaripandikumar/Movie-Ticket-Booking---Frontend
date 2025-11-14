@@ -220,7 +220,7 @@ export default function TheatersPage() {
 
     try {
       const params = {
-        q: override.q ?? debouncedQuery || undefined,
+       q: override.q ?? (debouncedQuery || undefined),
         city: override.city ?? (cityFilter === "All" ? undefined : cityFilter),
         amenity: override.amenity ?? (amenityFilter === "All" ? undefined : amenityFilter),
         page: reset ? 1 : page,
