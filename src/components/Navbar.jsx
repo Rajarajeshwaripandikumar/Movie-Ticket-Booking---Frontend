@@ -1,3 +1,4 @@
+// src/components/Navbar.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
@@ -7,11 +8,6 @@ import api from "../api/api";
 
 const cn = (...xs) => xs.filter(Boolean).join(" ");
 
-/* ---------- safeNavigate helper to avoid repeated same-path navigations ----------
-   FIX: Normalize trailing slashes and query params before comparing so Netlify/Router
-   normalization (with or without trailing slash) doesn't incorrectly block navigation.
-   RETURNS: true if navigation was performed, false if skipped because paths were equal.
-*/
 const normalizePathForCompare = (urlOrPath = "") => {
   try {
     const u = new URL(urlOrPath, typeof window !== "undefined" ? window.location.origin : "http://localhost");
@@ -26,13 +22,9 @@ const normalizePathForCompare = (urlOrPath = "") => {
 const safeNavigate = (navigate, to, opts = {}) => {
   try {
     if (!to) return false;
-
     const current = normalizePathForCompare(window.location.pathname + window.location.search);
     const targetPath = normalizePathForCompare(to);
-
-    // same logical path -> bail out to avoid pointless navigation
     if (current === targetPath) return false;
-
     navigate(to, { replace: false, ...opts });
     return true;
   } catch (e) {
@@ -44,7 +36,6 @@ const safeNavigate = (navigate, to, opts = {}) => {
   }
 };
 
-/* ---------- small UI helpers ---------- */
 const Card = ({ className = "", as: Comp = "div", ...rest }) => (
   <Comp className={cn("bg-white border border-slate-200 rounded-2xl shadow-sm", className)} {...rest} />
 );
@@ -69,7 +60,6 @@ const navLinkClasses = ({ isActive }) =>
     isActive ? "text-[#0654BA]" : "text-slate-700 hover:text-[#0654BA]"
   );
 
-/* ---------- MenuItemLink: imperative link for popover items with a small click guard ---------- */
 function MenuItemLink({ to, children, onClick }) {
   const navigate = useNavigate();
   const clickingRef = useRef(false);
@@ -84,7 +74,6 @@ function MenuItemLink({ to, children, onClick }) {
         try {
           onClick?.();
 
-          // debug: log current vs target
           try {
             const current = normalizePathForCompare(window.location.pathname + window.location.search);
             const targetPath = normalizePathForCompare(to);
@@ -95,10 +84,8 @@ function MenuItemLink({ to, children, onClick }) {
             console.debug('[MenuItemLink] navigate (normalize failed)', { to, err: err?.message || err });
           }
 
-          // attempt safe navigate; if it was skipped because current === target, force navigation via state
           const didNavigate = safeNavigate(navigate, to, {});
           if (!didNavigate) {
-            // force navigation by pushing same path with different state (avoids URL mutation)
             try {
               // eslint-disable-next-line no-console
               console.debug('[MenuItemLink] safeNavigate skipped (same path) — forcing nav via state bump');
@@ -142,7 +129,6 @@ const THEATRE_ADMIN_LINKS = [
   { label: "My Theatre", to: "/theatre/profile" },
 ];
 
-/* ---------- Notifications normalizer ---------- */
 const normalizeNotifications = (raw) => {
   const arr =
     Array.isArray(raw) ? raw :
@@ -168,8 +154,8 @@ const normalizeNotifications = (raw) => {
   };
 };
 
-/* ---------- Navbar component ---------- */
 export default function Navbar() {
+  // updated context shape (activeSession + activeToken)
   const {
     user,
     logout,
@@ -177,8 +163,11 @@ export default function Navbar() {
     isSuperAdmin,
     isTheatreAdmin,
     isLoggedIn,
-    token: userToken,
-    adminToken,
+    token,         // user token (may be null)
+    adminToken,    // admin token (may be null)
+    activeToken,   // currently-applied token (from AuthContext)
+    activeSession, // "admin" | "user"
+    setActiveSession,
   } = useAuth();
 
   const navigate = useNavigate();
@@ -191,23 +180,19 @@ export default function Navbar() {
   const [notifications, setNotifications] = useState([]);
   const notifRef = useRef(null);
 
-  const token =
-    adminToken ||
-    userToken ||
-    localStorage.getItem("adminToken") ||
-    localStorage.getItem("token") ||
-    "";
+  // use activeToken from context so it reflects the user's chosen session
+  const tokenForApi = activeToken || "";
 
   const unread = useMemo(() => notifications.filter((n) => !n.readAt).length, [notifications]);
 
   /* ---------- load notifications (poll every 30s) ---------- */
   useEffect(() => {
-    if (!isLoggedIn || !token) return;
+    if (!isLoggedIn || !tokenForApi) return;
     let alive = true;
     const load = async () => {
       try {
         const res = await api.get("/notifications/mine", {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { Authorization: `Bearer ${tokenForApi}` },
         });
         const { items } = normalizeNotifications(res.data);
         if (!alive) return;
@@ -219,9 +204,8 @@ export default function Navbar() {
     load();
     const t = setInterval(load, 30000);
     return () => { alive = false; clearInterval(t); };
-  }, [isLoggedIn, token]);
+  }, [isLoggedIn, tokenForApi]);
 
-  /* ---------- close notification popover when clicking outside ---------- */
   useEffect(() => {
     const onDocClick = (e) => {
       if (!notifRef.current) return;
@@ -231,7 +215,6 @@ export default function Navbar() {
     return () => document.removeEventListener("mousedown", onDocClick);
   }, []);
 
-  /* ---------- close popovers on navigation change ---------- */
   useEffect(() => {
     setNotifOpen(false);
     setAdminMenu(false);
@@ -255,7 +238,7 @@ export default function Navbar() {
 
   const markOneRead = async (id) => {
     try {
-      await api.patch(`/notifications/${id}/read`, {}, { headers: { Authorization: `Bearer ${token}` } });
+      await api.patch(`/notifications/${id}/read`, {}, { headers: { Authorization: `Bearer ${tokenForApi}` } });
     } catch {}
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, readAt: n.readAt || new Date().toISOString() } : n))
@@ -269,13 +252,23 @@ export default function Navbar() {
 
   const anyAdmin = isSuperAdmin || isAdmin || isTheatreAdmin;
 
+  // session switch helper — toggles between admin/user (only if both tokens exist)
+  const canSwitchSession = Boolean(adminToken && token);
+  const handleToggleSession = () => {
+    if (!canSwitchSession) return;
+    const next = activeSession === "admin" ? "user" : "admin";
+    // eslint-disable-next-line no-console
+    console.debug("[Navbar] switching active session", { from: activeSession, to: next });
+    setActiveSession(next);
+    // re-fetch notifications for the new session
+    setNotifications([]);
+  };
+
   return (
     <header className="w-full sticky top-0 z-50">
       <div className="relative isolate z-50 backdrop-blur-md bg-white/85 border-b border-slate-200 shadow-sm overflow-visible">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          {/* ROW: logo | middle nav | right controls */}
           <div className="h-16 flex items-center gap-6">
-            {/* Brand (left) */}
             <Link to="/" className="flex items-center gap-3 shrink-0">
               <Card className="p-1.5">
                 <Logo size={36} />
@@ -285,28 +278,16 @@ export default function Navbar() {
               </div>
             </Link>
 
-            {/* Main Links (middle) */}
             <nav className="hidden md:flex items-center gap-5 ml-8">
-              <NavLink to="/movies" className={navLinkClasses}>
-                Movies
-              </NavLink>
-              <NavLink to="/theaters" className={navLinkClasses}>
-                Theaters
-              </NavLink>
-              <NavLink to="/showtimes" className={navLinkClasses}>
-                Showtimes
-              </NavLink>
-              {/* Hide "My Bookings" for ALL admin roles */}
+              <NavLink to="/movies" className={navLinkClasses}>Movies</NavLink>
+              <NavLink to="/theaters" className={navLinkClasses}>Theaters</NavLink>
+              <NavLink to="/showtimes" className={navLinkClasses}>Showtimes</NavLink>
               {isLoggedIn && !anyAdmin && (
-                <NavLink to="/bookings" className={navLinkClasses}>
-                  My Bookings
-                </NavLink>
+                <NavLink to="/bookings" className={navLinkClasses}>My Bookings</NavLink>
               )}
             </nav>
 
-            {/* Right Controls (pushed right) */}
             <div className="ml-auto flex items-center gap-3 relative">
-              {/* Notifications */}
               {isLoggedIn && (
                 <div className="relative z-50" ref={notifRef}>
                   <IconBtn
@@ -330,16 +311,14 @@ export default function Navbar() {
                       role="menu"
                       aria-label="Notifications"
                     >
-                      {/* Mark all as read */}
                       {notifications.length > 0 && (
                         <div className="sticky top-0 bg-white border-b border-slate-200 p-2 text-right">
                           <button
                             className="text-[11px] px-2 py-1 rounded-full border border-slate-300 bg-white hover:bg-slate-50 font-semibold"
                             onClick={async () => {
                               try {
-                                await api.post("/notifications/read-all", {}, { headers: { Authorization: `Bearer ${token}` } });
-                                setNotifications((prev) =>
-                                  prev.map((n) => ({ ...n, readAt: n.readAt || new Date().toISOString() })))
+                                await api.post("/notifications/read-all", {}, { headers: { Authorization: `Bearer ${tokenForApi}` } });
+                                setNotifications((prev) => prev.map((n) => ({ ...n, readAt: n.readAt || new Date().toISOString() })));
                               } catch {}
                             }}
                           >
@@ -375,15 +354,9 @@ export default function Navbar() {
                                   <div className="flex items-start gap-2">
                                     {!n.readAt && <span className="mt-1 inline-block w-2 h-2 rounded-full" style={{ background: "currentColor" }} />}
                                     <div className="flex-1">
-                                      <div className="text-sm font-extrabold text-slate-900">
-                                        {n.title || "Notification"}
-                                      </div>
-                                      <div className="text-xs text-slate-700 whitespace-pre-line">
-                                        {n.message || ""}
-                                      </div>
-                                      <div className="text-[10px] text-slate-500 mt-1">
-                                        {new Date(n.createdAt || Date.now()).toLocaleString()}
-                                      </div>
+                                      <div className="text-sm font-extrabold text-slate-900">{n.title || "Notification"}</div>
+                                      <div className="text-xs text-slate-700 whitespace-pre-line">{n.message || ""}</div>
+                                      <div className="text-[10px] text-slate-500 mt-1">{new Date(n.createdAt || Date.now()).toLocaleString()}</div>
                                     </div>
                                   </div>
                                 </button>
@@ -397,7 +370,6 @@ export default function Navbar() {
                 </div>
               )}
 
-              {/* Admin access / login + Login/Register pills */}
               {!isLoggedIn ? (
                 <>
                   <button
@@ -406,83 +378,72 @@ export default function Navbar() {
                   >
                     <Shield className="w-4 h-4 inline-block" /> Admin
                   </button>
-                  <Link
-                    to="/login"
-                    className="text-sm font-semibold px-4 py-2 rounded-full border border-slate-300 text-slate-800 hover:bg-slate-50"
-                  >
-                    Login
-                  </Link>
-                  <Link
-                    to="/register"
-                    className="text-sm font-semibold px-4 py-2 rounded-full bg-[#0071DC] text-white hover:bg-[#0654BA]"
-                  >
-                    Register
-                  </Link>
+                  <Link to="/login" className="text-sm font-semibold px-4 py-2 rounded-full border border-slate-300 text-slate-800 hover:bg-slate-50">Login</Link>
+                  <Link to="/register" className="text-sm font-semibold px-4 py-2 rounded-full bg-[#0071DC] text-white hover:bg-[#0654BA]">Register</Link>
                 </>
               ) : null}
 
-              {/* Account Menu — only when logged in */}
               {isLoggedIn && (
-                <div className="relative">
-                  <button
-                    onClick={() => setAdminMenu((v) => !v)}
-                    className="flex items-center gap-2 px-3 py-2 rounded-full border border-slate-300 bg-white"
-                  >
-                    <UserRound className="w-5 h-5 text-[#0071DC]" />
-                    <span className="max-w-[160px] truncate">{user?.name || user?.email}</span>
-                    <ChevronDown className="w-4 h-4 text-slate-600" />
-                  </button>
-
-                  {adminMenu && (
-                    <Card className="absolute right-0 mt-2 w-64 p-1 bg-white z-50">
-                      <MenuItemLink to={profilePath} onClick={() => setAdminMenu(false)}>
-                        Profile
-                      </MenuItemLink>
-
-                      {/* Hide My Bookings for ALL admin roles */}
-                      {!(isSuperAdmin || isAdmin || isTheatreAdmin) && (
-                        <MenuItemLink to="/bookings" onClick={() => setAdminMenu(false)}>
-                          My Bookings
-                        </MenuItemLink>
-                      )}
-
-                      {isSuperAdmin &&
-                        SUPER_ADMIN_LINKS.map((item) => (
-                          <MenuItemLink key={item.to} to={item.to} onClick={() => setAdminMenu(false)}>
-                            {item.label}
-                          </MenuItemLink>
-                        ))}
-
-                      {isTheatreAdmin &&
-                        THEATRE_ADMIN_LINKS.map((item) => (
-                          <MenuItemLink key={item.to} to={item.to} onClick={() => setAdminMenu(false)}>
-                            {item.label}
-                          </MenuItemLink>
-                        ))}
-
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          try {
-                            await logout();
-                          } catch (e) {
-                            console.error("[Navbar] logout failed:", e);
-                          } finally {
-                            setAdminMenu(false);
-                            setNotifOpen(false);
-                            safeNavigate(navigate, "/", { replace: true }) || navigate("/", { state: { __forceNav: Date.now() } });
-                          }
-                        }}
-                        className="w-full text-left px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 rounded-xl font-semibold"
-                      >
-                        <LogOut className="inline w-4 h-4 mr-1" /> Logout
-                      </button>
-                    </Card>
+                <div className="relative flex items-center gap-2">
+                  {/* session switcher pill (only show when both tokens exist) */}
+                  {Boolean(adminToken && token) && (
+                    <button
+                      onClick={handleToggleSession}
+                      title="Switch active session"
+                      className="text-xs px-2 py-1 rounded-full border border-slate-300 bg-white hover:bg-slate-50"
+                    >
+                      Act as: <span className="font-semibold">{activeSession === "admin" ? "Admin" : "User"}</span>
+                    </button>
                   )}
+
+                  <div className="relative">
+                    <button
+                      onClick={() => setAdminMenu((v) => !v)}
+                      className="flex items-center gap-2 px-3 py-2 rounded-full border border-slate-300 bg-white"
+                    >
+                      <UserRound className="w-5 h-5 text-[#0071DC]" />
+                      <span className="max-w-[160px] truncate">{user?.name || user?.email}</span>
+                      <ChevronDown className="w-4 h-4 text-slate-600" />
+                    </button>
+
+                    {adminMenu && (
+                      <Card className="absolute right-0 mt-2 w-64 p-1 bg-white z-50">
+                        <MenuItemLink to={profilePath} onClick={() => setAdminMenu(false)}>Profile</MenuItemLink>
+
+                        {!(isSuperAdmin || isAdmin || isTheatreAdmin) && (
+                          <MenuItemLink to="/bookings" onClick={() => setAdminMenu(false)}>My Bookings</MenuItemLink>
+                        )}
+
+                        {isSuperAdmin &&
+                          SUPER_ADMIN_LINKS.map((item) => (
+                            <MenuItemLink key={item.to} to={item.to} onClick={() => setAdminMenu(false)}>{item.label}</MenuItemLink>
+                          ))}
+
+                        {isTheatreAdmin &&
+                          THEATRE_ADMIN_LINKS.map((item) => (
+                            <MenuItemLink key={item.to} to={item.to} onClick={() => setAdminMenu(false)}>{item.label}</MenuItemLink>
+                          ))}
+
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try { await logout(); } catch (e) { console.error("[Navbar] logout failed:", e); }
+                            finally {
+                              setAdminMenu(false);
+                              setNotifOpen(false);
+                              safeNavigate(navigate, "/", { replace: true }) || navigate("/", { state: { __forceNav: Date.now() } });
+                            }
+                          }}
+                          className="w-full text-left px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 rounded-xl font-semibold"
+                        >
+                          <LogOut className="inline w-4 h-4 mr-1" /> Logout
+                        </button>
+                      </Card>
+                    )}
+                  </div>
                 </div>
               )}
 
-              {/* Mobile Menu Button */}
               <IconBtn className="md:hidden" onClick={() => setOpen((v) => !v)}>
                 {open ? <X /> : <Menu />}
               </IconBtn>
@@ -491,10 +452,7 @@ export default function Navbar() {
         </div>
       </div>
 
-      {/* Spacer in case sticky header overlaps admin pages */}
-      {location.pathname.startsWith("/admin") || location.pathname.startsWith("/theatre")
-        ? <div className="h-0 md:h-0" />
-        : null}
+      {location.pathname.startsWith("/admin") || location.pathname.startsWith("/theatre") ? <div className="h-0 md:h-0" /> : null}
     </header>
   );
 }
