@@ -1,4 +1,6 @@
 // src/pages/AdminDashboard.jsx — Walmart-style (clean, rounded, blue accents)
+// Full file (updated): resilient theaters fetch + robust create-theatre-admin fallback + debug logging
+
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -14,10 +16,26 @@ import {
 import api from "../api/api";
 import { useAuth } from "../context/AuthContext";
 
-/* ----------------------------- API endpoints ----------------------------- */
-// Prefer US spelling unless you’ve mounted a /theatres alias
-const LIST_THEATERS = "/theaters";                         // GET
-const CREATE_THEATRE_ADMIN = "/super/theatre-admins"; // POST { name,email,password,theatreId }
+/* ----------------------------- Endpoint candidates ----------------------------- */
+/* We try several likely endpoints (covers spelling and admin variants) */
+const THEATERS_CANDIDATES = [
+  "/theaters",
+  "/theatres",
+  "/admin/theaters",
+  "/admin/theatres",
+  "/superadmin/theaters",
+  "/superadmin/theatres",
+  "/theaters/mine",
+  "/theatres/mine",
+];
+
+const CREATE_THEATRE_ADMIN_CANDIDATES = [
+  "/superadmin/theatre-admins",
+  "/super/theatre-admins",
+  "/superadmin/theatre-admins",
+  "/admin/theatre-admins",
+  "/super/theatre-admins",
+];
 
 /* ----------------------------- Walmart primitives ---------------------------- */
 const Card = ({ children, className = "" }) => (
@@ -56,6 +74,63 @@ const Tile = ({ to, icon: Icon, label, desc, disabled = false }) => {
   );
 };
 
+/* ----------------------------- helpers (network resilience) ---------------------------- */
+
+/**
+ * Try candidate theater list endpoints until one returns data (or empty array).
+ * Returns the first array found (possibly empty), or throws if none succeed.
+ */
+async function fetchTheatersWithFallback() {
+  let lastErr = null;
+  for (const path of THEATERS_CANDIDATES) {
+    try {
+      // use getFresh so we append _ts and avoid stale caches
+      const res = await api.get(path, { params: { _ts: Date.now() } });
+      const payload = res?.data;
+      const list =
+        (Array.isArray(payload) && payload) ||
+        payload?.data ||
+        payload?.theaters ||
+        payload?.items ||
+        payload?.results ||
+        payload?.theatres ||
+        [];
+      // We treat an endpoint that returned an array (even empty) as a successful hit.
+      if (Array.isArray(list)) {
+        console.debug("[AdminDashboard] theater endpoint succeeded:", path, "count:", list.length);
+        return list;
+      }
+      // otherwise continue trying
+    } catch (err) {
+      lastErr = err;
+      console.debug("[AdminDashboard] theater endpoint failed:", path, err?.response?.status || err?.message || err);
+      // continue to next candidate
+    }
+  }
+  // none succeeded
+  throw lastErr || new Error("No theater endpoint available");
+}
+
+/**
+ * Try candidate create-theatre-admin endpoints until one succeeds.
+ * Returns axios response or throws last error.
+ */
+async function tryCreateTheatreAdmin(payload) {
+  let lastErr = null;
+  for (const path of CREATE_THEATRE_ADMIN_CANDIDATES) {
+    try {
+      const res = await api.post(path, payload);
+      console.debug("[AdminDashboard] create theatre-admin succeeded:", path);
+      return res;
+    } catch (err) {
+      lastErr = err;
+      console.debug("[AdminDashboard] create theatre-admin failed at", path, err?.response?.status || err?.message || err);
+      // try next
+    }
+  }
+  throw lastErr || new Error("Create theatre admin failed for all candidate endpoints");
+}
+
 /* --------------------------------- Page --------------------------------- */
 export default function AdminDashboard() {
   const { isSuperAdmin, isAdmin, isTheatreAdmin } = useAuth();
@@ -92,31 +167,32 @@ export default function AdminDashboard() {
   useEffect(() => {
     let mounted = true;
     (async () => {
+      setLoadingTheatres(true);
+      setMsg(null);
       try {
-        setLoadingTheatres(true);
-        const res = await api.get(LIST_THEATERS);
+        const list = await fetchTheatersWithFallback();
         if (!mounted) return;
-        const list =
-          (Array.isArray(res.data) && res.data) ||
-          res.data?.data ||
-          res.data?.theaters ||
-          [];
         setTheatres(Array.isArray(list) ? list : []);
       } catch (err) {
-        console.error("[AdminDashboard] Failed to load theaters:", err?.message || err);
-        if (mounted) setTheatres([]);
+        console.error("[AdminDashboard] Failed to load theaters:", err?.response?.status || err?.message || err);
+        if (mounted) {
+          setTheatres([]);
+          setMsg({ type: "error", text: "Failed to load theatres — check API or your role." });
+        }
       } finally {
         if (mounted) setLoadingTheatres(false);
       }
     })();
-    return () => { mounted = false; };
-  }, []);
+    // re-run if user's admin flags change (helps when auth hydrates)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSuperAdmin, isAdmin, isTheatreAdmin]);
 
   const resetForm = () => {
     setAName("");
     setAEmail("");
     setAPassword("");
     setATheatreId("");
+    setMsg(null);
   };
 
   const handleCreateTheatreAdmin = async (e) => {
@@ -130,7 +206,7 @@ export default function AdminDashboard() {
 
     setBusy(true);
     try {
-      await api.post(CREATE_THEATRE_ADMIN, {
+      await tryCreateTheatreAdmin({
         name: aName.trim(),
         email: aEmail.trim(),
         password: aPassword,
@@ -139,10 +215,16 @@ export default function AdminDashboard() {
 
       setMsg({ type: "success", text: "Theatre admin created successfully." });
       resetForm();
+      // refresh theaters list in case backend linked changes
+      try {
+        const list = await fetchTheatersWithFallback();
+        setTheatres(Array.isArray(list) ? list : []);
+      } catch {}
     } catch (err) {
       const status = err?.response?.status;
       let text = err?.response?.data?.message || "Failed to create theatre admin.";
       if (status === 409 || /exist/i.test(text)) text = "Email already exists. Try another.";
+      console.error("[AdminDashboard] create theatre admin error:", status, text);
       setMsg({ type: "error", text });
     } finally {
       setBusy(false);
