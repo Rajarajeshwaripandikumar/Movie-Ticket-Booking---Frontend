@@ -1,7 +1,7 @@
-// src/pages/AdminTheaters.jsx — updated with better endpoint fallbacks & logging
+// src/pages/AdminTheaters.jsx — updated with better endpoint fallbacks, logging, and write-path detection
 
 import { useEffect, useMemo, useState } from "react";
-import api, { API_DEBUG } from "../api/api";          // ⬅️ import API_DEBUG too
+import api, { API_DEBUG } from "../api/api";
 import { useAuth } from "../context/AuthContext";
 import {
   Building2,
@@ -112,6 +112,9 @@ export default function AdminTheaters() {
   const [theaters, setTheaters] = useState([]);
   const [listLoading, setListLoading] = useState(false);
 
+  // prefer /theaters first; detection will overwrite if needed
+  const [theaterBase, setTheaterBase] = useState("/theaters");
+
   const [selectedId, setSelectedId] = useState(null);
   const [name, setName] = useState("");
   const [city, setCity] = useState("");
@@ -144,18 +147,18 @@ export default function AdminTheaters() {
       //    and admin/superadmin variants. We stop on the first that returns
       //    a non-empty list.
       const order = [
+        "/theaters",
+        "/theatres",
+        "/theaters/mine",
+        "/theatres/mine",
         "/theaters/admin/theaters",
         "/theatres/admin/theatres",
         "/theaters/admin/list",
         "/theatres/admin/list",
         "/admin/theaters",
         "/admin/theatres",
-        isSuperAdmin ? "/superadmin/theaters" : "/theaters/mine",
-        isSuperAdmin ? "/superadmin/theatres" : "/theatres/mine",
-        "/theaters",
-        "/theatres",
-        "/theaters/mine",
-        "/theatres/mine",
+        "/superadmin/theaters",
+        "/superadmin/theatres",
       ];
 
       let arr = [];
@@ -170,6 +173,8 @@ export default function AdminTheaters() {
             resp?.theaters ||
             resp?.data?.theaters ||
             resp?.data ||
+            resp?.items ||
+            resp?.results ||
             resp?.theatres ||
             resp?.theatre ||
             resp ||
@@ -177,12 +182,20 @@ export default function AdminTheaters() {
 
           if (Array.isArray(tmp) && tmp.length) {
             arr = tmp;
+            // derive canonical base: prefer simple /theaters or /theatres when possible,
+            // otherwise use the admin/superadmin path that returned data.
+            const base = path.includes("/admin") || path.includes("/superadmin")
+              ? path.split("?")[0]
+              : (path.startsWith("/theatre") ? "/theatres" : "/theaters");
+            setTheaterBase(base);
             if (API_DEBUG)
               console.debug(
                 "[AdminTheaters] success at",
                 path,
                 "count:",
-                tmp.length
+                tmp.length,
+                "base:",
+                base
               );
             break;
           } else if (API_DEBUG) {
@@ -258,7 +271,8 @@ export default function AdminTheaters() {
     setLoading(true);
     try {
       const payload = { name, city, address, amenities: amenitiesList };
-      const res = await api.post("/superadmin/theaters", payload);
+      const path = theaterBase || "/theaters";
+      const res = await api.post(path, payload);
       const created = normalizeTheater(res.data?.theater || res.data);
       setTheaters((t) => [created, ...t]);
       resetForm();
@@ -284,7 +298,8 @@ export default function AdminTheaters() {
     setLoading(true);
     try {
       const payload = { name, city, address, amenities: amenitiesList };
-      const res = await api.put(`/superadmin/theaters/${selectedId}`, payload);
+      const base = theaterBase || "/theaters";
+      const res = await api.put(`${base}/${selectedId}`, payload);
       const upd = normalizeTheater(res.data?.theater || res.data);
       setTheaters((t) => t.map((x) => (x._id === selectedId ? upd : x)));
       setMsg("✅ Updated!");
@@ -307,7 +322,8 @@ export default function AdminTheaters() {
     if (!window.confirm("Delete this theater?")) return;
 
     try {
-      await api.delete(`/superadmin/theaters/${id}`);
+      const base = theaterBase || "/theaters";
+      await api.delete(`${base}/${id}`);
       setTheaters((t) => t.filter((x) => x._id !== id));
       if (selectedId === id) resetForm();
       setMsg("🗑️ Deleted");
