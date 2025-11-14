@@ -17,7 +17,7 @@ import { useAuth } from "../context/AuthContext";
 /* ----------------------------- API endpoints ----------------------------- */
 // Prefer US spelling unless you’ve mounted a /theatres alias
 const LIST_THEATERS = "/theaters";                         // GET
-const CREATE_THEATRE_ADMIN = "/superadmin/theatre-admins"; // POST { name,email,password,theatreId }
+const CREATE_THEATRE_ADMIN = "/super/theatre-admins"; // POST { name,email,password,theatreId }
 
 /* ----------------------------- Walmart primitives ---------------------------- */
 const Card = ({ children, className = "" }) => (
