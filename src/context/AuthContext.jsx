@@ -7,7 +7,7 @@ import React, {
   useEffect,
   useCallback,
 } from "react";
-import api from "../api/api";
+import api, { primeAuth, getAuthFromStorage, COOKIE_AUTH } from "../api/api";
 
 export const AuthContext = createContext(null);
 export const useAuth = () => useContext(AuthContext);
@@ -38,17 +38,15 @@ function normalizeRole(raw) {
   try {
     const val =
       typeof raw === "object" && raw !== null
-        ? raw.authority ?? raw.value ?? raw.name
+        ? raw.authority ?? raw.value ?? raw.name ?? raw.role
         : raw;
 
     let v = String(val).trim().toUpperCase().replace(/\s+/g, "_");
-
     if (v.startsWith("ROLE_")) v = v.slice(5);
     if (/_MANAGER$/.test(v)) v = "THEATRE_ADMIN";
     if (["THEATER_ADMIN", "THEATRE_OWNER", "THEATER_OWNER"].includes(v))
       v = "THEATRE_ADMIN";
     if (v === "SUPERADMIN") v = "SUPER_ADMIN";
-
     return v;
   } catch {
     return null;
@@ -58,7 +56,7 @@ function normalizeRole(raw) {
 function defaultLandingFor(role) {
   const r = normalizeRole(role);
   if (r === "SUPER_ADMIN") return "/admin/dashboard";
-  if (r === "THEATRE_ADMIN") return "/theatre/my"; // <-- corrected to match App.jsx
+  if (r === "THEATRE_ADMIN") return "/theatre/my";
   if (r === "ADMIN") return "/admin/dashboard";
   return "/";
 }
@@ -109,23 +107,27 @@ export function AuthProvider({ children }) {
   });
 
   const [user, setUser] = useState(() => readJSON(LS_KEYS.user, null));
-
   const [initialized, setInitialized] = useState(false);
 
-  // activeSession: "admin" | "user" — persisted, choose which token is applied to axios
-  const [activeSession, setActiveSession] = useState(() =>
-    localStorage.getItem(LS_KEYS.activeSession) || (localStorage.getItem(LS_KEYS.adminToken) ? "admin" : "user")
-  );
+  // activeSession: "admin" | "user"
+  const [activeSession, setActiveSession] = useState(() => {
+    try {
+      const saved = localStorage.getItem(LS_KEYS.activeSession);
+      if (saved) return saved;
+      return localStorage.getItem(LS_KEYS.adminToken) ? "admin" : "user";
+    } catch {
+      return "user";
+    }
+  });
 
-  // compute the active token (explicit session switch)
+  // compute the active token
   const activeToken = activeSession === "admin" ? adminToken || token : token || adminToken || null;
 
   /* Set axios header according to activeToken */
   useEffect(() => {
     if (activeToken) {
       api.setAuthToken?.(activeToken);
-      if (api.defaults)
-        api.defaults.headers.common.Authorization = `Bearer ${activeToken}`;
+      if (api.defaults) api.defaults.headers.common.Authorization = `Bearer ${activeToken}`;
     } else {
       api.setAuthToken?.(null);
       if (api.defaults) delete api.defaults.headers.common.Authorization;
@@ -136,36 +138,25 @@ export function AuthProvider({ children }) {
     } catch {}
   }, [activeToken, activeSession]);
 
-  /* Persist tokens */
+  /* Persist tokens, role, roles, perms, user */
   useEffect(() => {
-    token
-      ? localStorage.setItem(LS_KEYS.token, token)
-      : localStorage.removeItem(LS_KEYS.token);
+    token ? localStorage.setItem(LS_KEYS.token, token) : localStorage.removeItem(LS_KEYS.token);
   }, [token]);
 
   useEffect(() => {
-    adminToken
-      ? localStorage.setItem(LS_KEYS.adminToken, adminToken)
-      : localStorage.removeItem(LS_KEYS.adminToken);
+    adminToken ? localStorage.setItem(LS_KEYS.adminToken, adminToken) : localStorage.removeItem(LS_KEYS.adminToken);
   }, [adminToken]);
 
-  /* Persist role, roles, perms, user */
   useEffect(() => {
-    role
-      ? localStorage.setItem(LS_KEYS.role, role)
-      : localStorage.removeItem(LS_KEYS.role);
+    role ? localStorage.setItem(LS_KEYS.role, role) : localStorage.removeItem(LS_KEYS.role);
   }, [role]);
 
   useEffect(() => {
-    roles?.length
-      ? writeJSON(LS_KEYS.roles, roles)
-      : localStorage.removeItem(LS_KEYS.roles);
+    roles?.length ? writeJSON(LS_KEYS.roles, roles) : localStorage.removeItem(LS_KEYS.roles);
   }, [roles]);
 
   useEffect(() => {
-    perms?.length
-      ? writeJSON(LS_KEYS.perms, perms)
-      : localStorage.removeItem(LS_KEYS.perms);
+    perms?.length ? writeJSON(LS_KEYS.perms, perms) : localStorage.removeItem(LS_KEYS.perms);
   }, [perms]);
 
   useEffect(() => {
@@ -178,21 +169,17 @@ export function AuthProvider({ children }) {
     const rawUser = localStorage.getItem(LS_KEYS.token);
     const persistedSession = localStorage.getItem(LS_KEYS.activeSession);
 
-    // prefer persisted session if present
     if (persistedSession) setActiveSession(persistedSession);
 
-    // if admin token exists and session prefers admin, initialize admin
+    // prefer admin token when present
     if (rawAdmin) {
       const claims = decodeJwt(rawAdmin) || {};
       const r = normalizeRole(claims.role);
       if (r) {
         setAdminToken(rawAdmin);
-        // only set token null if admin session should be primary; otherwise keep both
         if (!rawUser) setToken(null);
-
         setRole(r);
         setRoles([r]);
-
         setUser({
           email: claims.email,
           role: r,
@@ -200,7 +187,6 @@ export function AuthProvider({ children }) {
           perms: claims.perms || [],
           theaterId: claims.theatreId || claims.theaterId || null,
         });
-
         setInitialized(true);
         return;
       } else {
@@ -226,49 +212,76 @@ export function AuthProvider({ children }) {
         localStorage.removeItem(LS_KEYS.token);
       }
     }
-
     setInitialized(true);
+  }, []);
+
+  /* Listener: API unauthorized (fired by api.js when 401 occurs) */
+  useEffect(() => {
+    function onUnauthorized() {
+      // If we have cookie-based auth, an unauthorized may mean refresh failed — force logout
+      logout();
+    }
+    window.addEventListener("api:unauthorized", onUnauthorized);
+    return () => window.removeEventListener("api:unauthorized", onUnauthorized);
   }, []);
 
   /* Login (USER) */
   const login = useCallback(async (email, password, roleHint) => {
-    const res = await api.post("/api/auth/login", {
+    const res = await api.post("/auth/login", {
       email,
       password,
       roleHint,
     });
-    const data = res?.data;
+    const data = res?.data || {};
 
-    const t = data?.token;
-    const claims = decodeJwt(t) || {};
+    // If cookie-first mode and server uses HttpOnly cookie, backend may not return token.
+    const t = data?.token || data?.accessToken || null;
+    const claims = decodeJwt(t) || (data?.user?.token ? decodeJwt(data.user.token) : null);
 
     const roleCandidates = [
-      claims.role,
-      ...(Array.isArray(claims.roles) ? claims.roles : []),
+      claims?.role,
+      ...(Array.isArray(claims?.roles) ? claims.roles : []),
       data?.user?.role,
       "USER",
     ].filter(Boolean);
-
     const finalRole = normalizeRole(roleCandidates[0]);
     const finalUser = {
       ...data.user,
       role: finalRole,
       roles: [finalRole],
-      perms: claims.perms || [],
-      theaterId: claims.theatreId || claims.theaterId || null,
+      perms: claims?.perms || data?.user?.perms || [],
+      theaterId: claims?.theatreId || claims?.theaterId || data?.user?.theatreId || data?.user?.theaterId || null,
     };
 
-    // clear admin session when logging in as user (keep adminToken if you want both; here we favor single active)
+    // If we got a token, persist via primeAuth
+    if (t) {
+      primeAuth(t, finalRole);
+      setToken(t);
+    } else if (COOKIE_AUTH) {
+      // cookie-based: hydrate by calling /auth/me
+      try {
+        const me = await api.get("/auth/me");
+        const u = me?.data?.user || me?.data || me;
+        const r = normalizeRole(u?.role || finalRole);
+        setUser({ ...u, role: r, roles: [r], perms: u?.perms || [] });
+        setRole(r);
+        setRoles([r]);
+      } catch {
+        // fall through — server didn't set cookie or cookie invalid
+      }
+    }
+
+    // clear any admin session and switch to user
     setAdminToken(null);
-    setToken(t);
     setActiveSession("user");
     setRole(finalRole);
     setRoles([finalRole]);
     setPerms(finalUser.perms);
     setUser(finalUser);
 
+    // persist user and token (if present)
     writeJSON(LS_KEYS.user, finalUser);
-    localStorage.setItem(LS_KEYS.token, t);
+    if (t) localStorage.setItem(LS_KEYS.token, t);
     localStorage.removeItem(LS_KEYS.adminToken);
 
     setInitialized(true);
@@ -277,41 +290,56 @@ export function AuthProvider({ children }) {
 
   /* Login (ADMIN) */
   const loginAdmin = useCallback(async (email, password) => {
+    // try couple common admin login endpoints
     let res;
     try {
-      res = await api.post("/api/auth/admin/login", { email, password });
-    } catch {
-      res = await api.post("/api/auth/admin-login", { email, password });
+      res = await api.post("/auth/admin/login", { email, password });
+    } catch (err) {
+      res = await api.post("/auth/admin-login", { email, password });
     }
+    const data = res?.data || {};
+    const t = data?.adminToken || data?.token || null;
+    const claims = decodeJwt(t) || (data?.user?.token ? decodeJwt(data.user.token) : null);
 
-    const data = res?.data;
-    const t = data?.adminToken || data?.token;
-    const claims = decodeJwt(t) || {};
-
-    const finalRole = normalizeRole(
-      claims.role || data?.user?.role || "ADMIN"
-    );
-
+    const finalRole = normalizeRole(claims?.role || data?.user?.role || "ADMIN");
     const finalUser = {
       ...data.user,
-      email: claims.email || email,
+      email: claims?.email || email,
       role: finalRole,
       roles: [finalRole],
-      perms: claims.perms || [],
-      theaterId: claims.theatreId || claims.theaterId || null,
+      perms: claims?.perms || data?.user?.perms || [],
+      theaterId: claims?.theatreId || claims?.theaterId || data?.user?.theatreId || data?.user?.theaterId || null,
     };
 
-    // keep user token separate but set active session to admin
-    setToken(null); // optional: clear user token to avoid ambiguity
-    setAdminToken(t);
+    if (t) {
+      primeAuth(t, finalRole);
+      setAdminToken(t);
+      // optional: clear user token to avoid ambiguity
+      setToken(null);
+    } else if (COOKIE_AUTH) {
+      // cookie-based: hydrate admin profile
+      try {
+        const me = await api.get("/admin/me");
+        const u = me?.data?.user || me?.data || me;
+        const r = normalizeRole(u?.role || finalRole);
+        setUser({ ...u, role: r, roles: [r], perms: u?.perms || [] });
+        setRole(r);
+        setRoles([r]);
+      } catch {
+        // ignore
+      }
+    }
+
     setActiveSession("admin");
     setRole(finalRole);
     setRoles([finalRole]);
     setPerms(finalUser.perms);
     setUser(finalUser);
 
-    localStorage.setItem(LS_KEYS.adminToken, t);
-    localStorage.setItem(LS_KEYS.role, finalRole);
+    if (t) {
+      localStorage.setItem(LS_KEYS.adminToken, t);
+      localStorage.setItem(LS_KEYS.role, finalRole);
+    }
     writeJSON(LS_KEYS.user, finalUser);
 
     setInitialized(true);
@@ -328,12 +356,23 @@ export function AuthProvider({ children }) {
     setUser(null);
     setActiveSession("user");
 
-    Object.values(LS_KEYS).forEach((k) => localStorage.removeItem(k));
+    Object.values(LS_KEYS).forEach((k) => {
+      try {
+        localStorage.removeItem(k);
+      } catch {}
+    });
 
     api.setAuthToken?.(null);
     if (api.defaults) delete api.defaults.headers.common.Authorization;
 
     setInitialized(true);
+    // attempt server-side logout if cookie auth used (best-effort)
+    if (COOKIE_AUTH) {
+      try {
+        api.post("/auth/logout").catch(() => {});
+      } catch {}
+    }
+
     setTimeout(() => window.location.replace("/"), 0);
   }, []);
 
@@ -341,21 +380,19 @@ export function AuthProvider({ children }) {
   const refreshProfile = useCallback(
     async () => {
       try {
-        if (!activeToken) return null;
+        if (!activeToken && !COOKIE_AUTH) return null;
 
-        const path = activeSession === "admin" ? "/api/admin/me" : "/api/auth/me";
+        const path = activeSession === "admin" ? "/admin/me" : "/auth/me";
         const res = await api.get(path);
-        const u = res?.data?.user || res?.data;
+        const u = res?.data?.user || res?.data || null;
+        if (!u) return null;
 
         const nextRole = normalizeRole(u.role);
         const nextUser = {
           ...u,
           role: nextRole,
           roles: [nextRole],
-          perms:
-            u.perms ||
-            res?.data?.perms ||
-            perms,
+          perms: u.perms || res?.data?.perms || perms,
           theaterId: u.theaterId || u.theatreId || null,
         };
 
@@ -366,7 +403,9 @@ export function AuthProvider({ children }) {
 
         return nextUser;
       } catch (err) {
-        if (err?.response?.status === 401) logout();
+        if (err?.response?.status === 401) {
+          logout();
+        }
         return null;
       }
     },
@@ -374,27 +413,20 @@ export function AuthProvider({ children }) {
   );
 
   /* Derived flags */
-  const isLoggedIn = !!activeToken;
+  const isLoggedIn = !!activeToken || COOKIE_AUTH; // cookie-auth may be logged-in without local token
   const isSuperAdmin = role === "SUPER_ADMIN";
   const isAdmin = role === "ADMIN";
   const isTheatreAdmin = role === "THEATRE_ADMIN";
   const isAdminLike = isAdmin || isSuperAdmin || isTheatreAdmin;
 
-  /* ---------- FIXED REDIRECT LOGIC (safe) ---------- */
+  /* Fixed redirect logic */
   useEffect(() => {
     if (!initialized) return;
 
     if (isLoggedIn && role) {
       const here = window.location.pathname;
       const target = defaultLandingFor(role);
-
-      // Only redirect from public login pages (NOT arbitrary admin children)
-      if (
-        (here === "/" ||
-          here === "/login" ||
-          here === "/admin/login") &&
-        here !== target
-      ) {
+      if ((here === "/" || here === "/login" || here === "/admin/login") && here !== target) {
         window.location.replace(target);
       }
     }
@@ -447,7 +479,5 @@ export function AuthProvider({ children }) {
     ]
   );
 
-  return (
-    <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
