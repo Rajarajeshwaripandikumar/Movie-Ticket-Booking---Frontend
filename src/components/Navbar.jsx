@@ -8,18 +8,31 @@ import api from "../api/api";
 
 const cn = (...xs) => xs.filter(Boolean).join(" ");
 
-/* ---------- safeNavigate helper to avoid repeated same-path navigations ---------- */
+/* ---------- safeNavigate helper to avoid repeated same-path navigations ----------
+   FIX: Normalize trailing slashes before comparing so Netlify/Router normalization
+   (with or without a trailing slash) doesn't incorrectly block navigation.
+*/
 const safeNavigate = (navigate, to, opts = {}) => {
   try {
     if (!to) return;
-    // compare pathname only to avoid re-navigating to same page
-    const current = window.location.pathname;
-    const targetPath = new URL(to, window.location.origin).pathname;
-    if (current === targetPath) return;
+
+    const current = window.location.pathname || "";
+    const targetPath = new URL(to, window.location.origin).pathname || "";
+
+    // Normalize both paths by removing trailing slashes before comparing.
+    const norm = (p = "") => String(p).replace(/\/+$/, "") || "/";
+
+    if (norm(current) === norm(targetPath)) {
+      // same logical path -> bail out to avoid pointless navigation
+      return;
+    }
+
     navigate(to, opts);
   } catch (e) {
-    // fallback: attempt navigate anyway (very rare)
-    navigate(to, opts);
+    // fallback: attempt navigate anyway
+    try {
+      navigate(to, opts);
+    } catch {}
   }
 };
 
