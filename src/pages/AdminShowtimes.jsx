@@ -1,6 +1,6 @@
 // src/pages/AdminShowtimes.jsx — vertical stack enforced with local CSS override (FIXED)
 import { useEffect, useState } from "react";
-import api from "../api/api";
+import api, { API_DEBUG } from "../api/api";
 import { useAuth } from "../context/AuthContext";
 import {
   Film,
@@ -76,27 +76,47 @@ export default function AdminShowtimes() {
 
   /* Try multiple candidate endpoints and return the first array of items found */
   async function tryFetchCandidates(candidates = []) {
-    let lastErr;
-    for (const ep of candidates) {
+    let lastErr = null;
+    for (const rawEp of candidates) {
+      if (!rawEp) continue;
+      // normalize to relative path (avoid double /api)
+      const ep = String(rawEp).replace(/^\/api\/?/, "/").replace(/^\/+/, "/");
       try {
-        const res = await api.get(ep);
-        const payload = res?.data;
-        if (Array.isArray(payload)) return payload;
-        if (payload && typeof payload === "object") {
-          if (Array.isArray(payload.data)) return payload.data;
-          for (const key of Object.keys(payload)) {
-            if (Array.isArray(payload[key])) return payload[key];
-          }
-          // 🔁 normalize single-object responses to array
-          if (payload._id) return [payload];
+        // use api.getFresh so we bypass caches and get consistent params
+        const resData = await api.getFresh(ep, { params: { _ts: Date.now() } }); // returns res.data
+        const payload = resData;
+        if (Array.isArray(payload)) {
+          if (API_DEBUG) console.debug("[tryFetchCandidates] array ->", ep, payload.length);
+          return payload;
         }
+        if (payload && typeof payload === "object") {
+          if (Array.isArray(payload.data)) {
+            if (API_DEBUG) console.debug("[tryFetchCandidates] payload.data ->", ep, payload.data.length);
+            return payload.data;
+          }
+          // common keys
+          for (const key of Object.keys(payload)) {
+            if (Array.isArray(payload[key])) {
+              if (API_DEBUG) console.debug("[tryFetchCandidates] payload.%s -> %s (%d)", key, ep, payload[key].length);
+              return payload[key];
+            }
+          }
+          // single-object -> array
+          if (payload._id || payload.id) {
+            if (API_DEBUG) console.debug("[tryFetchCandidates] single object ->", ep);
+            return [payload];
+          }
+        }
+        if (API_DEBUG) console.debug("[tryFetchCandidates] no array found at", ep, payload);
       } catch (e) {
         lastErr = e;
         const status = e?.response?.status;
-        if (status >= 400) console.warn(`[${status}] GET ${ep}`, e?.response?.data || e.message);
+        if (API_DEBUG || status >= 400) {
+          console.warn(`[${status ?? "ERR"}] GET ${rawEp}`, e?.response?.data || e?.message || e);
+        }
       }
     }
-    if (lastErr) console.warn("All candidates failed:", candidates);
+    if (lastErr && API_DEBUG) console.warn("All candidates failed:", candidates, lastErr?.message || lastErr);
     return [];
   }
 
@@ -112,45 +132,47 @@ export default function AdminShowtimes() {
 
   async function loadMovies() {
     try {
-      const ts = Date.now();
       const candidates = [
-        `/api/movies/admin/list?ts=${ts}`, // full list if authed
-        `/api/movies?ts=${ts}`,            // public fallback
-        `/movies?ts=${ts}`,
+        "/movies",            // public or admin list (prefer this)
+        "/movies/list",
+        "/movies/admin/list",
       ];
       const list = await tryFetchCandidates(candidates);
-      setMovies(list);
+      setMovies(list || []);
       if (list?.length) setMovieId((p) => p || list[0]._id || list[0].id || "");
     } catch (err) {
-      console.error("loadMovies error", err);
-      setMsg("Failed to load movies."); setMsgType("error");
+      if (API_DEBUG) console.error("loadMovies error", err);
+      setMsg("Failed to load movies.");
+      setMsgType("error");
     }
   }
 
   async function loadTheaters() {
     try {
-      const ts = Date.now();
       const candidates = [
-        `/api/theaters/me?ts=${ts}`,                    // ✅ correct singular object
-        `/api/theaters/admin/theaters/mine?ts=${ts}`,   // {data:[...] }
-        `/api/theatres/me?ts=${ts}`,                    // alias (UK spelling)
+        "/theaters/mine",            // manager-specific list
+        "/theaters/admin/theaters/mine",
+        "/theatres/me",              // alias
+        "/theaters",                 // fallback public list
+        "/theatres",
       ];
       const list = await tryFetchCandidates(candidates);
-      setTheaters(list);
+      setTheaters(list || []);
       const first = Array.isArray(list) && list.length ? list[0] : null;
       if (first) {
         const firstId = first._id || first.id || "";
         setTheaterId((p) => p || firstId);
         setCity((p) => p || first.city || "");
         if (firstId) await loadScreensForTheater(firstId);
-        // Load only my theatre's upcoming showtimes
         await loadShowtimesMyTheatre(firstId);
       } else {
-        setMsg("No theatre linked to this account."); setMsgType("error");
+        setMsg("No theatre linked to this account.");
+        setMsgType("error");
       }
     } catch (err) {
-      console.error("loadTheaters error", err);
-      setMsg("Failed to load theaters."); setMsgType("error");
+      if (API_DEBUG) console.error("loadTheaters error", err);
+      setMsg("Failed to load theaters.");
+      setMsgType("error");
     }
   }
 
@@ -158,22 +180,22 @@ export default function AdminShowtimes() {
     setScreens([]); setScreenId(""); setRows(null); setCols(null);
     if (!id) return;
     try {
-      const ts = Date.now();
       const candidates = [
-        `/api/screens/by-theatre/${id}?ts=${ts}`, // ✅ our alias returns raw array
-        `/screens/by-theatre/${id}?ts=${ts}`,
-        `/api/theaters/${id}/screens?ts=${ts}`,   // standard public shape: {ok:true,data:[...]}
+        `/screens/by-theatre/${id}`,
+        `/theaters/${id}/screens`,
+        `/screens?theaterId=${id}`,
       ];
       const list = await tryFetchCandidates(candidates);
-      setScreens(list);
+      setScreens(list || []);
       if (list?.length) {
         const first = list[0];
         setScreenId((p) => p || first._id || first.id || "");
         deriveRowsColsFromScreen(first);
       }
     } catch (err) {
-      console.error("loadScreensForTheater error", err);
-      setMsg("Failed to load screens."); setMsgType("error");
+      if (API_DEBUG) console.error("loadScreensForTheater error", err);
+      setMsg("Failed to load screens.");
+      setMsgType("error");
     }
   }
 
@@ -186,22 +208,22 @@ export default function AdminShowtimes() {
 
   async function loadShowtimesMyTheatre(thId = theaterId) {
     try {
-      const ts = Date.now();
-      // Returns ONLY the logged-in manager’s theatre shows
       const candidates = [
-        `/api/showtimes/my-theatre?ts=${ts}`,                 // preferred
-        thId ? `/api/showtimes?theaterId=${thId}&ts=${ts}` : null, // fallback
+        "/showtimes/my-theatre",                 // preferred
+        thId ? `/showtimes?theaterId=${thId}` : null,
+        "/showtimes",
       ].filter(Boolean);
       const list = await tryFetchCandidates(candidates);
-      setShowtimes(list);
+      setShowtimes(list || []);
       if (list?.length) {
         setShowtimeId((p) => p || list[0]._id || list[0].id || "");
         const st = list[0].startTime || list[0].startAt || list[0].date || list[0].datetime || null;
         if (st) setStartTime(toLocalDatetimeInputValue(st));
       }
     } catch (err) {
-      console.error("loadShowtimesMyTheatre error", err);
-      setMsg("Failed to load showtimes."); setMsgType("error");
+      if (API_DEBUG) console.error("loadShowtimesMyTheatre error", err);
+      setMsg("Failed to load showtimes.");
+      setMsgType("error");
     }
   }
 
@@ -217,7 +239,6 @@ export default function AdminShowtimes() {
     const st = showtimes.find((s) => s._id === id || s.id === id);
     if (st) {
       setStartTime(toLocalDatetimeInputValue(st.startTime ?? st.startAt ?? st.date ?? st.datetime));
-      // 🐛 fixed: use `st` (not `s`)
       setBasePrice(st.basePrice ?? st.price ?? st.amount ?? 200);
       setCity(st.theater?.city ?? st.city ?? "");
       if (st.screen) setScreenId(st.screen._id ?? st.screen);
@@ -245,26 +266,35 @@ export default function AdminShowtimes() {
         rows: rows ?? undefined, cols: cols ?? undefined,
       };
 
-      const createCandidates = ["/api/showtimes", "/showtimes"];
+      const createCandidates = ["/showtimes", "/showtimes/create", "/api/showtimes"];
       let created = false;
-      for (const ep of createCandidates) {
+      let lastErr = null;
+      for (const epRaw of createCandidates) {
         try {
+          const ep = String(epRaw).replace(/^\/api\/?/, "/").replace(/^\/+/, "/");
+          if (API_DEBUG) console.debug("[createShowtime] trying", ep, payload);
           await api.post(ep, payload);
           created = true;
           break;
-        } catch (e) {
-          const status = e?.response?.status;
-          if (status >= 400) console.warn(`[${status}] POST ${ep}`, e?.response?.data || e.message);
+        } catch (err) {
+          lastErr = err;
+          const status = err?.response?.status;
+          if (API_DEBUG || status >= 400) console.warn(`[${status ?? "ERR"}] POST ${epRaw}`, err?.response?.data || err?.message || err);
         }
       }
-      if (!created) throw new Error("Create endpoint not found");
+      if (!created) {
+        if (API_DEBUG) console.error("createShowtime failed (all endpoints)", lastErr);
+        throw new Error("Create endpoint not found");
+      }
 
-      setMsg("Showtime created successfully!"); setMsgType("success");
+      setMsg("Showtime created successfully!");
+      setMsgType("success");
       setStartTime("");
       await loadShowtimesMyTheatre();
     } catch (err) {
-      console.error("createShowtime error", err);
-      setMsg(err?.response?.data?.message || "Failed to create showtime"); setMsgType("error");
+      if (API_DEBUG) console.error("createShowtime error", err);
+      setMsg(err?.response?.data?.message || "Failed to create showtime");
+      setMsgType("error");
     } finally {
       setLoading(false);
     }
@@ -277,28 +307,38 @@ export default function AdminShowtimes() {
     try {
       const iso = new Date(startTime).toISOString();
       const body = { startAt: iso, startTime: iso }; // send both
+
       const candidates = [
-        `/api/showtimes/${showtimeId}`,
         `/showtimes/${showtimeId}`,
+        `/api/showtimes/${showtimeId}`,
       ];
       let patched = false;
-      for (const ep of candidates) {
+      let lastErr = null;
+      for (const epRaw of candidates) {
         try {
+          const ep = String(epRaw).replace(/^\/api\/?/, "/").replace(/^\/+/, "/");
+          if (API_DEBUG) console.debug("[patchShowtime] trying", ep, body);
           await api.patch(ep, body);
           patched = true;
           break;
         } catch (e) {
+          lastErr = e;
           const status = e?.response?.status;
-          if (status >= 400) console.warn(`[${status}] PATCH ${ep}`, e?.response?.data || e.message);
+          if (API_DEBUG || status >= 400) console.warn(`[${status ?? "ERR"}] PATCH ${epRaw}`, e?.response?.data || e?.message || e);
         }
       }
-      if (!patched) throw new Error("Update endpoint not found");
+      if (!patched) {
+        if (API_DEBUG) console.error("patchShowtime failed (all endpoints)", lastErr);
+        throw new Error("Update endpoint not found");
+      }
 
-      setMsg("Showtime updated successfully!"); setMsgType("success");
+      setMsg("Showtime updated successfully!");
+      setMsgType("success");
       await loadShowtimesMyTheatre();
     } catch (err) {
-      console.error("patchShowtime error", err);
-      setMsg(err?.response?.data?.message || "Failed to update showtime"); setMsgType("error");
+      if (API_DEBUG) console.error("patchShowtime error", err);
+      setMsg(err?.response?.data?.message || "Failed to update showtime");
+      setMsgType("error");
     } finally {
       setLoading(false);
     }
@@ -442,7 +482,7 @@ export default function AdminShowtimes() {
             <PencilLine className="h-5 w-5" /> Update Showtime
           </h2>
 
-        <form onSubmit={patchShowtime} className="space-y-3">
+          <form onSubmit={patchShowtime} className="space-y-3">
             <Field
               as="select"
               value={showtimeId}
@@ -516,24 +556,33 @@ export default function AdminShowtimes() {
                           if (!window.confirm("Delete this showtime?")) return;
                           try {
                             const id = s._id || s.id;
-                            const candidates = [`/api/showtimes/${id}`, `/showtimes/${id}`];
+                            const candidates = [`/showtimes/${id}`, `/api/showtimes/${id}`];
                             let deleted = false;
-                            for (const ep of candidates) {
+                            let lastErr = null;
+                            for (const epRaw of candidates) {
                               try {
+                                const ep = String(epRaw).replace(/^\/api\/?/, "/").replace(/^\/+/, "/");
+                                if (API_DEBUG) console.debug("[deleteShowtime] trying", ep);
                                 await api.delete(ep);
                                 deleted = true;
                                 break;
                               } catch (e) {
+                                lastErr = e;
                                 const status = e?.response?.status;
-                                if (status >= 400) console.warn(`[${status}] DELETE ${ep}`, e?.response?.data || e.message);
+                                if (API_DEBUG || status >= 400) console.warn(`[${status ?? "ERR"}] DELETE ${epRaw}`, e?.response?.data || e?.message || e);
                               }
                             }
-                            if (!deleted) throw new Error("Delete endpoint not found");
-                            setMsg("Showtime deleted"); setMsgType("success");
+                            if (!deleted) {
+                              if (API_DEBUG) console.error("deleteShowtime failed", lastErr);
+                              throw new Error("Delete endpoint not found");
+                            }
+                            setMsg("Showtime deleted");
+                            setMsgType("success");
                             await loadShowtimesMyTheatre();
                           } catch (err) {
-                            console.error("delete showtime error", err);
-                            setMsg("Delete failed"); setMsgType("error");
+                            if (API_DEBUG) console.error("delete showtime error", err);
+                            setMsg("Delete failed");
+                            setMsgType("error");
                           }
                         }}
                       >
