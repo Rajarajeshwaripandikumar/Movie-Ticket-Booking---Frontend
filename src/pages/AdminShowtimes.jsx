@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import api, { API_DEBUG } from "../api/api";
 import { useAuth } from "../context/AuthContext";
 import {
-  CalendarClock,
+  CalendarClock as CalendarClockLucide,
   Film,
   Building2,
   LayoutGrid,
@@ -600,7 +600,7 @@ export default function AdminShowtimes() {
         <Card className="p-5 flex items-center justify-between">
           <div>
             <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight flex items-center gap-2">
-              <CalendarClock className="h-6 w-6" /> Manage Showtimes
+              <CalendarClockLucide className="h-6 w-6" /> Manage Showtimes
             </h1>
             <p className="text-sm text-slate-600 mt-1">Create, update, and organize theater schedules.</p>
           </div>
@@ -686,7 +686,7 @@ export default function AdminShowtimes() {
                 type="datetime-local"
                 value={startTime}
                 onChange={(e) => setStartTime(e.target.value)}
-                icon={CalendarClock}
+                icon={CalendarClockLucide}
               />
               <Field
                 type="number"
@@ -714,7 +714,7 @@ export default function AdminShowtimes() {
           </h2>
 
           <form onSubmit={patchShowtime} className="space-y-3">
-            <Field as="select" value={showtimeId} onChange={(e) => handleSelectShowtime(e.target.value)} icon={CalendarClock}>
+            <Field as="select" value={showtimeId} onChange={(e) => handleSelectShowtime(e.target.value)} icon={CalendarClockLucide}>
               <option value={NEW}>-- Select Showtime --</option>
               {Array.isArray(showtimes) &&
                 showtimes.map((s) => (
@@ -727,7 +727,7 @@ export default function AdminShowtimes() {
             </Field>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <Field type="datetime-local" value={startTime} onChange={(e) => setStartTime(e.target.value)} icon={CalendarClock} />
+              <Field type="datetime-local" value={startTime} onChange={(e) => setStartTime(e.target.value)} icon={CalendarClockLucide} />
               <div className="flex items-center gap-2">
                 <SecondaryBtn type="button" onClick={() => openSeatPreviewForShowtime(showtimeId)} disabled={!showtimeId || showtimeId === NEW}>
                   <Eye className="h-4 w-4" /> View Showtime Seats
@@ -832,6 +832,6 @@ export default function AdminShowtimes() {
 }
 
 /* --------------------------- small extra components --------------------------- */
- function CalendarClockIcon() {
+function CalendarClockIcon() {
   return <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 8h18M21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V10" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M16 3v4M8 3v4" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>;
 }
