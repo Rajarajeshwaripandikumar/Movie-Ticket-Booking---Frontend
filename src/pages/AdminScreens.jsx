@@ -1,5 +1,6 @@
 // src/pages/AdminScreens.jsx — Walmart Style (clean, rounded, blue accents)
 // Updated: tolerate adminToken, use auth.initialized, endpoint fallbacks, debug logs
+// Fixed: robustly extract theaters/screens from many backend response shapes
 
 import { useEffect, useMemo, useState } from "react";
 import api from "../api/api";
@@ -74,6 +75,36 @@ const normalizeScreen = (s = {}) => {
   return { ...s, rows: Number.isFinite(rows) ? rows : 0, cols: Number.isFinite(cols) ? cols : 0 };
 };
 
+/* -------------------- robust extractors -------------------- */
+/**
+ * Accept many shapes:
+ *  - raw array []
+ *  - { ok: true, data: [...] }
+ *  - { data: [...] }
+ *  - { screens: [...] } / { items: [...] } / { results: [...] }
+ */
+function extractScreenArray(payload) {
+  if (!payload) return [];
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload.data)) return payload.data;
+  if (Array.isArray(payload.screens)) return payload.screens;
+  if (Array.isArray(payload.items)) return payload.items;
+  if (Array.isArray(payload.results)) return payload.results;
+  return [];
+}
+
+function extractTheaterArray(payload) {
+  if (!payload) return [];
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload.data)) return payload.data;
+  if (Array.isArray(payload.theaters)) return payload.theaters;
+  if (Array.isArray(payload.items)) return payload.items;
+  if (Array.isArray(payload.results)) return payload.results;
+  if (Array.isArray(payload.theatres)) return payload.theatres;
+  return [];
+}
+
+/* ----------------------------- networking ----------------------------- */
 /**
  * Try to load screens with endpoint fallbacks:
  * prefer /admin/theaters/:id/screens then /theaters/:id/screens
@@ -89,8 +120,7 @@ async function fetchScreensForTheater(theaterId) {
   for (const path of candidates) {
     try {
       const res = await api.get(path, { params: { _ts: Date.now() } });
-      const data = res?.data;
-      const arr = Array.isArray(data) ? data : data?.data || data?.screens || data?.items || [];
+      const arr = extractScreenArray(res?.data);
       if (Array.isArray(arr)) return arr.map(normalizeScreen);
     } catch (err) {
       lastErr = err;
@@ -175,16 +205,8 @@ export default function AdminScreens() {
         for (const p of candidates) {
           try {
             const res = await api.get(p, { params: { _ts: Date.now() } });
-            const data = res?.data;
-            const arr =
-              (Array.isArray(data) && data) ||
-              data?.data ||
-              data?.theaters ||
-              data?.items ||
-              data?.results ||
-              data?.theatres ||
-              [];
-            if (Array.isArray(arr)) {
+            const arr = extractTheaterArray(res?.data);
+            if (Array.isArray(arr) && arr.length > 0) {
               list = arr;
               break;
             }
@@ -376,8 +398,8 @@ export default function AdminScreens() {
                   for (const p of candidates) {
                     try {
                       const { data } = await api.get(p, { params: { _ts: Date.now() } });
-                      const list = Array.isArray(data) ? data : data?.data || [];
-                      if (Array.isArray(list)) {
+                      const list = extractTheaterArray(data);
+                      if (Array.isArray(list) && list.length > 0) {
                         setTheaters(list);
                         break;
                       }
