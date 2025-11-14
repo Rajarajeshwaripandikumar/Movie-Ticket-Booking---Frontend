@@ -160,6 +160,14 @@ export default function ProfilePage() {
   const { user, setUser, role } = useAuth() || {};
   const navigate = useNavigate();
 
+  // 🔥 FIX: redirect ANY admin role to admin profile page
+  useEffect(() => {
+    const r = String(role || "").toUpperCase();
+    if (r !== "USER") {
+      navigate("/admin/profile", { replace: true });
+    }
+  }, [role, navigate]);
+
   // state
   const [loadingSave, setLoadingSave] = useState(false);
   const [bookings, setBookings] = useState([]);
@@ -186,11 +194,6 @@ export default function ProfilePage() {
   const [showEdit, setShowEdit] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-  /* Redirect admin */
-  useEffect(() => {
-    if (role === "admin") navigate("/admin/profile", { replace: true });
-  }, [role, navigate]);
-
   /* -------- Helpers -------- */
   function getCreatedAtFromUser(u) {
     if (!u) return null;
@@ -205,19 +208,23 @@ export default function ProfilePage() {
     }
     return null;
   }
+
   function formatMemberSinceSafe(u) {
     const d = getCreatedAtFromUser(u);
     return d ? d.toLocaleDateString("en-IN", { dateStyle: "medium" }) : "—";
   }
+
   function validatePhone(phone) {
     if (!phone) return true;
     const cleaned = String(phone).replace(/\D/g, "");
     return cleaned.length >= 7 && cleaned.length <= 15;
   }
+
   function deepMergePreferences(curr, patch) {
     const base = curr || { language: "en", notifications: { email: true, sms: false } };
     return { ...base, ...patch, notifications: { ...base.notifications, ...(patch?.notifications || {}) } };
   }
+
   const initials = (name = "") =>
     name.trim().split(/\s+/, 2).map(s => s[0]?.toUpperCase() || "").join("") || "U";
 
@@ -350,7 +357,7 @@ export default function ProfilePage() {
     setPwLoading(true);
     try {
       await api.post("/profile/change-password", {
-        currentPassword: pwCurrent,
+        currentPassword,
         newPassword: pwNew,
       });
       setPwMsg("Password changed successfully! Please log in again.");
