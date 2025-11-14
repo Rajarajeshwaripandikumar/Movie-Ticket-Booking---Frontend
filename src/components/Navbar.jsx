@@ -8,6 +8,44 @@ import api from "../api/api";
 
 const cn = (...xs) => xs.filter(Boolean).join(" ");
 
+/* ---------- safeNavigate helper to avoid repeated same-path navigations ----------
+   FIX: Normalize trailing slashes and query params before comparing so Netlify/Router
+   normalization (with or without trailing slash) doesn't incorrectly block navigation.
+*/
+const normalizePathForCompare = (urlOrPath = "") => {
+  try {
+    // If it's already a full URL, extract pathname+search; otherwise use string as-is
+    const u = new URL(urlOrPath, typeof window !== "undefined" ? window.location.origin : "http://localhost");
+    // strip trailing slashes from pathname, keep search unchanged (we include it in comparison)
+    const pathname = String(u.pathname).replace(/\/+$/, "") || "/";
+    const search = u.search || "";
+    return pathname + search;
+  } catch (e) {
+    // fallback: simple trim + remove trailing slash
+    return String(urlOrPath).replace(/\/+$/, "") || "/";
+  }
+};
+
+const safeNavigate = (navigate, to, opts = {}) => {
+  try {
+    if (!to) return;
+
+    const current = normalizePathForCompare(window.location.pathname + window.location.search);
+    const targetPath = normalizePathForCompare(to);
+
+    // same logical path -> bail out to avoid pointless navigation
+    if (current === targetPath) return;
+
+    // explicit navigate (don't replace history unless caller wanted to)
+    navigate(to, { replace: false, ...opts });
+  } catch (e) {
+    // fallback: attempt navigate anyway
+    try {
+      navigate(to, opts);
+    } catch {}
+  }
+};
+
 /* ---------- small UI helpers ---------- */
 const Card = ({ className = "", as: Comp = "div", ...rest }) => (
   <Comp className={cn("bg-white border border-slate-200 rounded-2xl shadow-sm", className)} {...rest} />
@@ -33,7 +71,7 @@ const navLinkClasses = ({ isActive }) =>
     isActive ? "text-[#0654BA]" : "text-slate-700 hover:text-[#0654BA]"
   );
 
-/* ---------- FIXED: DIRECT Navigation MenuItem (no safeNavigate) ---------- */
+/* ---------- MenuItemLink: imperative link for popover items with a small click guard ---------- */
 function MenuItemLink({ to, children, onClick }) {
   const navigate = useNavigate();
   const clickingRef = useRef(false);
@@ -43,18 +81,17 @@ function MenuItemLink({ to, children, onClick }) {
       type="button"
       onClick={(e) => {
         e.preventDefault();
-        e.stopPropagation();
-
         if (clickingRef.current) return;
         clickingRef.current = true;
-
         try {
           onClick?.();
-          navigate(to); // DIRECT navigation → no redirect bug
-        } catch (err) {
-          console.error("[MenuItemLink] navigate error:", err);
+          // Use safeNavigate to avoid pointless same-path navigations; don't replace history
+          safeNavigate(navigate, to, {});
         } finally {
-          setTimeout(() => (clickingRef.current = false), 150);
+          // small debounce to avoid accidental double-nav
+          setTimeout(() => {
+            clickingRef.current = false;
+          }, 120);
         }
       }}
       className="block w-full text-left px-3 py-2 text-sm rounded-xl hover:bg-slate-50 font-semibold"
@@ -85,7 +122,7 @@ const THEATRE_ADMIN_LINKS = [
   { label: "My Theatre", to: "/theatre/profile" },
 ];
 
-/* ---------- Normalize notifications ---------- */
+/* ---------- Notifications normalizer ---------- */
 const normalizeNotifications = (raw) => {
   const arr =
     Array.isArray(raw) ? raw :
@@ -94,15 +131,20 @@ const normalizeNotifications = (raw) => {
     Array.isArray(raw?.content) ? raw.content :
     Array.isArray(raw?.notifications) ? raw.notifications : [];
 
+  const unreadFallback = Number(
+    raw?.unread ?? raw?.unreadCount ?? raw?.meta?.unread ?? 0
+  );
+
   return {
     items: arr.map((n, i) => ({
       id: n._id ?? n.id ?? `n-${i}`,
       type: n.type ?? n.kind ?? "",
       title: n.title ?? n.subject ?? "Notification",
       message: n.message ?? n.body ?? n.text ?? "",
-      createdAt: n.createdAt ?? new Date().toISOString(),
-      readAt: n.readAt ?? (n.read ? new Date().toISOString() : null),
+      createdAt: n.createdAt ?? n.timestamp ?? n.time ?? new Date().toISOString(),
+      readAt: n.readAt ?? (n.read === true ? new Date().toISOString() : null),
     })),
+    unreadFallback,
   };
 };
 
@@ -124,9 +166,9 @@ export default function Navbar() {
 
   const [open, setOpen] = useState(false);
   const [adminMenu, setAdminMenu] = useState(false);
+
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
-
   const notifRef = useRef(null);
 
   const token =
@@ -138,35 +180,28 @@ export default function Navbar() {
 
   const unread = useMemo(() => notifications.filter((n) => !n.readAt).length, [notifications]);
 
-  /* -------- Load notifications -------- */
+  /* ---------- load notifications (poll every 30s) ---------- */
   useEffect(() => {
     if (!isLoggedIn || !token) return;
-
     let alive = true;
-
     const load = async () => {
       try {
         const res = await api.get("/notifications/mine", {
           headers: { Authorization: `Bearer ${token}` },
         });
-
         const { items } = normalizeNotifications(res.data);
-        if (alive) setNotifications(items);
+        if (!alive) return;
+        setNotifications(items);
       } catch {
         if (alive) setNotifications([]);
       }
     };
-
     load();
     const t = setInterval(load, 30000);
-
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
+    return () => { alive = false; clearInterval(t); };
   }, [isLoggedIn, token]);
 
-  /* -------- Close popups on outside click -------- */
+  /* ---------- close notification popover when clicking outside ---------- */
   useEffect(() => {
     const onDocClick = (e) => {
       if (!notifRef.current) return;
@@ -176,23 +211,25 @@ export default function Navbar() {
     return () => document.removeEventListener("mousedown", onDocClick);
   }, []);
 
-  /* -------- Close menus on route change -------- */
+  /* ---------- close popovers on navigation change ---------- */
   useEffect(() => {
     setNotifOpen(false);
     setAdminMenu(false);
   }, [location.pathname]);
 
-  const toKey = (n) => n.id || `${n.type}-${n.createdAt}`;
+  const toKey = (n) => n.id || `${n.type || "n"}-${n.createdAt || Math.random()}`;
 
   const resolveNotificationPath = (n) => {
-    const t = String(n.type || "").toLowerCase();
+    const t = (n.type || "").toLowerCase();
     if (t.includes("booking")) return "/bookings";
     if (t.includes("showtime")) {
       if (isSuperAdmin) return "/admin/showtimes";
       if (isTheatreAdmin) return "/theatre/showtimes";
-      return "/admin/showtimes";
+      if (isAdmin) return "/admin/showtimes";
+      return "/showtimes";
     }
     if (isTheatreAdmin) return "/theatre/my";
+    // Option B: canonical admin landing is /admin/dashboard
     if (isSuperAdmin || isAdmin) return "/admin/dashboard";
     return "/bookings";
   };
@@ -201,29 +238,25 @@ export default function Navbar() {
     try {
       await api.patch(`/notifications/${id}/read`, {}, { headers: { Authorization: `Bearer ${token}` } });
     } catch {}
-
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, readAt: n.readAt || new Date().toISOString() } : n))
     );
   };
 
   const profilePath =
-    isSuperAdmin ? "/admin/profile" :
-    isTheatreAdmin ? "/theatre/profile" :
-    "/profile";
+    isSuperAdmin ? "/admin/profile"
+    : isTheatreAdmin ? "/theatre/profile"
+    : "/profile";
 
   const anyAdmin = isSuperAdmin || isAdmin || isTheatreAdmin;
 
-  /* ---------------------------------------------------------------------- */
-  /* --------------------------- RENDER NAVBAR ---------------------------- */
-  /* ---------------------------------------------------------------------- */
   return (
     <header className="w-full sticky top-0 z-50">
-      <div className="relative isolate z-50 backdrop-blur-md bg-white/85 border-b border-slate-200 shadow-sm">
+      <div className="relative isolate z-50 backdrop-blur-md bg-white/85 border-b border-slate-200 shadow-sm overflow-visible">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          {/* ROW: logo | middle nav | right controls */}
           <div className="h-16 flex items-center gap-6">
-            
-            {/* Brand */}
+            {/* Brand (left) */}
             <Link to="/" className="flex items-center gap-3 shrink-0">
               <Card className="p-1.5">
                 <Logo size={36} />
@@ -233,12 +266,18 @@ export default function Navbar() {
               </div>
             </Link>
 
-            {/* Middle Links */}
+            {/* Main Links (middle) */}
             <nav className="hidden md:flex items-center gap-5 ml-8">
-              <NavLink to="/movies" className={navLinkClasses}>Movies</NavLink>
-              <NavLink to="/theaters" className={navLinkClasses}>Theaters</NavLink>
-              <NavLink to="/showtimes" className={navLinkClasses}>Showtimes</NavLink>
-
+              <NavLink to="/movies" className={navLinkClasses}>
+                Movies
+              </NavLink>
+              <NavLink to="/theaters" className={navLinkClasses}>
+                Theaters
+              </NavLink>
+              <NavLink to="/showtimes" className={navLinkClasses}>
+                Showtimes
+              </NavLink>
+              {/* Hide "My Bookings" for ALL admin roles */}
               {isLoggedIn && !anyAdmin && (
                 <NavLink to="/bookings" className={navLinkClasses}>
                   My Bookings
@@ -246,39 +285,42 @@ export default function Navbar() {
               )}
             </nav>
 
-            {/* Right Controls */}
+            {/* Right Controls (pushed right) */}
             <div className="ml-auto flex items-center gap-3 relative">
-
               {/* Notifications */}
               {isLoggedIn && (
                 <div className="relative z-50" ref={notifRef}>
                   <IconBtn
-                    onClick={() => {
-                      setNotifOpen((v) => !v);
-                      setAdminMenu(false);
-                    }}
+                    aria-label="Notifications"
+                    title="Notifications"
+                    onClick={() => { setNotifOpen((v) => !v); setAdminMenu(false); }}
                   >
                     <Bell className="w-5 h-5" />
                   </IconBtn>
 
                   {unread > 0 && (
-                    <span className="absolute -top-1 -right-1 text-[10px] px-1.5 py-0.5 rounded-full bg-rose-600 text-white shadow-sm">
+                    <span className="absolute -top-1 -right-1 text-[10px] leading-none px-1.5 py-0.5 rounded-full border border-white bg-rose-600 text-white shadow-sm">
                       {unread > 99 ? "99+" : unread}
                     </span>
                   )}
 
                   {notifOpen && (
-                    <Card className="absolute right-0 mt-3 w-80 bg-white max-h-96 overflow-auto p-0 z-50">
+                    <Card
+                      className="absolute right-0 mt-3 w-80 bg-white max-h-96 overflow-auto p-0 z-50"
+                      onClick={(e) => e.stopPropagation()}
+                      role="menu"
+                      aria-label="Notifications"
+                    >
+                      {/* Mark all as read */}
                       {notifications.length > 0 && (
-                        <div className="sticky top-0 bg-white border-b p-2 text-right">
+                        <div className="sticky top-0 bg-white border-b border-slate-200 p-2 text-right">
                           <button
-                            className="text-[11px] px-2 py-1 rounded-full border border-slate-300 hover:bg-slate-50 font-semibold"
+                            className="text-[11px] px-2 py-1 rounded-full border border-slate-300 bg-white hover:bg-slate-50 font-semibold"
                             onClick={async () => {
                               try {
                                 await api.post("/notifications/read-all", {}, { headers: { Authorization: `Bearer ${token}` } });
                                 setNotifications((prev) =>
-                                  prev.map((n) => ({ ...n, readAt: n.readAt || new Date().toISOString() }))
-                                );
+                                  prev.map((n) => ({ ...n, readAt: n.readAt || new Date().toISOString() })))
                               } catch {}
                             }}
                           >
@@ -300,22 +342,28 @@ export default function Navbar() {
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     setNotifOpen(false);
-                                    if (!n.readAt) markOneRead(n.id);
-                                    navigate(to);
+                                    if (n.id && !n.readAt) markOneRead(n.id);
+                                    safeNavigate(navigate, to);
                                   }}
                                   className={cn(
                                     "w-full text-left p-3 border-b border-slate-200 last:border-b-0",
-                                    "hover:bg-slate-50",
+                                    "hover:bg-slate-50 focus:bg-slate-50 outline-none",
                                     !n.readAt && "bg-yellow-50/70"
                                   )}
+                                  title="Open notification"
+                                  role="menuitem"
                                 >
                                   <div className="flex items-start gap-2">
-                                    {!n.readAt && <span className="mt-1 w-2 h-2 rounded-full bg-current inline-block" />}
+                                    {!n.readAt && <span className="mt-1 inline-block w-2 h-2 rounded-full" style={{ background: "currentColor" }} />}
                                     <div className="flex-1">
-                                      <div className="text-sm font-extrabold">{n.title}</div>
-                                      <div className="text-xs text-slate-700 whitespace-pre-line">{n.message}</div>
+                                      <div className="text-sm font-extrabold text-slate-900">
+                                        {n.title || "Notification"}
+                                      </div>
+                                      <div className="text-xs text-slate-700 whitespace-pre-line">
+                                        {n.message || ""}
+                                      </div>
                                       <div className="text-[10px] text-slate-500 mt-1">
-                                        {new Date(n.createdAt).toLocaleString()}
+                                        {new Date(n.createdAt || Date.now()).toLocaleString()}
                                       </div>
                                     </div>
                                   </div>
@@ -330,44 +378,50 @@ export default function Navbar() {
                 </div>
               )}
 
-              {/* Logged Out */}
-              {!isLoggedIn && (
+              {/* Admin access / login + Login/Register pills */}
+              {!isLoggedIn ? (
                 <>
                   <button
-                    onClick={() => navigate("/admin/login")}
+                    onClick={() => safeNavigate(navigate, "/admin/login")}
                     className="text-sm font-semibold px-4 py-2 rounded-full border border-[#0071DC]/40 text-[#0071DC] hover:bg-[#E8F1FF]"
                   >
                     <Shield className="w-4 h-4 inline-block" /> Admin
                   </button>
-                  <Link to="/login" className="text-sm font-semibold px-4 py-2 rounded-full border">
+                  <Link
+                    to="/login"
+                    className="text-sm font-semibold px-4 py-2 rounded-full border border-slate-300 text-slate-800 hover:bg-slate-50"
+                  >
                     Login
                   </Link>
-                  <Link to="/register" className="text-sm font-semibold px-4 py-2 rounded-full bg-[#0071DC] text-white hover:bg-[#0654BA]">
+                  <Link
+                    to="/register"
+                    className="text-sm font-semibold px-4 py-2 rounded-full bg-[#0071DC] text-white hover:bg-[#0654BA]"
+                  >
                     Register
                   </Link>
                 </>
-              )}
+              ) : null}
 
-              {/* Logged In */}
+              {/* Account Menu — only when logged in */}
               {isLoggedIn && (
                 <div className="relative">
                   <button
                     onClick={() => setAdminMenu((v) => !v)}
-                    className="flex items-center gap-2 px-3 py-2 rounded-full border bg-white"
+                    className="flex items-center gap-2 px-3 py-2 rounded-full border border-slate-300 bg-white"
                   >
                     <UserRound className="w-5 h-5 text-[#0071DC]" />
                     <span className="max-w-[160px] truncate">{user?.name || user?.email}</span>
-                    <ChevronDown className="w-4 h-4" />
+                    <ChevronDown className="w-4 h-4 text-slate-600" />
                   </button>
 
                   {adminMenu && (
                     <Card className="absolute right-0 mt-2 w-64 p-1 bg-white z-50">
-
                       <MenuItemLink to={profilePath} onClick={() => setAdminMenu(false)}>
                         Profile
                       </MenuItemLink>
 
-                      {!anyAdmin && (
+                      {/* Hide My Bookings for ALL admin roles */}
+                      {!(isSuperAdmin || isAdmin || isTheatreAdmin) && (
                         <MenuItemLink to="/bookings" onClick={() => setAdminMenu(false)}>
                           My Bookings
                         </MenuItemLink>
@@ -389,12 +443,18 @@ export default function Navbar() {
 
                       <button
                         type="button"
-                        onClick={() => {
-                          logout();
-                          setAdminMenu(false);
-                          navigate("/", { replace: true });
+                        onClick={async () => {
+                          try {
+                            await logout();
+                          } catch (e) {
+                            console.error("[Navbar] logout failed:", e);
+                          } finally {
+                            setAdminMenu(false);
+                            setNotifOpen(false);
+                            safeNavigate(navigate, "/", { replace: true });
+                          }
                         }}
-                        className="w-full text-left px-3 py-2 text-sm text-rose-600 hover:bg-rose-50"
+                        className="w-full text-left px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 rounded-xl font-semibold"
                       >
                         <LogOut className="inline w-4 h-4 mr-1" /> Logout
                       </button>
@@ -412,8 +472,10 @@ export default function Navbar() {
         </div>
       </div>
 
-      {(location.pathname.startsWith("/admin") || location.pathname.startsWith("/theatre")) &&
-        <div className="h-0 md:h-0" />}
+      {/* Spacer in case sticky header overlaps admin pages */}
+      {location.pathname.startsWith("/admin") || location.pathname.startsWith("/theatre")
+        ? <div className="h-0 md:h-0" />
+        : null}
     </header>
   );
 }
