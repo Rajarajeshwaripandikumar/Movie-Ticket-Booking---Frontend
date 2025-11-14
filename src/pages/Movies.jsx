@@ -12,9 +12,12 @@ function resolvePosterUrl(url) {
   if (!url) return null;
   const s = String(url).trim();
   if (!s) return null;
-  if (/^https?:\/\//i.test(s)) return s;
+  // data: URLs or already absolute
+  if (/^data:/.test(s) || /^https?:\/\//i.test(s)) return s;
+  // various upload shapes
   if (s.startsWith("/uploads/")) return `${FILES_BASE}${s}`;
   if (s.startsWith("uploads/")) return `${FILES_BASE}/${s}`;
+  // fallback - trim leading slashes
   return `${FILES_BASE}/${s.replace(/^\/+/, "")}`;
 }
 
@@ -28,7 +31,7 @@ const DEFAULT_POSTER =
     </svg>
   `);
 
-/* ---------- Data normalizers ---------- */
+/* ---------- Data normalizers (kept defensive) ---------- */
 const toArray = (v) =>
   Array.isArray(v)
     ? v
@@ -111,7 +114,6 @@ const norm = (s) =>
   String(s || "")
     .trim()
     .toLowerCase()
-    // remove diacritics for more tolerant matching
     .normalize?.("NFKD")
     .replace?.(/\p{Diacritic}/gu, "") ?? String(s || "").trim().toLowerCase();
 
@@ -133,15 +135,20 @@ function movieMatchesQuery(movie, q) {
   return false;
 }
 
-/* ---------- API helper ---------- */
-async function tryGet(candidates, params = {}) {
+/* ---------- API helper (tries multiple endpoints and returns array) ---------- */
+async function tryGet(candidates, params = {}, signal) {
   for (const ep of candidates) {
     try {
-      const { data } = await api.get(ep, { params });
+      // pass signal to axios (supported in modern axios)
+      const { data } = await api.get(ep, { params, signal });
       if (Array.isArray(data)) return data;
       if (Array.isArray(data?.movies)) return data.movies;
       if (Array.isArray(data?.data)) return data.data;
-    } catch {
+      // sometimes server responds top-level with object that *is* an array-like value
+      if (Array.isArray(data?.result)) return data.result;
+    } catch (err) {
+      // if aborted, stop trying further endpoints
+      if (err?.name === "CanceledError" || err?.message === "canceled") throw err;
       continue;
     }
   }
@@ -157,7 +164,6 @@ const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
   </Tag>
 );
 
-/* Smaller balanced buttons used in cards */
 const PrimaryBtn = ({ as: As = "button", to, href, className = "", children, ...props }) => (
   <As
     {...(to ? { to } : {})}
@@ -220,25 +226,37 @@ export default function Movies() {
 
   const debouncedQ = useDebounce(q, 400);
   const today = new Date().toISOString().slice(0, 10);
+  const liveRegionRef = useRef(null);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
-    let mounted = true;
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let didCancel = false;
+
     const fetchMovies = async () => {
       setLoading(true);
       setErr("");
       try {
         const list = await (async () => {
-          // prefer server-side search when available, but we'll do client-side fuzzy filter afterwards
-          if (debouncedQ) return await tryGet(["/api/movies/search", "/movies/search"], { q: debouncedQ });
-          return await tryGet(["/api/movies", "/movies"]);
+          // prefer server-side search endpoints (try multiple common paths)
+          if (debouncedQ) {
+            return await tryGet(["/api/movies/search", "/movies/search", "/movies"], { q: debouncedQ }, controller.signal);
+          }
+          return await tryGet(["/api/movies", "/movies", "/movies/list"], {}, controller.signal);
         })();
 
-        if (!mounted) return;
+        if (!mountedRef.current || didCancel) return;
 
-        // normalize movies
         const normalized = (Array.isArray(list) ? list : []).map(normalizeMovie);
 
-        // apply client-side fuzzy filtering when query exists (helps with first-letter and partial matches)
+        // client-side fuzzy filtering when query exists (helps first-letter/partial matches)
         const finalList =
           debouncedQ && String(debouncedQ).trim()
             ? normalized.filter((m) => movieMatchesQuery(m, debouncedQ))
@@ -246,18 +264,33 @@ export default function Movies() {
 
         setMovies(finalList);
 
-        if (debouncedQ) setParams({ q: debouncedQ });
-        else setParams({});
+        // update URL params (dont cause unnecessary re-renders)
+        if (mountedRef.current) {
+          if (debouncedQ) setParams({ q: debouncedQ });
+          else setParams({});
+        }
+
+        // announce count for screen-readers
+        if (liveRegionRef.current) {
+          liveRegionRef.current.textContent = `${finalList.length} results`;
+          setTimeout(() => {
+            if (liveRegionRef.current) liveRegionRef.current.textContent = "";
+          }, 1200);
+        }
       } catch (e) {
+        if (e?.name === "CanceledError" || e?.message === "canceled") return;
         console.error("Movies fetch failed:", e);
-        setErr(e?.response?.data?.message || "Failed to fetch movies");
+        if (mountedRef.current) setErr(e?.response?.data?.message || "Failed to fetch movies");
       } finally {
-        if (mounted) setLoading(false);
+        if (mountedRef.current) setLoading(false);
       }
     };
+
     fetchMovies();
+
     return () => {
-      mounted = false;
+      didCancel = true;
+      controller.abort();
     };
   }, [debouncedQ, setParams]);
 
@@ -279,6 +312,8 @@ export default function Movies() {
           />
         </div>
       </div>
+
+      <div aria-live="polite" className="sr-only" ref={liveRegionRef} />
 
       {/* Cards area */}
       <section className="pb-10">
@@ -302,26 +337,26 @@ export default function Movies() {
             </div>
           )}
 
-          {/* Movies grid - same breakpoints as TheatersPage */}
+          {/* Movies grid */}
           {!loading && movies.length > 0 && (
-            <ul className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+            <ul className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6" role="list">
               {movies.map((m) => (
-                <li key={m._id} className="group w-full">
+                <li key={m._id || m.id} className="group w-full">
                   <Card className="p-3 transition-transform duration-200 group-hover:-translate-y-0.5">
                     <PosterBox movie={m} />
                     <div className="mt-3">
                       <h3 className="text-sm sm:text-base font-extrabold line-clamp-2">
                         {m.title}
                       </h3>
-                      <p className="mt-1 text-xs text-slate-600 line-clamp-1">
+                      <p className="mt-1 text-xs text-slate-600 line-clamp-1" aria-hidden>
                         {m.genre || (m.languages?.length ? m.languages.slice(0, 3).join(", ") : " ")}
                       </p>
                       <div className="mt-3 flex items-center gap-2">
-                        <GhostBtn as={Link} to={`/movies/${m._id}`}>Details</GhostBtn>
+                        <GhostBtn as={Link} to={`/movies/${m._id || m.id}`}>Details</GhostBtn>
                         <PrimaryBtn
                           as={Link}
-                          to={`/showtimes?movieId=${m._id}&date=${today}`}
-                          state={{ movieId: m._id, date: today }}
+                          to={`/showtimes?movieId=${m._id || m.id}&date=${today}`}
+                          state={{ movieId: m._id || m.id, date: today }}
                         >
                           Book <IconArrow />
                         </PrimaryBtn>
@@ -377,7 +412,7 @@ function SearchBar({ value, onChange, onClear, placeholder = "Search", className
 
   return (
     <div className={`w-full ${className}`}>
-      <Card className="px-4 py-2.5 flex items-center gap-3">
+      <Card className="px-4 py-2.5 flex items-center gap-3" role="search" aria-label="Search movies">
         <span className="text-slate-500"><IconSearch className="w-5 h-5" /></span>
 
         <input
@@ -387,12 +422,13 @@ function SearchBar({ value, onChange, onClear, placeholder = "Search", className
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
           className="flex-1 px-2 py-1.5 outline-none bg-transparent text-sm sm:text-base placeholder:text-slate-400"
+          aria-label={placeholder}
         />
 
         {value ? (
-          <GhostBtn type="button" onClick={onClear}>Clear</GhostBtn>
+          <GhostBtn type="button" onClick={onClear} aria-label="Clear search">Clear</GhostBtn>
         ) : (
-          <kbd className="select-none rounded-md border border-slate-300 px-2 py-1 text-[11px] text-slate-700 bg-white">/</kbd>
+          <kbd className="select-none rounded-md border border-slate-300 px-2 py-1 text-[11px] text-slate-700 bg-white" aria-hidden>/</kbd>
         )}
       </Card>
     </div>
@@ -406,7 +442,7 @@ function PosterBox({ movie }) {
     <div className="w-full aspect-[2/3] overflow-hidden rounded-xl border border-slate-200 bg-white">
       <img
         src={src}
-        alt={movie.title}
+        alt={movie.title || "Movie poster"}
         loading="lazy"
         className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.04]"
         onError={(e) => (e.currentTarget.src = DEFAULT_POSTER)}
