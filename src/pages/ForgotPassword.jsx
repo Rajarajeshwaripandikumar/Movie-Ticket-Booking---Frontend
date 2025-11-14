@@ -10,7 +10,7 @@ const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
   </Tag>
 );
 
-const Field = ({ type = "text", icon, placeholder, value, onChange, autoComplete }) => (
+const Field = ({ type = "text", icon, placeholder, value, onChange, autoComplete, required = false }) => (
   <div className="flex items-center gap-2 border border-slate-300 rounded-xl bg-white px-3 py-2 focus-within:ring-2 focus-within:ring-[#0071DC]">
     <span className="text-slate-600">{icon}</span>
     <input
@@ -20,7 +20,7 @@ const Field = ({ type = "text", icon, placeholder, value, onChange, autoComplete
       onChange={(e) => onChange(e.target.value)}
       autoComplete={autoComplete}
       className="w-full outline-none bg-transparent text-sm sm:text-base text-slate-900 placeholder:text-slate-400"
-      required
+      required={required}
     />
   </div>
 );
@@ -86,7 +86,8 @@ export default function ForgotPassword() {
 
   async function requestReset(e) {
     e?.preventDefault();
-    setErr(""); setMsg("");
+    setErr("");
+    setMsg("");
     if (!email || !email.includes("@")) { setErr("Enter a valid email."); return; }
     try {
       setLoading(true);
@@ -100,12 +101,15 @@ export default function ForgotPassword() {
 
   async function submitReset(e) {
     e?.preventDefault();
-    setErr(""); setMsg("");
+    setErr("");
+    setMsg("");
+    if (!email || !email.includes("@")) { setErr("Email is required for reset."); return; }
     if (!token || !password) { setErr("Token and new password required"); return; }
     if (password !== confirm) { setErr("Passwords do not match"); return; }
     try {
       setLoading(true);
-      const res = await api.post("/auth/reset-password", { token, password });
+      // backend expects: { token, email, newPassword } (or password), include email
+      const res = await api.post("/auth/reset-password", { token, email, newPassword: password });
       setMsg(res.data?.message || "Password reset successful. Login now.");
       setTimeout(() => nav("/login"), 1000);
     } catch (e) {
@@ -144,6 +148,7 @@ export default function ForgotPassword() {
               value={email}
               onChange={setEmail}
               autoComplete="email"
+              required
             />
             <PrimaryBtn disabled={loading} type="submit">
               {loading ? "Sending..." : "Send reset link"} <IconArrow />
@@ -163,11 +168,22 @@ export default function ForgotPassword() {
           </form>
         ) : (
           <form onSubmit={submitReset} className="space-y-4">
+            {/* Always show email on reset step — prefilled if user came from step 1 */}
+            <Field
+              type="email"
+              icon={<IconMail />}
+              placeholder="Your email (used to identify account)"
+              value={email}
+              onChange={setEmail}
+              autoComplete="email"
+              required
+            />
             <Field
               icon={<IconKey />}
               placeholder="Reset token (from email)"
               value={token}
               onChange={setToken}
+              required
             />
             <Field
               type="password"
@@ -176,6 +192,7 @@ export default function ForgotPassword() {
               value={password}
               onChange={setPassword}
               autoComplete="new-password"
+              required
             />
             <Field
               type="password"
@@ -184,6 +201,7 @@ export default function ForgotPassword() {
               value={confirm}
               onChange={setConfirm}
               autoComplete="new-password"
+              required
             />
 
             <PrimaryBtn disabled={loading} type="submit">
