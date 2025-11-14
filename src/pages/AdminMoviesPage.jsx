@@ -89,11 +89,12 @@ function normalizeMovie(m = {}) {
   const synopsis = m.synopsis ?? m.description ?? "";
   const runtime = m.runtime ?? m.durationMins ?? m.runtimeMinutes ?? "";
   const releaseDate = m.releaseDate ?? (m.releasedAt ? String(m.releasedAt).slice(0, 10) : "");
+  // Fixed: ensure we always end up with an array for genres
   const genresArr = Array.isArray(m.genres)
     ? m.genres
-    : Array.isArray(m.genre)
-    ? m.genre
-    : toArray(m.genre || m.genres || "");
+    : m.genre
+    ? (Array.isArray(m.genre) ? m.genre : [String(m.genre)])
+    : [];
   const genresStr = genresArr.join(", ");
   const languages = Array.isArray(m.languages) ? m.languages : toArray(m.languages ?? m.language ?? "");
 
@@ -519,6 +520,7 @@ export default function AdminMoviesPage() {
         try {
           if (API_DEBUG) console.debug("[AdminMovies] trying", p);
           const resp = await api.getFresh(p, { params: { q, limit: 50 } }); // api.getFresh returns res.data
+          // resp may be an array or an object with movies/data
           const tmp =
             (Array.isArray(resp) && resp) ||
             resp?.movies ||
@@ -536,7 +538,7 @@ export default function AdminMoviesPage() {
             if (API_DEBUG) console.debug("[AdminMovies] success at", p, "count:", tmp.length);
             break;
           } else if (API_DEBUG) {
-            console.debug("[AdminMovies] no items at", p, "resp:", resp);
+            console.debug("[AdminMovies] no items at", p, "resp-preview:", typeof resp === "object" ? JSON.stringify(resp).slice(0, 200) : String(resp));
           }
         } catch (err) {
           if (API_DEBUG) console.warn("[AdminMovies] error at", p, err?.response?.status || err?.message || err);
@@ -546,15 +548,14 @@ export default function AdminMoviesPage() {
       setMovies((Array.isArray(list) ? list : []).map(normalizeMovie));
 
       // decide admin base for writes:
-      // prefer explicit admin path if detected, else try /movies/admin and fall back to /movies
+      // If we detected an admin endpoint, prefer /movies/admin as write base.
       if (detected) {
-        if (detected.includes("admin") || detected.includes("/admin")) {
-          const base = detected.replace(/\/list$/, "").replace(/\/$/, "");
-          setMovieListPath(detected);
-          setMovieAdminBase(base.startsWith("/admin") ? `/movies${base}` : base.split("/list")[0].split("?")[0]);
+        setMovieListPath(detected);
+        if (detected.includes("admin")) {
+          setMovieAdminBase("/movies/admin");
         } else {
-          setMovieListPath(detected);
-          setMovieAdminBase(detected.includes("/movies") ? "/movies/admin" : "/movies");
+          // keep safe default
+          setMovieAdminBase("/movies/admin");
         }
       } else {
         setMovieListPath("/movies");
@@ -589,7 +590,9 @@ export default function AdminMoviesPage() {
         return;
       }
       const resp = await api.get(`/movies/${id}`, { headers });
-      const serverMovie = resp?.data?.data || resp?.data || movieItem;
+      // axios response: resp.data is server body
+      const body = resp?.data ?? {};
+      const serverMovie = body?.data || body?.movie || body;
       setEditing(normalizeMovie(serverMovie));
     } catch (err) {
       console.error("openEdit failed:", err);
@@ -627,7 +630,8 @@ export default function AdminMoviesPage() {
       }
       if (!done) throw new Error("Create failed on all candidate endpoints");
 
-      const created = resp?.data?.data || resp?.data?.movie || resp?.data;
+      const body = resp?.data ?? {};
+      const created = body?.data || body?.movie || body;
       if (created) setMovies((m) => [normalizeMovie(created), ...m]);
       setCreating(false);
     } catch (err) {
@@ -679,7 +683,8 @@ export default function AdminMoviesPage() {
       }
       if (!done) throw new Error("Update failed on all candidate endpoints");
 
-      const updatedRaw = resp?.data?.data || resp?.data?.movie || resp?.data;
+      const body = resp?.data ?? {};
+      const updatedRaw = body?.data || body?.movie || body;
       const updated = normalizeMovie(updatedRaw);
       setMovies((m) => m.map((x) => ((x._id || x.id) === (updated._id || updated.id) ? updated : x)));
       setEditing(null);
