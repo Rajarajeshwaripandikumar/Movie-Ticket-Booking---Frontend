@@ -68,6 +68,7 @@ function resolvePoster(bk) {
       "http://localhost:8080"
     ).replace(/\/+$/, "");
 
+  // api.defaults.baseURL is e.g. https://host/api — remove trailing '/api' if present
   const root = base.replace(/\/api$/i, "");
   return `${root}${path}`.replace(/([^:]\/)\/+/g, "$1");
 }
@@ -93,7 +94,8 @@ export default function AdminBookingDetails() {
 
     (async () => {
       try {
-        const res = await api.get(`/api/bookings/${id}`, { signal: ac.signal });
+        // NOTE: api baseURL already contains "/api", so call paths WITHOUT leading "/api"
+        const res = await api.get(`/bookings/${id}`, { signal: ac.signal });
         setBooking(res.data?.booking || res.data);
 
         const nid = search.get("notificationId");
@@ -101,7 +103,7 @@ export default function AdminBookingDetails() {
           try {
             await api.patch(`/notifications/${nid}/read`);
           } catch {
-            /* ignore */
+            /* ignore notification patch failure */
           }
         }
       } catch (err) {
@@ -156,7 +158,14 @@ export default function AdminBookingDetails() {
 
   const seatList =
     Array.isArray(seats) && seats.length
-      ? seats.map((s) => (typeof s === "string" ? s : `${s.row ?? ""}${s.col ?? ""}`)).join(", ")
+      ? seats
+          .map((s) =>
+            typeof s === "string"
+              ? s
+              : // prefer label if present, otherwise fallback to Row-Column
+                s?.label || `${s.row ?? ""}-${s.col ?? ""}`
+          )
+          .join(", ")
       : "—";
 
   const createdLabel =
@@ -169,18 +178,22 @@ export default function AdminBookingDetails() {
   const rawStatus = (status || paymentStatus || "UNKNOWN").toUpperCase();
   const isBad = ["CANCELLED", "FAILED", "REFUNDED", "EXPIRED"].includes(rawStatus);
 
+  // Build PDF URL — use adminToken if available, fallback to other tokens
   const base =
     (api?.defaults?.baseURL ||
       import.meta.env.VITE_API_URL ||
       "http://localhost:8080"
     ).replace(/\/+$/, "");
+  const root = base.replace(/\/api$/i, "");
   const token =
-    (localStorage.getItem("token") ||
+    (localStorage.getItem("adminToken") ||
+      localStorage.getItem("token") ||
       localStorage.getItem("jwt") ||
+      sessionStorage.getItem("adminToken") ||
       sessionStorage.getItem("token") ||
       ""
     ).replace(/^Bearer\s+/i, "");
-  const pdfUrl = `${base.replace(/\/api$/i, "")}/api/bookings/${_id}/pdf?token=${encodeURIComponent(token)}`;
+  const pdfUrl = `${root}/api/bookings/${_id}/pdf${token ? `?token=${encodeURIComponent(token)}` : ""}`;
 
   /* ------------------------------- Render ---------------------------------- */
   return (
