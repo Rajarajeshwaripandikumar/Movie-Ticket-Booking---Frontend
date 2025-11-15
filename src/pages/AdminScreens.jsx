@@ -1,6 +1,4 @@
-// src/pages/AdminScreens.jsx — Diagnostic-ready Manage Screens page
-// Paste this file over src/pages/AdminScreens.jsx
-
+// src/pages/AdminScreens.jsx — Manage Screens (diagnostics & view-seats removed)
 import { useEffect, useMemo, useState } from "react";
 import api, { getAuthFromStorage } from "../api/api";
 import { useAuth } from "../context/AuthContext";
@@ -13,7 +11,6 @@ import {
   RefreshCcw,
   Trash2,
   PlusCircle,
-  Eye,
   CreditCard,
   AlertTriangle,
 } from "lucide-react";
@@ -102,7 +99,7 @@ function extractTheaterArray(payload) {
 /* ----------------------------- networking ----------------------------- */
 /**
  * Try to load screens with endpoint fallbacks.
- * NOTE: api.baseURL already contains the /api prefix, so use "/admin/..." not "/api/admin/..."
+ * NOTE: api.baseURL already contains the /api prefix, so use "/admin/..." not "/api/admin/...".
  */
 async function fetchScreensForTheater(theaterId) {
   const candidates = [
@@ -127,41 +124,6 @@ async function fetchScreensForTheater(theaterId) {
     }
   }
   throw lastErr || new Error("Failed to fetch screens");
-}
-
-/* Get seats for a screen with fallbacks (admin/public). Returns { seats, rows, cols } */
-async function fetchSeatsForScreen(theaterId, screenId) {
-  const candidates = [];
-  if (theaterId) candidates.push(`/admin/theaters/${theaterId}/screens/${screenId}/seats`);
-  candidates.push(`/screens/${screenId}/seats`);
-  candidates.push(`/screens/${screenId}?_ts=${Date.now()}`); // fallback: get screen and compute client-side
-
-  for (const p of candidates) {
-    try {
-      const res = await api.get(p, { params: { _ts: Date.now() } });
-      // /seats endpoints typically return { ok: true, data: [...], rows, cols }
-      if (res?.data && Array.isArray(res.data.data)) {
-        return { seats: res.data.data, rows: res.data.rows, cols: res.data.cols };
-      }
-      // some endpoints return raw array
-      if (Array.isArray(res.data)) {
-        return { seats: res.data, rows: undefined, cols: undefined };
-      }
-      // a screen object was returned — compute labels client-side
-      const obj = res?.data?.data ?? res?.data;
-      if (obj && (obj.rows || obj.cols)) {
-        const rows = Number(obj.rows || obj.row || 0);
-        const cols = Number(obj.cols || obj.columns || obj.col || 0);
-        if (rows > 0 && cols > 0) {
-          const seats = buildSeatLabels(rows, cols);
-          return { seats, rows, cols };
-        }
-      }
-    } catch (err) {
-      console.debug("[AdminScreens] fetchSeats candidate failed:", p, err?.response?.status ?? err?.message ?? err);
-    }
-  }
-  throw new Error("Failed to load seats for screen");
 }
 
 /* Canonical role mapper (simple) */
@@ -216,48 +178,101 @@ export default function AdminScreens() {
     }
   }, [isTheatreAdmin, theatreIdFromJWT, selectedTheater]);
 
-  /* Load all theaters (admin-only: force admin endpoint) */
-  useEffect(() => {
-    (async () => {
-      try {
-        // Prefer the admin endpoints — use absolute backup for diagnostics.
-        const candidates = [
-          "/admin/theaters",
-          "/admin/theatres",
-          // absolute fallback (debug) — api.defaults.baseURL already contains /api
-          `${api.defaults.baseURL?.replace(/\/$/, "")}/admin/theaters`,
-        ];
-        let list = [];
-        let lastErr = null;
-        for (const p of candidates) {
-          try {
-            const res = await api.get(p, { params: { _ts: Date.now() } });
-            const arr = extractTheaterArray(res?.data);
-            console.debug(`[AdminScreens] tried ${p} -> status=${res.status} preview=${JSON.stringify(res?.data).slice(0,200)}`);
-            if (Array.isArray(arr) && arr.length > 0) {
-              list = arr;
-              break;
-            }
-          } catch (err) {
-            lastErr = err;
-            console.warn(`[AdminScreens] endpoint ${p} failed:`, err?.response?.status ?? "NO_STATUS", err?.response?.data ?? err.message ?? err);
-            if (err?.response?.status === 401 || err?.response?.status === 403) {
-              setMsg("Auth problem while loading theaters; ensure admin token is present.");
-              setMsgType("error");
-              break;
-            }
+  /* ---------------------------
+   * Refresh theaters (improved)
+   * --------------------------- */
+  async function refreshTheaters() {
+    try {
+      setMsg("");
+      // prefer admin endpoints
+      const candidates = [
+        "/admin/theaters",
+        "/admin/theatres",
+        "/admin/theaters/mine",
+        `${api.defaults.baseURL?.replace(/\/$/, "")}/admin/theaters`,
+      ];
+
+      // read token at call-time (prefers admin token if present)
+      const authToken = token || (auth && (auth.adminToken || auth.token)) || "";
+
+      let gotAnyArray = false;
+      let lastErr = null;
+      // try endpoints in-order, log every response
+      for (const p of candidates) {
+        try {
+          console.debug("[AdminScreens][refresh] trying", p);
+          const { data, status } = await api.get(p, {
+            params: { _ts: Date.now() },
+            headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
+          });
+
+          console.debug(
+            "[AdminScreens][refresh] response from",
+            p,
+            "status=",
+            status,
+            "dataPreview=",
+            (() => {
+              try {
+                return JSON.stringify(data).slice(0, 500);
+              } catch (e) {
+                return String(data).slice(0, 500);
+              }
+            })()
+          );
+
+          const arr = extractTheaterArray(data);
+          // if the endpoint returned an array (even empty) we accept it and set theaters
+          if (Array.isArray(arr)) {
+            setTheaters(arr);
+            gotAnyArray = true;
+            // if we got a non-empty array we can stop early
+            if (arr.length > 0) return;
+            // otherwise keep trying other endpoints in case some endpoints return populated lists
+          }
+        } catch (e) {
+          lastErr = e;
+          console.debug(
+            "[AdminScreens][refresh] endpoint failed",
+            p,
+            e?.response?.status ?? "NO_STATUS",
+            e?.response?.data ?? e?.message ?? e
+          );
+          // surface auth errors quickly
+          if (e?.response?.status === 401 || e?.response?.status === 403) {
+            setMsg("Auth problem while loading theaters; ensure admin token is present.");
+            setMsgType("error");
+            return;
           }
         }
-        setTheaters(Array.isArray(list) ? list : []);
-        if ((!Array.isArray(list) || list.length === 0) && lastErr) {
-          console.debug("[AdminScreens] no theaters found; last error:", lastErr?.response?.data ?? lastErr?.message ?? lastErr);
-        }
-      } catch (e) {
-        setMsgType("error");
-        setMsg("Failed to load theaters.");
-        console.error("[AdminScreens] load theaters error:", e);
       }
+
+      // If we reached here we tried all candidates.
+      if (!gotAnyArray) {
+        setMsg("Could not refresh theaters from backend.");
+        setMsgType("error");
+        console.debug(
+          "[AdminScreens][refresh] no endpoint returned an array. lastErr:",
+          lastErr?.response?.data ?? lastErr?.message ?? lastErr
+        );
+      } else {
+        // we got at least one array (possibly empty) — ensure message cleared
+        setMsg("");
+        setMsgType("info");
+      }
+    } catch (e) {
+      console.error("[AdminScreens] refreshTheaters failed:", e);
+      setMsg("Refresh failed.");
+      setMsgType("error");
+    }
+  }
+
+  /* Load all theaters on mount (use improved refreshTheaters) */
+  useEffect(() => {
+    (async () => {
+      await refreshTheaters();
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /* Load screens for selected theater */
@@ -313,7 +328,8 @@ export default function AdminScreens() {
       return;
     }
 
-    const r = Number(rows), c = Number(cols);
+    const r = Number(rows),
+      c = Number(cols);
     if (!Number.isFinite(r) || !Number.isFinite(c) || r <= 0 || c <= 0) {
       setMsg("Rows/Columns must be positive.");
       setMsgType("error");
@@ -447,71 +463,6 @@ export default function AdminScreens() {
     }
   }
 
-  /* View seats for a screen (shows a preview) */
-  async function viewSeats(screenId, sTheatreId) {
-    try {
-      const id = screenId || selectedScreen;
-      if (!id) return alert("No screen id");
-      const { seats, rows: r, cols: c } = await fetchSeatsForScreen(sTheatreId || selectedTheater, id);
-      const preview = Array.isArray(seats) ? seats.slice(0, 120).join(", ") : "No seats";
-      alert(`Seats preview (${r || "?"}×${c || "?"}):\n\n${preview}${Array.isArray(seats) && seats.length > 120 ? "\n… (truncated)" : ""}`);
-    } catch (err) {
-      console.debug("[AdminScreens] viewSeats failed:", err?.response?.data ?? err?.message ?? err);
-      alert("Failed to load seats for this screen (see console).");
-    }
-  }
-
-  /* --------------------------- Diagnostics & refresh helpers --------------------------- */
-
-  async function runDiagnostics() {
-    try {
-      console.group("[AdminScreens] DIAGNOSTICS");
-      console.debug("AuthContext:", auth);
-      console.debug("getAuthFromStorage():", getAuthFromStorage());
-      console.debug("axios defaults Authorization:", (api.defaults && api.defaults.headers && api.defaults.headers.common && api.defaults.headers.common.Authorization) || "none");
-
-      // raw fetch to inspect response body/status (bypasses axios interceptors)
-      const base = api.defaults.baseURL?.replace(/\/$/, "") || "https://movie-ticket-booking-backend-o1m2.onrender.com/api";
-      const url = `${base}/admin/theaters?_ts=${Date.now()}`;
-      try {
-        const raw = await fetch(url, { credentials: "include", mode: "cors" });
-        const txt = await raw.text();
-        console.debug("raw fetch", url, "status", raw.status, "bodyPreview:", txt.slice(0, 500));
-      } catch (e) {
-        console.warn("raw fetch failed:", e?.message ?? e);
-      }
-      console.groupEnd();
-    } catch (e) {
-      console.error("runDiagnostics failed:", e);
-    }
-  }
-
-  async function refreshTheaters() {
-    try {
-      // prefer admin endpoints
-      const candidates = ["/admin/theaters", "/admin/theatres", "/admin/theaters/mine", `${api.defaults.baseURL?.replace(/\/$/, "")}/admin/theaters`];
-      for (const p of candidates) {
-        try {
-          const { data, status } = await api.get(p, { params: { _ts: Date.now() } });
-          console.debug("[AdminScreens][refresh] tried", p, "status", status);
-          const arr = extractTheaterArray(data);
-          if (Array.isArray(arr) && arr.length) {
-            setTheaters(arr);
-            return;
-          }
-        } catch (e) {
-          console.debug("[AdminScreens][refresh] failed", p, e?.response?.status ?? e?.message ?? e);
-        }
-      }
-      setMsg("Could not refresh theaters from backend.");
-      setMsgType("error");
-    } catch (e) {
-      console.error("refreshTheaters failed:", e);
-      setMsg("Refresh failed.");
-      setMsgType("error");
-    }
-  }
-
   /* --------------------------- UI --------------------------- */
   return (
     <main className="min-h-screen w-screen [margin-inline:calc(50%-50vw)] bg-slate-50 text-slate-900 py-8 px-4 md:px-6">
@@ -528,7 +479,6 @@ export default function AdminScreens() {
             </div>
 
             <div className="flex items-center gap-2">
-              <SecondaryBtn onClick={runDiagnostics}>Diagnostics</SecondaryBtn>
               <SecondaryBtn onClick={refreshTheaters}>
                 <RefreshCcw className="h-4 w-4" /> Refresh
               </SecondaryBtn>
@@ -622,16 +572,6 @@ export default function AdminScreens() {
                 >
                   Clear
                 </SecondaryBtn>
-
-                <SecondaryBtn type="button" onClick={() => viewSeats(selectedScreen, selectedTheater)} disabled={selectedScreen === NEW}>
-                  <Eye className="h-4 w-4" /> View Seats
-                </SecondaryBtn>
-
-                {selectedScreen !== NEW && (
-                  <SecondaryBtn type="button" onClick={() => deleteScreen(selectedScreen)} className="text-rose-700 border-rose-200">
-                    <Trash2 className="h-4 w-4" /> Delete Screen
-                  </SecondaryBtn>
-                )}
               </div>
             </div>
           </form>
@@ -687,13 +627,12 @@ export default function AdminScreens() {
                                 <button
                                   className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border bg-white"
                                   onClick={() => {
-                                    // quick actions per-screen: select & view seats
+                                    // quick actions per-screen: select
                                     setSelectedTheater(t._id || t.id);
                                     setSelectedScreen(s._id || s.id);
-                                    setTimeout(() => viewSeats(s._id || s.id, t._id || t.id), 200);
                                   }}
                                 >
-                                  <Eye className="h-3 w-3" /> Seats
+                                  <span className="text-xs">Select</span>
                                 </button>
                               </span>
                             );
@@ -710,28 +649,4 @@ export default function AdminScreens() {
       </div>
     </main>
   );
-}
-
-/* ---------------------------
- * small utils (seat labels)
- * --------------------------- */
-function buildSeatLabels(rows, cols) {
-  const labels = [];
-  const toRowLabel = (n) => {
-    let label = "";
-    let x = n;
-    while (x > 0) {
-      x -= 1;
-      label = String.fromCharCode(65 + (x % 26)) + label;
-      x = Math.floor(x / 26);
-    }
-    return label;
-  };
-  for (let r = 1; r <= rows; r++) {
-    const rowLabel = toRowLabel(r);
-    for (let c = 1; c <= cols; c++) {
-      labels.push(`${rowLabel}${c}`);
-    }
-  }
-  return labels;
 }
