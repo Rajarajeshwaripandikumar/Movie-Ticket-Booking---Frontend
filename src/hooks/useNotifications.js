@@ -6,7 +6,7 @@ import { connectSSE } from "./sseClient";
 /**
  * useNotifications(onMessage, options)
  *
- * See original for param docs. Options read on mount (intentionally).
+ * See original for param docs. Options are intentionally read on mount.
  */
 export default function useNotifications(onMessage, options = {}) {
   const {
@@ -77,7 +77,8 @@ export default function useNotifications(onMessage, options = {}) {
           headers: { "Cache-Control": "no-store", Pragma: "no-cache" },
           params: { _ts: Date.now() },
         });
-        scheduleDebounced(refreshList, Math.min(120, refreshDebounceMs));
+        // ensure a sensible debounce floor
+        scheduleDebounced(refreshList, Math.max(50, refreshDebounceMs));
       } catch (e) {
         if (import.meta.env?.DEV) {
           console.warn("[useNotifications] markRead failed:", id, e?.message || e);
@@ -91,7 +92,7 @@ export default function useNotifications(onMessage, options = {}) {
     async (ids = []) => {
       try {
         await Promise.all((ids || []).map((id) => api.patch(readPath(id))));
-        scheduleDebounced(refreshList, Math.min(140, refreshDebounceMs));
+        scheduleDebounced(refreshList, Math.max(60, refreshDebounceMs));
       } catch (e) {
         if (import.meta.env?.DEV) {
           console.warn("[useNotifications] markAllRead failed:", e?.message || e);
@@ -123,17 +124,23 @@ export default function useNotifications(onMessage, options = {}) {
       sseRef.current?.cancel?.();
     } catch {}
 
-    const qs = buildExtraQuery();
+    // Build base URL for SSE and attach extraQuery as part of urlBase so connectSSE will append token/scope/seed itself.
+    const apiBase = typeof api.defaults?.baseURL === "string" ? api.defaults.baseURL.replace(/\/+$/, "") : "";
+    const rawBasePath = apiBase ? `${apiBase}${path.startsWith("/") ? path : `/${path}`}` : path;
+
+    const qsObj = buildExtraQuery();
+    const qsStr = new URLSearchParams(qsObj).toString();
+    const urlBaseWithQs = qsStr ? `${rawBasePath}${rawBasePath.includes("?") ? "&" : "?"}${qsStr}` : rawBasePath;
 
     // pass token via options (sseClient will include token param if present)
     const s = connectSSE({
       token: tok,
       scope,
-      urlBase: typeof api.defaults?.baseURL === "string" ? `${api.defaults.baseURL.replace(/\/+$/, "")}${path.startsWith("/") ? path : `/${path}`}` : path,
+      urlBase: urlBaseWithQs,
       onOpen: (evt) => {
         retryRef.current.attempts = 0;
         onOpen?.(evt);
-        if (refreshOnOpen) scheduleDebounced(refreshList, 10);
+        if (refreshOnOpen) scheduleDebounced(refreshList, Math.max(50, refreshDebounceMs));
       },
       onMessage: (data, meta) => {
         // deliver to consumer
@@ -142,7 +149,7 @@ export default function useNotifications(onMessage, options = {}) {
         } catch (e) {
           /* swallow */
         }
-        if (refreshOnNotify) scheduleDebounced(refreshList, refreshDebounceMs);
+        if (refreshOnNotify) scheduleDebounced(refreshList, Math.max(50, refreshDebounceMs));
       },
       onError: (err, attemptNumber) => {
         onError?.(err, attemptNumber);
@@ -155,7 +162,6 @@ export default function useNotifications(onMessage, options = {}) {
       minDelay: 1000,
       maxDelay: 30000,
       heartbeatTimeout: 45000,
-      extraQuery: qs,
     });
 
     sseRef.current = s;
