@@ -1,5 +1,5 @@
-// src/pages/AdminScreens.jsx — Manage Screens (clean, no diagnostics or view-seats)
-import { useEffect, useMemo, useState } from "react";
+// src/pages/AdminScreens.jsx — Manage Screens (clean, hardened, no diagnostics or view-seats)
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import api, { getAuthFromStorage } from "../api/api";
 import { useAuth } from "../context/AuthContext";
 import { Navigate } from "react-router-dom";
@@ -99,25 +99,25 @@ function extractTheaterArray(payload) {
 /* ----------------------------- networking ----------------------------- */
 /**
  * Try to load screens with endpoint fallbacks.
- * NOTE: api.baseURL already contains the /api prefix, so use "/admin/..." not "/api/admin/...".
+ * NOTE: api.defaults.baseURL already contains the /api prefix in most setups.
  */
-async function fetchScreensForTheater(theaterId) {
+async function fetchScreensForTheater(theaterId, signal) {
+  const baseRoot = api?.defaults?.baseURL?.replace(/\/$/, "") || "";
   const candidates = [
     `/admin/theaters/${theaterId}/screens`,
     `/admin/theatres/${theaterId}/screens`,
-    // Scoped public fallback (only if admin endpoints fail)
     `/screens/by-theatre/${theaterId}`,
-    // absolute fallback (debug)
-    `${api.defaults.baseURL?.replace(/\/$/, "")}/screens/by-theatre/${theaterId}`,
+    `${baseRoot}/screens/by-theatre/${theaterId}`,
   ];
   let lastErr = null;
   for (const path of candidates) {
     try {
-      const res = await api.get(path, { params: { _ts: Date.now() } });
+      const res = await api.get(path, { params: { _ts: Date.now() }, signal });
       const arr = extractScreenArray(res?.data);
       if (Array.isArray(arr)) return arr.map(normalizeScreen);
     } catch (err) {
       lastErr = err;
+      if (err?.name === "CanceledError" || err?.name === "AbortError") throw err;
     }
   }
   throw lastErr || new Error("Failed to fetch screens");
@@ -127,34 +127,32 @@ async function fetchScreensForTheater(theaterId) {
 export default function AdminScreens() {
   const auth = useAuth() || {};
 
-  // IMPORTANT: prefer adminToken when present
+  // prefer adminToken when present
   const token = auth.adminToken || auth.token || "";
-  const loading = auth.initialized === false;
+  const loadingAuth = auth.initialized === false;
   const isLoggedIn = !!(auth.isLoggedIn || token);
 
   const rawRoles = auth.roles || auth.user?.roles || (auth.role ? [auth.role] : []);
   const roles = useMemo(() => (Array.isArray(rawRoles) ? rawRoles : []), [rawRoles]);
   const isAdminLike = roles.some((r) => ["SUPER_ADMIN", "ADMIN", "THEATRE_ADMIN"].includes(r));
 
-  // If the auth context hasn't hydrated quickly enough, force axios to use storage token on mount.
+  // hydrate axios quickly if context not ready
   useEffect(() => {
     try {
-      // hydrate api token from localStorage/session storage to ensure requests include it immediately
       const stored = getAuthFromStorage?.() || {};
       const storedToken = stored?.token || localStorage.getItem("adminToken") || localStorage.getItem("token");
       if (storedToken && api && typeof api.setAuthToken === "function") {
         api.setAuthToken(storedToken);
-        // small console cue to confirm hydration
-        console.debug("[AdminScreens] forced api.setAuthToken from storage (partial preview):", storedToken?.slice?.(0, 8) ? `${storedToken.slice(0, 8)}...` : "(token)");
+        console.debug("[AdminScreens] hydrated api token from storage");
       }
     } catch (e) {
       // ignore
     }
-    // only run once on mount
+    // run once
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  if (loading) return null;
+  if (loadingAuth) return null;
   if (!token || !isLoggedIn) return <Navigate to="/admin/login" replace />;
   if (!isAdminLike) return <Navigate to="/" replace />;
 
@@ -173,6 +171,19 @@ export default function AdminScreens() {
   const [msg, setMsg] = useState("");
   const [msgType, setMsgType] = useState("info");
 
+  const mountedRef = useRef(true);
+  const refreshAbortRef = useRef(null);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      try {
+        refreshAbortRef.current?.abort();
+      } catch {}
+    };
+  }, []);
+
   useEffect(() => {
     if (isTheatreAdmin && theatreIdFromJWT && !selectedTheater) {
       setSelectedTheater(theatreIdFromJWT);
@@ -182,9 +193,17 @@ export default function AdminScreens() {
   /* ---------------------------
    * Refresh theaters (improved)
    * --------------------------- */
-  async function refreshTheaters() {
+  const refreshTheaters = useCallback(async () => {
     try {
       setMsg("");
+      setMsgType("info");
+      // cancel previous refresh if any
+      try {
+        refreshAbortRef.current?.abort();
+      } catch {}
+      const ac = new AbortController();
+      refreshAbortRef.current = ac;
+
       const candidates = [
         "/admin/theaters",
         "/admin/theatres",
@@ -203,50 +222,59 @@ export default function AdminScreens() {
           const resp = await api.get(p, {
             params: { _ts: Date.now() },
             headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
+            signal: ac.signal,
           });
 
           // detect non-json / HTML login page responses
-          const preview = typeof resp.data === "string" ? resp.data.slice(0, 400) : JSON.stringify(resp.data || {}).slice(0, 400);
+          const preview =
+            typeof resp.data === "string"
+              ? resp.data.slice(0, 400)
+              : JSON.stringify(resp.data || {}).slice(0, 400);
           if (typeof resp.data === "string" && (preview.trim().startsWith("<") || /<html|<body|login|sign in|signin|please login/i.test(preview))) {
-            console.warn("[AdminScreens] Received likely HTML/login page instead of JSON for", p, "preview:", preview);
+            console.warn("[AdminScreens] Received likely HTML/login page instead of JSON for", p);
           } else {
-            console.debug("[AdminScreens] response preview:", preview);
+            console.debug("[AdminScreens] candidate preview:", p);
           }
 
           const arr = extractTheaterArray(resp?.data);
           if (Array.isArray(arr)) {
+            if (!mountedRef.current) return;
             setTheaters(arr);
             gotAnyArray = true;
+            // return early if list non-empty (fast path)
             if (arr.length > 0) return;
-            // otherwise continue trying other endpoints
+            // otherwise keep trying in case another endpoint returns more data
           }
         } catch (e) {
           lastErr = e;
-          console.debug("[AdminScreens][refresh] endpoint failed", p, e?.response?.status ?? "NO_STATUS", e?.response?.data ?? e?.message ?? e);
+          console.debug("[AdminScreens][refresh] endpoint failed", p, e?.response?.status ?? "NO_STATUS");
           if (e?.response?.status === 401 || e?.response?.status === 403) {
-            setMsg("Auth problem while loading theaters; ensure admin token is present.");
-            setMsgType("error");
+            if (mountedRef.current) {
+              setMsg("Auth problem while loading theaters; ensure admin token is present.");
+              setMsgType("error");
+            }
             return;
           }
+          if (e?.name === "CanceledError" || e?.name === "AbortError") return;
         }
       }
 
-      if (!gotAnyArray) {
+      if (!gotAnyArray && mountedRef.current) {
         setMsg("Could not refresh theaters from backend.");
         setMsgType("error");
         console.debug("[AdminScreens][refresh] no endpoint returned an array. lastErr:", lastErr?.response?.data ?? lastErr?.message ?? lastErr);
-      } else {
+      } else if (mountedRef.current) {
         setMsg("");
         setMsgType("info");
       }
     } catch (e) {
+      if (!mountedRef.current) return;
       console.error("[AdminScreens] refreshTheaters failed:", e);
       setMsg("Refresh failed.");
       setMsgType("error");
     }
-  }
+  }, [token]);
 
-  /* Load all theaters on mount */
   useEffect(() => {
     refreshTheaters();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -263,20 +291,25 @@ export default function AdminScreens() {
       return;
     }
 
+    const ac = new AbortController();
     (async () => {
       try {
         setLoadingScreens(true);
         setMsg("");
-        const list = await fetchScreensForTheater(selectedTheater);
+        const list = await fetchScreensForTheater(selectedTheater, ac.signal);
+        if (!mountedRef.current) return;
         setScreens(list);
       } catch (err) {
+        if (err?.name === "CanceledError" || err?.name === "AbortError") return;
         setMsg("Could not load screens.");
         setMsgType("error");
         console.debug("[AdminScreens] fetchScreens error:", err?.response?.data ?? err?.message ?? err);
       } finally {
-        setLoadingScreens(false);
+        if (mountedRef.current) setLoadingScreens(false);
       }
     })();
+
+    return () => ac.abort();
   }, [selectedTheater]);
 
   /* When selecting screen from dropdown */
@@ -305,7 +338,8 @@ export default function AdminScreens() {
       return;
     }
 
-    const r = Number(rows), c = Number(cols);
+    const r = Number(rows),
+      c = Number(cols);
     if (!Number.isFinite(r) || !Number.isFinite(c) || r <= 0 || c <= 0) {
       setMsg("Rows/Columns must be positive.");
       setMsgType("error");
@@ -330,6 +364,11 @@ export default function AdminScreens() {
             break;
           } catch (e) {
             console.debug("[AdminScreens] create candidate failed:", p, e?.response?.status ?? e.message ?? e);
+            if (e?.response?.status === 401 || e?.response?.status === 403) {
+              setMsg("Auth error creating screen; check admin token.");
+              setMsgType("error");
+              return;
+            }
           }
         }
         if (!ok) throw new Error("Create screen failed");
@@ -346,7 +385,12 @@ export default function AdminScreens() {
             ok = true;
             break;
           } catch (e) {
-            console.debug("[AdminScreens] update candidate failed:", p, e?.response?.status ?? e.message ?? e);
+            console.debug("[AdminScreens] update candidate failed:", p, e?.response?.status ?? e?.message ?? e);
+            if (e?.response?.status === 401 || e?.response?.status === 403) {
+              setMsg("Auth error updating screen; check admin token.");
+              setMsgType("error");
+              return;
+            }
           }
         }
         if (!ok) throw new Error("Update screen failed");
@@ -355,8 +399,9 @@ export default function AdminScreens() {
       // Refresh both theaters & screens so UI reflects new data
       await refreshTheaters();
       const updated = await fetchScreensForTheater(selectedTheater);
-      setScreens(updated);
+      if (mountedRef.current) setScreens(updated);
 
+      if (!mountedRef.current) return;
       setMsg(selectedScreen === NEW ? "Screen created!" : "Screen updated!");
       setMsgType("success");
       setSelectedScreen(NEW);
@@ -364,17 +409,19 @@ export default function AdminScreens() {
       setRows("");
       setCols("");
     } catch (err) {
+      if (!mountedRef.current) return;
       setMsg("Save failed.");
       setMsgType("error");
       console.debug("[AdminScreens] save error:", err?.response?.data ?? err?.message ?? err);
     } finally {
-      setLoadingAction(false);
+      if (mountedRef.current) setLoadingAction(false);
     }
   }
 
   /* Delete theater */
   async function deleteTheater(id) {
     if (!confirm("Delete this theater?")) return;
+    setLoadingAction(true);
     try {
       const candidates = [`/admin/theaters/${id}`, `/admin/theatres/${id}`, `/theaters/${id}`];
       let ok = false;
@@ -385,19 +432,31 @@ export default function AdminScreens() {
           break;
         } catch (e) {
           console.debug("[AdminScreens] delete candidate failed:", p, e?.response?.status ?? e?.message ?? e);
+          if (e?.response?.status === 401 || e?.response?.status === 403) {
+            setMsg("Auth error deleting theater; check admin token.");
+            setMsgType("error");
+            return;
+          }
         }
       }
       if (!ok) throw new Error("Delete failed on all paths");
 
-      setTheaters((prev) => prev.filter((t) => t._id !== id && t.id !== id));
-      if (selectedTheater === id) {
-        setSelectedTheater("");
-        setScreens([]);
+      if (mountedRef.current) {
+        setTheaters((prev) => prev.filter((t) => t._id !== id && t.id !== id));
+        if (selectedTheater === id) {
+          setSelectedTheater("");
+          setScreens([]);
+        }
+        setMsg("Theater deleted");
+        setMsgType("success");
       }
     } catch (err) {
+      if (!mountedRef.current) return;
       setMsg("Failed to delete theater.");
       setMsgType("error");
       console.debug("[AdminScreens] delete error:", err?.response?.data ?? err?.message ?? err);
+    } finally {
+      if (mountedRef.current) setLoadingAction(false);
     }
   }
 
@@ -409,6 +468,7 @@ export default function AdminScreens() {
       setMsgType("error");
       return;
     }
+    setLoadingAction(true);
     try {
       const candidates = [
         `/admin/theaters/${selectedTheater}/screens/${screenId}`,
@@ -423,18 +483,28 @@ export default function AdminScreens() {
           break;
         } catch (e) {
           console.debug("[AdminScreens] delete screen candidate failed:", p, e?.response?.status ?? e?.message ?? e);
+          if (e?.response?.status === 401 || e?.response?.status === 403) {
+            setMsg("Auth error deleting screen; check admin token.");
+            setMsgType("error");
+            return;
+          }
         }
       }
       if (!ok) throw new Error("Delete screen failed");
 
       const updated = await fetchScreensForTheater(selectedTheater);
-      setScreens(updated);
-      setMsg("Screen deleted");
-      setMsgType("success");
+      if (mountedRef.current) {
+        setScreens(updated);
+        setMsg("Screen deleted");
+        setMsgType("success");
+      }
     } catch (err) {
+      if (!mountedRef.current) return;
       setMsg("Failed to delete screen.");
       setMsgType("error");
       console.debug("[AdminScreens] delete screen error:", err?.response?.data ?? err?.message ?? err);
+    } finally {
+      if (mountedRef.current) setLoadingAction(false);
     }
   }
 
@@ -454,7 +524,7 @@ export default function AdminScreens() {
             </div>
 
             <div className="flex items-center gap-2">
-              <SecondaryBtn onClick={refreshTheaters}>
+              <SecondaryBtn onClick={refreshTheaters} disabled={loadingAction}>
                 <RefreshCcw className="h-4 w-4" /> Refresh
               </SecondaryBtn>
             </div>
@@ -491,7 +561,7 @@ export default function AdminScreens() {
               label="Select Theater"
               value={selectedTheater}
               onChange={(e) => setSelectedTheater(e.target.value)}
-              disabled={isTheatreAdmin}
+              disabled={isTheatreAdmin || loadingAction}
             >
               <option value="">-- Choose a theater --</option>
               {theaters.map((t) => (
@@ -538,6 +608,7 @@ export default function AdminScreens() {
               <div className="flex gap-2">
                 <SecondaryBtn
                   type="button"
+                  disabled={loadingAction}
                   onClick={() => {
                     setSelectedScreen(NEW);
                     setScreenName("");
@@ -578,11 +649,12 @@ export default function AdminScreens() {
                             setSelectedTheater(t._id || t.id);
                             window.scrollTo({ top: 0, behavior: "smooth" });
                           }}
+                          disabled={loadingAction}
                         >
                           Use
                         </PrimaryBtn>
 
-                        <SecondaryBtn className="px-3 py-1 text-sm" onClick={() => deleteTheater(t._id || t.id)}>
+                        <SecondaryBtn className="px-3 py-1 text-sm" onClick={() => deleteTheater(t._id || t.id)} disabled={loadingAction}>
                           <Trash2 className="h-4 w-4" /> Delete
                         </SecondaryBtn>
                       </div>
@@ -605,8 +677,17 @@ export default function AdminScreens() {
                                     setSelectedTheater(t._id || t.id);
                                     setSelectedScreen(s._id || s.id);
                                   }}
+                                  disabled={loadingAction}
                                 >
                                   <span className="text-xs">Select</span>
+                                </button>
+                                <button
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border bg-white ml-1"
+                                  onClick={() => deleteScreen(s._id || s.id)}
+                                  disabled={loadingAction}
+                                  title="Delete screen"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
                                 </button>
                               </span>
                             );
