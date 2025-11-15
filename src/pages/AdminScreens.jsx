@@ -102,16 +102,16 @@ function extractTheaterArray(payload) {
 /* ----------------------------- networking ----------------------------- */
 /**
  * Try to load screens with endpoint fallbacks.
+ * NOTE: api.baseURL already contains the /api prefix, so use "/admin/..." not "/api/admin/..."
  */
 async function fetchScreensForTheater(theaterId) {
   const candidates = [
     `/admin/theaters/${theaterId}/screens`,
     `/admin/theatres/${theaterId}/screens`,
-    `/theaters/${theaterId}/screens`,
-    `/theatres/${theaterId}/screens`,
-    // alias endpoints (some frontends expect these)
+    // Scoped public fallback (only if admin endpoints fail)
     `/screens/by-theatre/${theaterId}`,
-    `/api/screens/by-theatre/${theaterId}`,
+    // absolute fallback (debug)
+    `${api.defaults.baseURL?.replace(/\/$/, "")}/screens/by-theatre/${theaterId}`,
   ];
   let lastErr = null;
   for (const path of candidates) {
@@ -131,23 +131,23 @@ async function fetchScreensForTheater(theaterId) {
 
 /* Get seats for a screen with fallbacks (admin/public). Returns { seats, rows, cols } */
 async function fetchSeatsForScreen(theaterId, screenId) {
-  // try admin scoped first if theaterId available (keeps scoped permission flow)
   const candidates = [];
   if (theaterId) candidates.push(`/admin/theaters/${theaterId}/screens/${screenId}/seats`);
   candidates.push(`/screens/${screenId}/seats`);
   candidates.push(`/screens/${screenId}?_ts=${Date.now()}`); // fallback: get screen and compute client-side
+
   for (const p of candidates) {
     try {
       const res = await api.get(p, { params: { _ts: Date.now() } });
-      // /seats endpoints return { ok: true, data: [...], rows, cols }
+      // /seats endpoints typically return { ok: true, data: [...], rows, cols }
       if (res?.data && Array.isArray(res.data.data)) {
         return { seats: res.data.data, rows: res.data.rows, cols: res.data.cols };
       }
-      // Alias: some endpoints return raw array
+      // some endpoints return raw array
       if (Array.isArray(res.data)) {
         return { seats: res.data, rows: undefined, cols: undefined };
       }
-      // screen object returned — client can build seat labels
+      // a screen object was returned — compute labels client-side
       const obj = res?.data?.data ?? res?.data;
       if (obj && (obj.rows || obj.cols)) {
         const rows = Number(obj.rows || obj.row || 0);
@@ -220,8 +220,13 @@ export default function AdminScreens() {
   useEffect(() => {
     (async () => {
       try {
-        // Force admin endpoint only — ensures SUPER_ADMIN receives full list.
-        const candidates = ["/api/admin/theaters"];
+        // Prefer the admin endpoints — use absolute backup for diagnostics.
+        const candidates = [
+          "/admin/theaters",
+          "/admin/theatres",
+          // absolute fallback (debug) — api.defaults.baseURL already contains /api
+          `${api.defaults.baseURL?.replace(/\/$/, "")}/admin/theaters`,
+        ];
         let list = [];
         let lastErr = null;
         for (const p of candidates) {
@@ -320,9 +325,11 @@ export default function AdminScreens() {
 
     try {
       if (selectedScreen === NEW) {
+        // prefer admin endpoint
         const candidates = [
           `/admin/theaters/${selectedTheater}/screens`,
-          `/theaters/${selectedTheater}/screens`,
+          `/admin/theatres/${selectedTheater}/screens`,
+          `/theaters/${selectedTheater}/screens`, // last-resort scoped public
         ];
         let ok = false;
         for (const p of candidates) {
@@ -338,6 +345,7 @@ export default function AdminScreens() {
       } else {
         const candidates = [
           `/admin/theaters/${selectedTheater}/screens/${selectedScreen}`,
+          `/admin/theatres/${selectedTheater}/screens/${selectedScreen}`,
           `/theaters/${selectedTheater}/screens/${selectedScreen}`,
         ];
         let ok = false;
@@ -377,7 +385,7 @@ export default function AdminScreens() {
   async function deleteTheater(id) {
     if (!confirm("Delete this theater?")) return;
     try {
-      const candidates = [`/admin/theaters/${id}`, `/theaters/${id}`];
+      const candidates = [`/admin/theaters/${id}`, `/admin/theatres/${id}`, `/theaters/${id}`];
       let ok = false;
       for (const p of candidates) {
         try {
@@ -413,6 +421,7 @@ export default function AdminScreens() {
     try {
       const candidates = [
         `/admin/theaters/${selectedTheater}/screens/${screenId}`,
+        `/admin/theatres/${selectedTheater}/screens/${screenId}`,
         `/theaters/${selectedTheater}/screens/${screenId}`,
       ];
       let ok = false;
@@ -462,8 +471,8 @@ export default function AdminScreens() {
       console.debug("axios defaults Authorization:", (api.defaults && api.defaults.headers && api.defaults.headers.common && api.defaults.headers.common.Authorization) || "none");
 
       // raw fetch to inspect response body/status (bypasses axios interceptors)
-      const base = "https://movie-ticket-booking-backend-o1m2.onrender.com";
-      const url = `${base}/api/admin/theaters?_ts=${Date.now()}`;
+      const base = api.defaults.baseURL?.replace(/\/$/, "") || "https://movie-ticket-booking-backend-o1m2.onrender.com/api";
+      const url = `${base}/admin/theaters?_ts=${Date.now()}`;
       try {
         const raw = await fetch(url, { credentials: "include", mode: "cors" });
         const txt = await raw.text();
@@ -479,7 +488,8 @@ export default function AdminScreens() {
 
   async function refreshTheaters() {
     try {
-      const candidates = ["/admin/theaters", "/admin/theatres", "/api/admin/theaters", "/theaters", "/theatres"];
+      // prefer admin endpoints
+      const candidates = ["/admin/theaters", "/admin/theatres", "/admin/theaters/mine", `${api.defaults.baseURL?.replace(/\/$/, "")}/admin/theaters`];
       for (const p of candidates) {
         try {
           const { data, status } = await api.get(p, { params: { _ts: Date.now() } });
