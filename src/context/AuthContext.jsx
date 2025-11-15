@@ -13,8 +13,8 @@ export const AuthContext = createContext(null);
 export const useAuth = () => useContext(AuthContext);
 
 /* ---------------- feature flag: cookie-based auth ----------------------- */
-// Enable by setting VITE_COOKIE_AUTH="true" in your .env
-const COOKIE_AUTH = String(import.meta.env?.VITE_COOKIE_AUTH || "false").toLowerCase() === "true";
+const COOKIE_AUTH = String(import.meta.env?.VITE_COOKIE_AUTH || "false")
+  .toLowerCase() === "true";
 
 /* ---------------- helpers to decode jwt (safe) ------------------------- */
 function safeJsonBase64Decode(payload) {
@@ -124,8 +124,12 @@ export function AuthProvider({ children }) {
     }
   });
 
+  // small flag to indicate a fresh login completed (used to run a single redirect)
+  const [justLoggedIn, setJustLoggedIn] = useState(false);
+
   // compute the active token
-  const activeToken = activeSession === "admin" ? adminToken || token : token || adminToken || null;
+  const activeToken =
+    activeSession === "admin" ? adminToken || token : token || adminToken || null;
 
   /* Set axios header according to activeToken */
   useEffect(() => {
@@ -144,11 +148,15 @@ export function AuthProvider({ children }) {
 
   /* Persist tokens, role, roles, perms, user */
   useEffect(() => {
-    token ? localStorage.setItem(LS_KEYS.token, token) : localStorage.removeItem(LS_KEYS.token);
+    token
+      ? localStorage.setItem(LS_KEYS.token, token)
+      : localStorage.removeItem(LS_KEYS.token);
   }, [token]);
 
   useEffect(() => {
-    adminToken ? localStorage.setItem(LS_KEYS.adminToken, adminToken) : localStorage.removeItem(LS_KEYS.adminToken);
+    adminToken
+      ? localStorage.setItem(LS_KEYS.adminToken, adminToken)
+      : localStorage.removeItem(LS_KEYS.adminToken);
   }, [adminToken]);
 
   useEffect(() => {
@@ -230,67 +238,77 @@ export function AuthProvider({ children }) {
   }, []);
 
   /* Login (USER) */
-  const login = useCallback(async (email, password, roleHint) => {
-    const res = await api.post("/auth/login", {
-      email,
-      password,
-      roleHint,
-    });
-    const data = res?.data || {};
+  const login = useCallback(
+    async (email, password, roleHint) => {
+      const res = await api.post("/auth/login", {
+        email,
+        password,
+        roleHint,
+      });
+      const data = res?.data || {};
 
-    // If cookie-first mode and server uses HttpOnly cookie, backend may not return token.
-    const t = data?.token || data?.accessToken || null;
-    const claims = decodeJwt(t) || (data?.user?.token ? decodeJwt(data.user.token) : null);
+      const t = data?.token || data?.accessToken || null;
+      const claims = decodeJwt(t) || (data?.user?.token ? decodeJwt(data.user.token) : null);
 
-    const roleCandidates = [
-      claims?.role,
-      ...(Array.isArray(claims?.roles) ? claims.roles : []),
-      data?.user?.role,
-      "USER",
-    ].filter(Boolean);
-    const finalRole = normalizeRole(roleCandidates[0]);
-    const finalUser = {
-      ...data.user,
-      role: finalRole,
-      roles: [finalRole],
-      perms: claims?.perms || data?.user?.perms || [],
-      theaterId: claims?.theatreId || claims?.theaterId || data?.user?.theatreId || data?.user?.theaterId || null,
-    };
+      const roleCandidates = [
+        claims?.role,
+        ...(Array.isArray(claims?.roles) ? claims.roles : []),
+        data?.user?.role,
+        "USER",
+      ].filter(Boolean);
+      const finalRole = normalizeRole(roleCandidates[0]);
+      const finalUser = {
+        ...data.user,
+        role: finalRole,
+        roles: [finalRole],
+        perms: claims?.perms || data?.user?.perms || [],
+        theaterId:
+          claims?.theatreId ||
+          claims?.theaterId ||
+          data?.user?.theatreId ||
+          data?.user?.theaterId ||
+          null,
+      };
 
-    // If we got a token, persist via primeAuth
-    if (t) {
-      primeAuth(t, finalRole);
-      setToken(t);
-    } else if (COOKIE_AUTH) {
-      // cookie-based: hydrate by calling /auth/me
-      try {
-        const me = await api.get("/auth/me");
-        const u = me?.data?.user || me?.data || me;
-        const r = normalizeRole(u?.role || finalRole);
-        setUser({ ...u, role: r, roles: [r], perms: u?.perms || [] });
-        setRole(r);
-        setRoles([r]);
-      } catch {
-        // fall through — server didn't set cookie or cookie invalid
+      // If we got a token, persist via primeAuth
+      if (t) {
+        primeAuth(t, finalRole);
+        setToken(t);
+      } else if (COOKIE_AUTH) {
+        // cookie-based: hydrate by calling /auth/me
+        try {
+          const me = await api.get("/auth/me");
+          const u = me?.data?.user || me?.data || me;
+          const r = normalizeRole(u?.role || finalRole);
+          setUser({ ...u, role: r, roles: [r], perms: u?.perms || [] });
+          setRole(r);
+          setRoles([r]);
+        } catch {
+          // fall through — server didn't set cookie or cookie invalid
+        }
       }
-    }
 
-    // clear any admin session and switch to user
-    setAdminToken(null);
-    setActiveSession("user");
-    setRole(finalRole);
-    setRoles([finalRole]);
-    setPerms(finalUser.perms);
-    setUser(finalUser);
+      // clear any admin session and switch to user
+      setAdminToken(null);
+      setActiveSession("user");
+      setRole(finalRole);
+      setRoles([finalRole]);
+      setPerms(finalUser.perms);
+      setUser(finalUser);
 
-    // persist user and token (if present)
-    writeJSON(LS_KEYS.user, finalUser);
-    if (t) localStorage.setItem(LS_KEYS.token, t);
-    localStorage.removeItem(LS_KEYS.adminToken);
+      // persist user and token (if present)
+      writeJSON(LS_KEYS.user, finalUser);
+      if (t) localStorage.setItem(LS_KEYS.token, t);
+      localStorage.removeItem(LS_KEYS.adminToken);
 
-    setInitialized(true);
-    setTimeout(() => window.location.replace(defaultLandingFor(finalRole)), 0);
-  }, []);
+      setInitialized(true);
+      // Mark that a login just happened (used to run a single redirect safely)
+      setJustLoggedIn(true);
+
+      return { ok: true, user: finalUser };
+    },
+    []
+  );
 
   /* Login (ADMIN) — updated to return finalUser for deterministic frontend usage */
   const loginAdmin = useCallback(async (email, password) => {
@@ -319,7 +337,12 @@ export function AuthProvider({ children }) {
       role: finalRole,
       roles: [finalRole],
       perms: claims?.perms || data?.user?.perms || [],
-      theaterId: claims?.theatreId || claims?.theaterId || data?.user?.theatreId || data?.user?.theaterId || null,
+      theaterId:
+        claims?.theatreId ||
+        claims?.theaterId ||
+        data?.user?.theatreId ||
+        data?.user?.theaterId ||
+        null,
     };
 
     if (t) {
@@ -358,11 +381,9 @@ export function AuthProvider({ children }) {
       writeJSON(LS_KEYS.user, finalUser);
     } catch {}
 
-    // mark initialized and redirect (keeps existing behaviour)
+    // mark initialized and request a safe redirect via justLoggedIn
     setInitialized(true);
-    try {
-      setTimeout(() => window.location.replace(defaultLandingFor(finalRole)), 0);
-    } catch {}
+    setJustLoggedIn(true);
 
     // Return finalUser so callers (AdminLogin) can deterministically read role/theatreId
     return finalUser;
@@ -395,7 +416,10 @@ export function AuthProvider({ children }) {
       } catch {}
     }
 
-    setTimeout(() => window.location.replace("/"), 0);
+    // keep behaviour: redirect to public root
+    try {
+      setTimeout(() => window.location.replace("/"), 0);
+    } catch {}
   }, []);
 
   /* Refresh profile */
@@ -434,25 +458,52 @@ export function AuthProvider({ children }) {
     [activeToken, activeSession, perms, logout]
   );
 
-  /* Derived flags */
-  const isLoggedIn = !!activeToken || COOKIE_AUTH; // cookie-auth may be logged-in without local token
+  /* ---------------- Derived flags (SAFE) ----------------
+     isLoggedIn returns true ONLY AFTER initialization is done.
+     This prevents components from reacting to raw local tokens
+     before the app has validated/hydrated the session.
+  */
+  const isLoggedIn = !!initialized && (!!activeToken || COOKIE_AUTH);
   const isSuperAdmin = role === "SUPER_ADMIN";
   const isAdmin = role === "ADMIN";
   const isTheatreAdmin = role === "THEATRE_ADMIN";
   const isAdminLike = isAdmin || isSuperAdmin || isTheatreAdmin;
 
-  /* Fixed redirect logic */
+  /* ---------------- Safe redirect: only after an explicit login (justLoggedIn) */
   useEffect(() => {
     if (!initialized) return;
+    if (!justLoggedIn) return;
+    if (!(isLoggedIn && role)) {
+      setJustLoggedIn(false);
+      return;
+    }
 
-    if (isLoggedIn && role) {
+    try {
       const here = window.location.pathname;
       const target = defaultLandingFor(role);
       if ((here === "/" || here === "/login" || here === "/admin/login") && here !== target) {
         window.location.replace(target);
       }
+    } catch (err) {
+      // swallow
+    } finally {
+      setJustLoggedIn(false);
     }
-  }, [initialized, isLoggedIn, role]);
+  }, [initialized, isLoggedIn, role, justLoggedIn]);
+
+  /* ---------------- Temporary debug: log auth state changes -------------- */
+  useEffect(() => {
+    // remove or comment out this effect in production
+    console.debug("AuthState:", {
+      initialized,
+      isLoggedIn,
+      tokenExists: !!token,
+      adminTokenExists: !!adminToken,
+      activeSession,
+      role,
+      user: user ? { email: user.email, role: user.role } : null,
+    });
+  }, [initialized, isLoggedIn, token, adminToken, activeSession, role, user]);
 
   const value = useMemo(
     () => ({
