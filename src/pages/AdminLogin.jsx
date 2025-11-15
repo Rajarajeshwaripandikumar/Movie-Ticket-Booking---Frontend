@@ -1,16 +1,16 @@
-// src/pages/AdminLogin.jsx — robust redirect fallback + debug logs (patched)
+// src/pages/AdminLogin.jsx
 import React, { useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { useNavigate, useLocation } from "react-router-dom";
 
-/* --------------------------- UI bits (unchanged) --------------------------- */
+/* --------------------------- UI bits (District/Walmart) --------------------------- */
 const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
   <Tag className={`bg-white border border-slate-200 rounded-2xl shadow-sm ${className}`} {...rest}>
     {children}
   </Tag>
 );
 
-function Field({ label, type = "text", placeholder, value, onChange, autoComplete, id }) {
+function Field({ label, type = "text", placeholder, value, onChange, autoComplete, id, inputProps = {} }) {
   return (
     <div>
       {label && (
@@ -27,6 +27,7 @@ function Field({ label, type = "text", placeholder, value, onChange, autoComplet
           onChange={(e) => onChange(e.target.value)}
           autoComplete={autoComplete}
           className="w-full outline-none bg-transparent text-sm sm:text-base text-slate-900 placeholder:text-slate-400"
+          {...inputProps}
         />
       </div>
     </div>
@@ -39,6 +40,14 @@ function PrimaryBtn({ children, className = "", ...props }) {
       className={`inline-flex items-center justify-center gap-2 rounded-full px-5 py-2 font-semibold text-white bg-[#0071DC] hover:bg-[#0654BA] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071DC] disabled:opacity-60 ${className}`}
       {...props}
     >
+      {children}
+    </button>
+  );
+}
+
+function LinkLikeButton({ children, className = "", ...props }) {
+  return (
+    <button {...props} className={`text-sm text-[#0654BA] underline underline-offset-2 ${className}`}>
       {children}
     </button>
   );
@@ -66,6 +75,8 @@ export default function AdminLogin() {
 
   const [email, setEmail] = useState("admin@cinema.com");
   const [password, setPassword] = useState("");
+  const [remember, setRemember] = useState(true);
+  const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -80,44 +91,42 @@ export default function AdminLogin() {
 
     setBusy(true);
     try {
-      // Attempt admin login. Updated loginAdmin returns the final user object.
-      const returnedUser = await loginAdmin(email, password);
+      // Call loginAdmin from AuthContext. It will set admin token & redirect via AuthProvider.
+      const returned = await loginAdmin(email.trim(), password);
 
-      // Debugging logs — inspect these in the browser console if something goes wrong
-      console.debug("[AdminLogin] loginAdmin returned user:", returnedUser);
-      console.debug("[AdminLogin] localStorage.token:", localStorage.getItem("token"));
+      // Helpful debug logs (inspect in browser console when troubleshooting)
+      console.debug("[AdminLogin] loginAdmin returned:", returned);
       console.debug("[AdminLogin] localStorage.adminToken:", localStorage.getItem("adminToken"));
+      console.debug("[AdminLogin] localStorage.token:", localStorage.getItem("token"));
       console.debug("[AdminLogin] localStorage.user:", localStorage.getItem("user"));
 
-      // prefer redirect target from router state (user attempted to access protected route)
+      // Determine redirect: prefer router state 'from', else role-based fallback
       const fromPath = location.state?.from?.pathname;
 
-      // Determine role and theatreId from returnedUser (preferred) or fallback to localStorage
-      const userObj =
-        returnedUser ||
-        (localStorage.getItem("user") ? JSON.parse(localStorage.getItem("user")) : null) ||
-        null;
-
-      const roleRaw = userObj?.role ?? (userObj?.roles ? userObj.roles[0] : null) ?? "";
+      const userFromReturn = returned || (localStorage.getItem("user") && JSON.parse(localStorage.getItem("user")));
+      const roleRaw = userFromReturn?.role ?? userFromReturn?.roles?.[0] ?? "";
       const role = String(roleRaw || "").toUpperCase();
-      const theatreId = userObj?.theatreId ?? userObj?.theaterId ?? null;
+      const theatreId = userFromReturn?.theatreId ?? userFromReturn?.theaterId ?? null;
 
-      // canonical admin landing page
       const canonicalAdminLanding = "/admin/screens";
 
-      // decide fallback:
-      // 1) if router state has a 'from', prefer it
-      // 2) else if super admin / admin -> canonicalAdminLanding
-      // 3) else if theatre admin and we know a theater id -> use theatre-specific page
-      // 4) else -> homepage
       let fallback = "/";
       if (fromPath) fallback = fromPath;
       else if (role === "SUPER_ADMIN" || role === "ADMIN") fallback = canonicalAdminLanding;
       else if (role === "THEATRE_ADMIN") fallback = theatreId ? `/theatre/view/${theatreId}` : "/theatre/my";
 
-      // perform deterministic navigation immediately (no race with AuthContext)
-      console.debug("[AdminLogin] Navigating to:", fallback, "role:", role, "theatreId:", theatreId);
-      safeNavigate(navigate, fallback, { replace: true });
+      // small defer to allow AuthContext to finish any state changes
+      setTimeout(() => {
+        console.debug("[AdminLogin] navigating to:", fallback, "current:", window.location.pathname);
+        safeNavigate(navigate, fallback, { replace: true });
+      }, 120);
+
+      // remember-me: if user doesn't want to persist tokens, remove them from localStorage
+      if (!remember) {
+        try {
+          localStorage.removeItem("adminToken");
+        } catch {}
+      }
     } catch (err) {
       const msg = err?.response?.data?.message || err?.message || "Login failed";
       console.error("[AdminLogin] login failed:", err);
@@ -132,12 +141,53 @@ export default function AdminLogin() {
       <Card className="w-full max-w-md overflow-hidden">
         <div className="px-6 py-5 border-b border-slate-200 bg-white/60 backdrop-blur">
           <h1 className="text-xl sm:text-2xl font-extrabold">Cinema Admin</h1>
-          <p className="text-sm text-slate-600">Super Admin / Theatre Admin Only</p>
+          <p className="text-sm text-slate-600">Super Admin / Theatre Admin only</p>
         </div>
 
         <form onSubmit={handleSubmit} className="px-6 py-6 space-y-4">
-          <Field id="admin-email" label="Email" type="email" value={email} onChange={setEmail} />
-          <Field id="admin-password" label="Password" type="password" value={password} onChange={setPassword} />
+          <Field id="admin-email" label="Email" type="email" value={email} onChange={setEmail} autoComplete="username" />
+          <Field
+            id="admin-password"
+            label="Password"
+            type={showPassword ? "text" : "password"}
+            value={password}
+            onChange={setPassword}
+            autoComplete="current-password"
+            inputProps={{
+              minLength: 6,
+            }}
+          />
+
+          <div className="flex items-center justify-between text-sm">
+            <label className="inline-flex items-center gap-2 text-slate-700">
+              <input
+                type="checkbox"
+                checked={remember}
+                onChange={(e) => setRemember(Boolean(e.target.checked))}
+                className="h-4 w-4"
+              />
+              <span>Remember me</span>
+            </label>
+
+            <div className="flex items-center gap-3">
+              <LinkLikeButton type="button" onClick={() => setShowPassword((s) => !s)}>
+                {showPassword ? "Hide" : "Show"}
+              </LinkLikeButton>
+              <LinkLikeButton
+                type="button"
+                onClick={() => {
+                  // Navigate to password-reset / forgot page if present
+                  try {
+                    safeNavigate(navigate, "/admin/forgot-password");
+                  } catch {
+                    safeNavigate(navigate, "/forgot-password");
+                  }
+                }}
+              >
+                Forgot?
+              </LinkLikeButton>
+            </div>
+          </div>
 
           {error && (
             <Card className="p-3 bg-rose-50 border-rose-200 text-rose-700 font-semibold">
@@ -148,6 +198,10 @@ export default function AdminLogin() {
           <PrimaryBtn type="submit" disabled={busy} className="w-full">
             {busy ? "Logging in…" : "Login"}
           </PrimaryBtn>
+
+          <div className="text-center text-xs text-slate-500">
+            Tip: Use your admin credentials. If login returns unexpected HTML, check API base URL / CORS.
+          </div>
         </form>
 
         <div className="text-center py-3 border-t border-slate-200 bg-white text-sm font-semibold text-slate-700">
