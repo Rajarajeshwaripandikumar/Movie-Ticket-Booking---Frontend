@@ -1,7 +1,7 @@
 // src/pages/AdminBookingDetails.jsx — Walmart Style (clean, rounded, blue accents)
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
-import api from "../api/api";
+import api, { getAuthFromStorage } from "../api/api";
 import { User, IndianRupee, Film, ArrowLeft, Download } from "lucide-react";
 
 /* --------------------------- Walmart primitives --------------------------- */
@@ -101,12 +101,14 @@ export default function AdminBookingDetails() {
         const nid = search.get("notificationId");
         if (nid) {
           try {
+            // Best-effort: mark notification read (ignore failures)
             await api.patch(`/notifications/${nid}/read`);
           } catch {
             /* ignore notification patch failure */
           }
         }
       } catch (err) {
+        if (err?.name === "AbortError") return;
         console.error("Fetch booking failed:", err);
         setError(err?.response?.data?.message || err.message || "Failed to load booking");
       } finally {
@@ -173,26 +175,20 @@ export default function AdminBookingDetails() {
       ? new Date(createdAt).toLocaleString("en-IN")
       : "—";
 
-  const amountLabel = Number.isFinite(Number(amount)) ? `₹${Number(amount).toFixed(2)}` : "—";
+  const amountLabel = Number.isFinite(Number(amount)) ? `₹${Number(Number(amount)).toFixed(2)}` : "—";
 
   const rawStatus = (status || paymentStatus || "UNKNOWN").toUpperCase();
   const isBad = ["CANCELLED", "FAILED", "REFUNDED", "EXPIRED"].includes(rawStatus);
 
-  // Build PDF URL — use adminToken if available, fallback to other tokens
+  // Build PDF URL — use getAuthFromStorage() for token lookup (safe)
   const base =
     (api?.defaults?.baseURL ||
       import.meta.env.VITE_API_URL ||
       "http://localhost:8080"
     ).replace(/\/+$/, "");
   const root = base.replace(/\/api$/i, "");
-  const token =
-    (localStorage.getItem("adminToken") ||
-      localStorage.getItem("token") ||
-      localStorage.getItem("jwt") ||
-      sessionStorage.getItem("adminToken") ||
-      sessionStorage.getItem("token") ||
-      ""
-    ).replace(/^Bearer\s+/i, "");
+  const maybeAuth = getAuthFromStorage?.() || {};
+  const token = (maybeAuth.token || localStorage.getItem("adminToken") || localStorage.getItem("token") || "").replace(/^Bearer\s+/i, "");
   const pdfUrl = `${root}/api/bookings/${_id}/pdf${token ? `?token=${encodeURIComponent(token)}` : ""}`;
 
   /* ------------------------------- Render ---------------------------------- */
@@ -256,9 +252,26 @@ export default function AdminBookingDetails() {
                   <InfoItem label="Tickets" value={`${seats?.length || 0} ticket(s)`} />
                 </div>
 
-                <PrimaryBtn onClick={() => window.open(pdfUrl, "_blank")} className="mt-3">
-                  <Download size={16} /> Download Ticket
-                </PrimaryBtn>
+                <div className="mt-3 flex gap-3">
+                  <PrimaryBtn
+                    onClick={() => {
+                      // safer navigation: create anchor to open pdf in new tab
+                      try {
+                        const a = document.createElement("a");
+                        a.href = pdfUrl;
+                        a.target = "_blank";
+                        a.rel = "noopener noreferrer";
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                      } catch {
+                        window.open(pdfUrl, "_blank", "noopener,noreferrer");
+                      }
+                    }}
+                  >
+                    <Download size={16} /> Download Ticket
+                  </PrimaryBtn>
+                </div>
               </div>
 
               {/* Customer Info */}
@@ -283,7 +296,15 @@ export default function AdminBookingDetails() {
             Raw Booking JSON
           </summary>
           <Card className="mt-2 p-3">
-            <pre className="overflow-x-auto text-xs">{JSON.stringify(booking, null, 2)}</pre>
+            <pre className="overflow-x-auto text-xs">
+              {(() => {
+                try {
+                  return JSON.stringify(booking, null, 2);
+                } catch {
+                  return "[unserializable booking object]";
+                }
+              })()}
+            </pre>
           </Card>
         </details>
       </div>
