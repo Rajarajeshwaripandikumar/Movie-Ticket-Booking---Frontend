@@ -13,7 +13,7 @@ import {
   ChevronRight,
   UserPlus,
 } from "lucide-react";
-import api from "../api/api";
+import api, { getAuthFromStorage } from "../api/api";
 import { useAuth } from "../context/AuthContext";
 
 /* ----------------------------- Endpoint candidates ----------------------------- */
@@ -79,13 +79,14 @@ const Tile = ({ to, icon: Icon, label, desc, disabled = false }) => {
 /**
  * Try candidate theater list endpoints until one returns data (or empty array).
  * Returns the first array found (possibly empty), or throws if none succeed.
+ * Accepts optional AbortController.signal to cancel requests.
  */
-async function fetchTheatersWithFallback() {
+async function fetchTheatersWithFallback(signal) {
   let lastErr = null;
   for (const path of THEATERS_CANDIDATES) {
     try {
-      // use getFresh so we append _ts and avoid stale caches
-      const res = await api.get(path, { params: { _ts: Date.now() } });
+      // use getFresh semantics by appending _ts param to avoid stale caches
+      const res = await api.get(path, { params: { _ts: Date.now() }, signal });
       const payload = res?.data;
       const list =
         (Array.isArray(payload) && payload) ||
@@ -95,16 +96,19 @@ async function fetchTheatersWithFallback() {
         payload?.results ||
         payload?.theatres ||
         [];
-      // We treat an endpoint that returned an array (even empty) as a successful hit.
       if (Array.isArray(list)) {
-        console.debug("[AdminDashboard] theater endpoint succeeded:", path, "count:", list.length);
+        console.info("[AdminDashboard] theater endpoint succeeded:", path, "count:", list.length);
         return list;
       }
-      // otherwise continue trying
+      // otherwise keep trying
     } catch (err) {
       lastErr = err;
       console.debug("[AdminDashboard] theater endpoint failed:", path, err?.response?.status || err?.message || err);
       // continue to next candidate
+      if (err?.name === "AbortError") {
+        // propagate abort immediately
+        throw err;
+      }
     }
   }
   // none succeeded
@@ -114,17 +118,21 @@ async function fetchTheatersWithFallback() {
 /**
  * Try candidate create-theatre-admin endpoints until one succeeds.
  * Returns axios response or throws last error.
+ * Accepts optional signal to cancel.
  */
-async function tryCreateTheatreAdmin(payload) {
+async function tryCreateTheatreAdmin(payload, signal) {
   let lastErr = null;
   for (const path of CREATE_THEATRE_ADMIN_CANDIDATES) {
     try {
-      const res = await api.post(path, payload);
-      console.debug("[AdminDashboard] create theatre-admin succeeded:", path);
+      const res = await api.post(path, payload, { signal });
+      console.info("[AdminDashboard] create theatre-admin succeeded:", path);
       return res;
     } catch (err) {
       lastErr = err;
       console.debug("[AdminDashboard] create theatre-admin failed at", path, err?.response?.status || err?.message || err);
+      if (err?.name === "AbortError") {
+        throw err;
+      }
       // try next
     }
   }
@@ -133,7 +141,7 @@ async function tryCreateTheatreAdmin(payload) {
 
 /* --------------------------------- Page --------------------------------- */
 export default function AdminDashboard() {
-  const { isSuperAdmin, isAdmin, isTheatreAdmin } = useAuth();
+  const { isSuperAdmin, isAdmin, isTheatreAdmin } = useAuth() || {};
 
   // Role gates must mirror your App.jsx route guards
   const canScreens   = isSuperAdmin || isAdmin || isTheatreAdmin; // /admin/screens
@@ -164,16 +172,36 @@ export default function AdminDashboard() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null); // { type: "success" | "error", text: string }
 
+  // Prime axios auth from storage once (extra safety for admin flows)
+  useEffect(() => {
+    try {
+      const auth = getAuthFromStorage?.() || getAuthFromStorage?.(); // defensive
+      if (auth && auth.token) api.setAuthToken(auth.token);
+    } catch {}
+  }, []);
+
   useEffect(() => {
     let mounted = true;
+    const ac = new AbortController();
+
     (async () => {
       setLoadingTheatres(true);
       setMsg(null);
       try {
-        const list = await fetchTheatersWithFallback();
+        const list = await fetchTheatersWithFallback(ac.signal);
         if (!mounted) return;
-        setTheatres(Array.isArray(list) ? list : []);
+        // normalize each theatre to shape { id, name, city } safely
+        const normalized = (Array.isArray(list) ? list : []).map((t, idx) => ({
+          _id: t._id ?? t.id ?? `${idx}`,
+          name: (t.name || t.title || t.theatreName || t.theater_name || "Unknown").toString(),
+          city: (t.city || t.town || t.location || "").toString(),
+        }));
+        if (mounted) setTheatres(normalized);
       } catch (err) {
+        if (err?.name === "AbortError") {
+          // aborted — ignore
+          return;
+        }
         console.error("[AdminDashboard] Failed to load theaters:", err?.response?.status || err?.message || err);
         if (mounted) {
           setTheatres([]);
@@ -183,7 +211,12 @@ export default function AdminDashboard() {
         if (mounted) setLoadingTheatres(false);
       }
     })();
-    // re-run if user's admin flags change (helps when auth hydrates)
+
+    return () => {
+      mounted = false;
+      try { ac.abort(); } catch {}
+    };
+    // rerun when auth flags change so UI reflects permissions
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSuperAdmin, isAdmin, isTheatreAdmin]);
 
@@ -205,28 +238,41 @@ export default function AdminDashboard() {
     }
 
     setBusy(true);
+    const ac = new AbortController();
     try {
       await tryCreateTheatreAdmin({
         name: aName.trim(),
         email: aEmail.trim(),
         password: aPassword,
         theatreId: aTheatreId,
-      });
+      }, ac.signal);
 
       setMsg({ type: "success", text: "Theatre admin created successfully." });
       resetForm();
       // refresh theaters list in case backend linked changes
       try {
         const list = await fetchTheatersWithFallback();
-        setTheatres(Array.isArray(list) ? list : []);
-      } catch {}
+        const normalized = (Array.isArray(list) ? list : []).map((t, idx) => ({
+          _id: t._id ?? t.id ?? `${idx}`,
+          name: (t.name || t.title || t.theatreName || t.theater_name || "Unknown").toString(),
+          city: (t.city || t.town || t.location || "").toString(),
+        }));
+        setTheatres(normalized);
+      } catch (e) {
+        // ignore refresh errors
+      }
     } catch (err) {
-      const status = err?.response?.status;
-      let text = err?.response?.data?.message || "Failed to create theatre admin.";
-      if (status === 409 || /exist/i.test(text)) text = "Email already exists. Try another.";
-      console.error("[AdminDashboard] create theatre admin error:", status, text);
-      setMsg({ type: "error", text });
+      if (err?.name === "AbortError") {
+        setMsg({ type: "error", text: "Request cancelled." });
+      } else {
+        const status = err?.response?.status;
+        let text = err?.response?.data?.message || "Failed to create theatre admin.";
+        if (status === 409 || /exist/i.test(text)) text = "Email already exists. Try another.";
+        console.error("[AdminDashboard] create theatre admin error:", status, text);
+        setMsg({ type: "error", text });
+      }
     } finally {
+      try { ac.abort(); } catch {}
       setBusy(false);
     }
   };
@@ -340,8 +386,8 @@ export default function AdminDashboard() {
                     {loadingTheatres ? "Loading theatres…" : "Select a theatre…"}
                   </option>
                   {theatres.map((t) => (
-                    <option key={t._id || t.id} value={t._id || t.id}>
-                      {t.name} — {t.city}
+                    <option key={t._id} value={t._id}>
+                      {t.name}{t.city ? ` — ${t.city}` : ""}
                     </option>
                   ))}
                 </select>
