@@ -60,7 +60,7 @@ const Pill = ({ children, className = "", ...props }) => (
 const Primary = ({ children, className = "", ...props }) => (
   <button
     {...props}
-    className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold text-white`} 
+    className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold text-white ${className}`}
     style={{ backgroundColor: BLUE }}
   >
     {children}
@@ -131,7 +131,7 @@ const toTheaterOcc = (arr = []) =>
 
 /* ======================== Main Component ======================== */
 export default function AdminAnalyticsDashboard() {
-  const { user, loading: authLoading } = useAuth(); // ← NEW
+  const { user, loading: authLoading } = useAuth(); // gate analytics calls until auth ready
 
   const [range, setRange] = useState("30d");
   const [loading, setLoading] = useState(false);
@@ -180,7 +180,7 @@ export default function AdminAnalyticsDashboard() {
 
   /* ---------- Initial load: only after auth is ready + user exists ---------- */
   useEffect(() => {
-    if (authLoading || !user) return; // ← gate all analytics/API calls until authorized
+    if (authLoading || !user) return;
     const c = new AbortController();
     loadCatalogs(c.signal);
     loadAlerts(c.signal);
@@ -209,7 +209,7 @@ export default function AdminAnalyticsDashboard() {
       }));
       setMoviesList(norm);
     } catch (e) {
-      console.debug("catalog load failed:", e.message || e);
+      console.debug("catalog load failed:", e?.message || e);
     }
   }
 
@@ -242,15 +242,14 @@ export default function AdminAnalyticsDashboard() {
         ...(filters.movie ? { movie: filters.movie } : {}),
       };
 
+      // Ensure your analytics helpers accept an options object { params, signal }
       const [revTrends, dau, movies, occ, bookSum, bookSum7] = await Promise.all([
-        // if your backend supports filters on these endpoints, pass { params }:
-        // api.get("/analytics/revenue/trends", { params }).then(r => r.data), etc.
-        fetchRevenueTrends(days),
-        fetchActiveUsers(days),
-        fetchPopularMovies(days, 10),
-        fetchOccupancy(days),
-        fetchBookingSummary(days),
-        fetchBookingSummary(7),
+        fetchRevenueTrends(days, { params, signal: controller.signal }).catch(() => []),
+        fetchActiveUsers(days, { params, signal: controller.signal }).catch(() => []),
+        fetchPopularMovies(days, 10, { params, signal: controller.signal }).catch(() => []),
+        fetchOccupancy(days, { params, signal: controller.signal }).catch(() => []),
+        fetchBookingSummary(days, { params, signal: controller.signal }).catch(() => []),
+        fetchBookingSummary(7, { params, signal: controller.signal }).catch(() => []),
       ]);
 
       lastRawRef.current = { revTrends, dau, movies, occ, bookSum, bookSum7 };
@@ -260,10 +259,10 @@ export default function AdminAnalyticsDashboard() {
       setTopMovies(toMovies(movies || []));
       setTheaterOcc(toTheaterOcc(occ || []));
 
-      const revenue30 = (bookSum || []).reduce((s, d) => s + Number(d.revenue ?? 0), 0);
+      const revenue30 = (bookSum || []).reduce((s, d) => s + Number(d.revenue ?? d.totalRevenue ?? d.total ?? 0), 0);
       const orders = (bookSum || []).reduce((s, d) => s + Number(d.confirmed ?? d.orders ?? 0), 0);
       const aov = orders ? Math.round(revenue30 / orders) : 0;
-      const revenue7 = (bookSum7 || []).reduce((s, d) => s + Number(d.revenue ?? 0), 0);
+      const revenue7 = (bookSum7 || []).reduce((s, d) => s + Number(d.revenue ?? d.totalRevenue ?? d.total ?? 0), 0);
       const avgDau = (dau || []).length
         ? Math.round((dau || []).reduce((s, d) => s + Number(d.dau ?? d.count ?? d.users ?? 0), 0) / dau.length)
         : 0;
@@ -348,7 +347,6 @@ export default function AdminAnalyticsDashboard() {
 
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
-    window.open(url, "_blank");
     const link = document.createElement("a");
     link.href = url;
     link.setAttribute("download", `analytics_${range}_${new Date().toISOString().slice(0, 10)}.csv`);
@@ -370,7 +368,11 @@ export default function AdminAnalyticsDashboard() {
 
   async function refreshAlerts() {
     const c = new AbortController();
-    await loadAlerts(c.signal);
+    try {
+      await loadAlerts(c.signal);
+    } finally {
+      try { c.abort(); } catch {}
+    }
   }
 
   /* ================== Render ================== */
@@ -421,21 +423,23 @@ export default function AdminAnalyticsDashboard() {
           <div className="lg:col-span-3">
             <ChartCard title="Daily Revenue" subtitle="Aggregate revenue per day" right={<Pill onClick={() => loadData(range)} disabled={authLoading || !user}><RefreshCcw className="h-3.5 w-3.5" /> Refresh</Pill>}>
               {loading ? <EmptyMini label="Loading revenue..." /> : (
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={revenueDaily} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="revFill" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor={BLUE} stopOpacity={0.18} />
-                        <stop offset="100%" stopColor={BLUE} stopOpacity={0.03} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke={SOFT} opacity={0.45} />
-                    <XAxis dataKey="day" tick={{ fontSize: 12, fill: SOFT }} stroke={SOFT} />
-                    <YAxis tick={{ fontSize: 12, fill: SOFT }} domain={["dataMin", "auto"]} stroke={SOFT} />
-                    <Tooltip formatter={(v, k) => (k === "revenue" ? formatCurrency(v) : formatInt(v))} />
-                    <Area type="monotone" dataKey="revenue" stroke={BLUE} fill="url(#revFill)" strokeWidth={2} activeDot={{ r: 4 }} />
-                  </AreaChart>
-                </ResponsiveContainer>
+                <div aria-busy={loading} className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={revenueDaily} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="revFill" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor={BLUE} stopOpacity={0.18} />
+                          <stop offset="100%" stopColor={BLUE} stopOpacity={0.03} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke={SOFT} opacity={0.45} />
+                      <XAxis dataKey="day" tick={{ fontSize: 12, fill: SOFT }} stroke={SOFT} />
+                      <YAxis tick={{ fontSize: 12, fill: SOFT }} domain={["dataMin", "auto"]} stroke={SOFT} />
+                      <Tooltip formatter={(v, k) => (k === "revenue" ? formatCurrency(v) : formatInt(v))} />
+                      <Area type="monotone" dataKey="revenue" stroke={BLUE} fill="url(#revFill)" strokeWidth={2} activeDot={{ r: 4 }} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
               )}
             </ChartCard>
           </div>
@@ -443,15 +447,17 @@ export default function AdminAnalyticsDashboard() {
           <div className="lg:col-span-2">
             <ChartCard title="Daily Active Users" subtitle="Unique users per day">
               {loading ? <EmptyMini label="Loading users..." /> : dauDaily && dauDaily.length ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={dauDaily} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke={SOFT} opacity={0.45} />
-                    <XAxis dataKey="day" tick={{ fontSize: 12, fill: SOFT }} stroke={SOFT} />
-                    <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: SOFT }} domain={[0, "auto"]} stroke={SOFT} />
-                    <Tooltip formatter={(v) => formatInt(v)} />
-                    <Line type="monotone" dataKey="users" stroke={BLUE} strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
-                  </LineChart>
-                </ResponsiveContainer>
+                <div aria-busy={loading} className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={dauDaily} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={SOFT} opacity={0.45} />
+                      <XAxis dataKey="day" tick={{ fontSize: 12, fill: SOFT }} stroke={SOFT} />
+                      <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: SOFT }} domain={[0, "auto"]} stroke={SOFT} />
+                      <Tooltip formatter={(v) => formatInt(v)} />
+                      <Line type="monotone" dataKey="users" stroke={BLUE} strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
               ) : <EmptyMini label="No DAU yet — drive sign-ups and visits to see activity here." />}
             </ChartCard>
           </div>
