@@ -73,28 +73,8 @@ function MenuItemLink({ to, children, onClick }) {
         clickingRef.current = true;
         try {
           onClick?.();
-
-          try {
-            const current = normalizePathForCompare(window.location.pathname + window.location.search);
-            const targetPath = normalizePathForCompare(to);
-            // eslint-disable-next-line no-console
-            console.debug('[MenuItemLink] navigate request', { to, targetPath, current });
-          } catch (err) {
-            // eslint-disable-next-line no-console
-            console.debug('[MenuItemLink] navigate (normalize failed)', { to, err: err?.message || err });
-          }
-
-          const didNavigate = safeNavigate(navigate, to, {});
-          if (!didNavigate) {
-            try {
-              // eslint-disable-next-line no-console
-              console.debug('[MenuItemLink] safeNavigate skipped (same path) — forcing nav via state bump');
-              navigate(to, { state: { __forceNav: Date.now() } });
-            } catch (e) {
-              // eslint-disable-next-line no-console
-              console.warn('[MenuItemLink] force navigate failed', e);
-            }
-          }
+          const didNavigate = safeNavigate(navigate, to);
+          if (!didNavigate) navigate(to, { state: { __forceNav: Date.now() } });
         } finally {
           setTimeout(() => {
             clickingRef.current = false;
@@ -155,7 +135,6 @@ const normalizeNotifications = (raw) => {
 };
 
 export default function Navbar() {
-  // updated context shape (activeSession + activeToken)
   const {
     user,
     logout,
@@ -163,10 +142,10 @@ export default function Navbar() {
     isSuperAdmin,
     isTheatreAdmin,
     isLoggedIn,
-    token,         // user token (may be null)
-    adminToken,    // admin token (may be null)
-    activeToken,   // currently-applied token (from AuthContext)
-    activeSession, // "admin" | "user"
+    token,
+    adminToken,
+    activeToken,
+    activeSession,
     setActiveSession,
   } = useAuth();
 
@@ -180,12 +159,10 @@ export default function Navbar() {
   const [notifications, setNotifications] = useState([]);
   const notifRef = useRef(null);
 
-  // use activeToken from context so it reflects the user's chosen session
   const tokenForApi = activeToken || "";
-
   const unread = useMemo(() => notifications.filter((n) => !n.readAt).length, [notifications]);
 
-  /* ---------- load notifications (poll every 30s) ---------- */
+  /* ---------- Notification Load ---------- */
   useEffect(() => {
     if (!isLoggedIn || !tokenForApi) return;
     let alive = true;
@@ -206,44 +183,11 @@ export default function Navbar() {
     return () => { alive = false; clearInterval(t); };
   }, [isLoggedIn, tokenForApi]);
 
-  useEffect(() => {
-    const onDocClick = (e) => {
-      if (!notifRef.current) return;
-      if (!notifRef.current.contains(e.target)) setNotifOpen(false);
-    };
-    document.addEventListener("mousedown", onDocClick);
-    return () => document.removeEventListener("mousedown", onDocClick);
-  }, []);
-
+  /* ---------- Close Menus On Navigation ---------- */
   useEffect(() => {
     setNotifOpen(false);
     setAdminMenu(false);
   }, [location.pathname]);
-
-  const toKey = (n) => n.id || `${n.type || "n"}-${n.createdAt || Math.random()}`;
-
-  const resolveNotificationPath = (n) => {
-    const t = (n.type || "").toLowerCase();
-    if (t.includes("booking")) return "/bookings";
-    if (t.includes("showtime")) {
-      if (isSuperAdmin) return "/admin/showtimes";
-      if (isTheatreAdmin) return "/theatre/showtimes";
-      if (isAdmin) return "/admin/showtimes";
-      return "/showtimes";
-    }
-    if (isTheatreAdmin) return "/theatre/my";
-    if (isSuperAdmin || isAdmin) return "/admin/dashboard";
-    return "/bookings";
-  };
-
-  const markOneRead = async (id) => {
-    try {
-      await api.patch(`/notifications/${id}/read`, {}, { headers: { Authorization: `Bearer ${tokenForApi}` } });
-    } catch {}
-    setNotifications((prev) =>
-      prev.map((n) => (n.id === id ? { ...n, readAt: n.readAt || new Date().toISOString() } : n))
-    );
-  };
 
   const profilePath =
     isSuperAdmin ? "/admin/profile"
@@ -252,23 +196,25 @@ export default function Navbar() {
 
   const anyAdmin = isSuperAdmin || isAdmin || isTheatreAdmin;
 
-  // session switch helper — toggles between admin/user (only if both tokens exist)
   const canSwitchSession = Boolean(adminToken && token);
+
   const handleToggleSession = () => {
     if (!canSwitchSession) return;
     const next = activeSession === "admin" ? "user" : "admin";
-    // eslint-disable-next-line no-console
     console.debug("[Navbar] switching active session", { from: activeSession, to: next });
     setActiveSession(next);
-    // re-fetch notifications for the new session
     setNotifications([]);
   };
+
+  /* ------------------------- UI -------------------------- */
 
   return (
     <header className="w-full sticky top-0 z-50">
       <div className="relative isolate z-50 backdrop-blur-md bg-white/85 border-b border-slate-200 shadow-sm overflow-visible">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="h-16 flex items-center gap-6">
+
+            {/* Logo */}
             <Link to="/" className="flex items-center gap-3 shrink-0">
               <Card className="p-1.5">
                 <Logo size={36} />
@@ -278,114 +224,50 @@ export default function Navbar() {
               </div>
             </Link>
 
+            {/* Main Nav */}
             <nav className="hidden md:flex items-center gap-5 ml-8">
               <NavLink to="/movies" className={navLinkClasses}>Movies</NavLink>
               <NavLink to="/theaters" className={navLinkClasses}>Theaters</NavLink>
               <NavLink to="/showtimes" className={navLinkClasses}>Showtimes</NavLink>
+
               {isLoggedIn && !anyAdmin && (
                 <NavLink to="/bookings" className={navLinkClasses}>My Bookings</NavLink>
               )}
             </nav>
 
             <div className="ml-auto flex items-center gap-3 relative">
-              {isLoggedIn && (
-                <div className="relative z-50" ref={notifRef}>
-                  <IconBtn
-                    aria-label="Notifications"
-                    title="Notifications"
-                    onClick={() => { setNotifOpen((v) => !v); setAdminMenu(false); }}
-                  >
-                    <Bell className="w-5 h-5" />
-                  </IconBtn>
 
-                  {unread > 0 && (
-                    <span className="absolute -top-1 -right-1 text-[10px] leading-none px-1.5 py-0.5 rounded-full border border-white bg-rose-600 text-white shadow-sm">
-                      {unread > 99 ? "99+" : unread}
-                    </span>
-                  )}
-
-                  {notifOpen && (
-                    <Card
-                      className="absolute right-0 mt-3 w-80 bg-white max-h-96 overflow-auto p-0 z-50"
-                      onClick={(e) => e.stopPropagation()}
-                      role="menu"
-                      aria-label="Notifications"
-                    >
-                      {notifications.length > 0 && (
-                        <div className="sticky top-0 bg-white border-b border-slate-200 p-2 text-right">
-                          <button
-                            className="text-[11px] px-2 py-1 rounded-full border border-slate-300 bg-white hover:bg-slate-50 font-semibold"
-                            onClick={async () => {
-                              try {
-                                await api.post("/notifications/read-all", {}, { headers: { Authorization: `Bearer ${tokenForApi}` } });
-                                setNotifications((prev) => prev.map((n) => ({ ...n, readAt: n.readAt || new Date().toISOString() })));
-                              } catch {}
-                            }}
-                          >
-                            Mark all as read
-                          </button>
-                        </div>
-                      )}
-
-                      {notifications.length === 0 ? (
-                        <div className="p-4 text-sm text-slate-600 text-center">No notifications yet.</div>
-                      ) : (
-                        <ul>
-                          {notifications.map((n) => {
-                            const to = resolveNotificationPath(n);
-                            return (
-                              <li key={toKey(n)}>
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setNotifOpen(false);
-                                    if (n.id && !n.readAt) markOneRead(n.id);
-                                    safeNavigate(navigate, to) || navigate(to, { state: { __forceNav: Date.now() } });
-                                  }}
-                                  className={cn(
-                                    "w-full text-left p-3 border-b border-slate-200 last:border-b-0",
-                                    "hover:bg-slate-50 focus:bg-slate-50 outline-none",
-                                    !n.readAt && "bg-yellow-50/70"
-                                  )}
-                                  title="Open notification"
-                                  role="menuitem"
-                                >
-                                  <div className="flex items-start gap-2">
-                                    {!n.readAt && <span className="mt-1 inline-block w-2 h-2 rounded-full" style={{ background: "currentColor" }} />}
-                                    <div className="flex-1">
-                                      <div className="text-sm font-extrabold text-slate-900">{n.title || "Notification"}</div>
-                                      <div className="text-xs text-slate-700 whitespace-pre-line">{n.message || ""}</div>
-                                      <div className="text-[10px] text-slate-500 mt-1">{new Date(n.createdAt || Date.now()).toLocaleString()}</div>
-                                    </div>
-                                  </div>
-                                </button>
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      )}
-                    </Card>
-                  )}
-                </div>
-              )}
-
-              {!isLoggedIn ? (
+              {/* Logged out header (Admin / Login / Register) */}
+              {!isLoggedIn && (
                 <>
-                  <button
-                    onClick={() => safeNavigate(navigate, "/admin/login")}
-                    className="text-sm font-semibold px-4 py-2 rounded-full border border-[#0071DC]/40 text-[#0071DC] hover:bg-[#E8F1FF]"
+                  {/* FIXED — using Link instead of unsafe button */}
+                  <Link
+                    to="/admin/login"
+                    className="text-sm font-semibold px-4 py-2 rounded-full border border-[#0071DC]/40 text-[#0071DC] hover:bg-[#E8F1FF] inline-flex items-center gap-2"
                   >
                     <Shield className="w-4 h-4 inline-block" /> Admin
-                  </button>
-                  <Link to="/login" className="text-sm font-semibold px-4 py-2 rounded-full border border-slate-300 text-slate-800 hover:bg-slate-50">Login</Link>
-                  <Link to="/register" className="text-sm font-semibold px-4 py-2 rounded-full bg-[#0071DC] text-white hover:bg-[#0654BA]">Register</Link>
-                </>
-              ) : null}
+                  </Link>
 
+                  <Link
+                    to="/login"
+                    className="text-sm font-semibold px-4 py-2 rounded-full border border-slate-300 text-slate-800 hover:bg-slate-50"
+                  >
+                    Login
+                  </Link>
+
+                  <Link
+                    to="/register"
+                    className="text-sm font-semibold px-4 py-2 rounded-full bg-[#0071DC] text-white hover:bg-[#0654BA]"
+                  >
+                    Register
+                  </Link>
+                </>
+              )}
+
+              {/* Logged in user controls */}
               {isLoggedIn && (
                 <div className="relative flex items-center gap-2">
-                  {/* session switcher pill (only show when both tokens exist) */}
+
                   {Boolean(adminToken && token) && (
                     <button
                       onClick={handleToggleSession}
@@ -396,6 +278,7 @@ export default function Navbar() {
                     </button>
                   )}
 
+                  {/* User menu */}
                   <div className="relative">
                     <button
                       onClick={() => setAdminMenu((v) => !v)}
@@ -408,30 +291,38 @@ export default function Navbar() {
 
                     {adminMenu && (
                       <Card className="absolute right-0 mt-2 w-64 p-1 bg-white z-50">
-                        <MenuItemLink to={profilePath} onClick={() => setAdminMenu(false)}>Profile</MenuItemLink>
 
-                        {!(isSuperAdmin || isAdmin || isTheatreAdmin) && (
-                          <MenuItemLink to="/bookings" onClick={() => setAdminMenu(false)}>My Bookings</MenuItemLink>
+                        <MenuItemLink to={profilePath} onClick={() => setAdminMenu(false)}>
+                          Profile
+                        </MenuItemLink>
+
+                        {!anyAdmin && (
+                          <MenuItemLink to="/bookings" onClick={() => setAdminMenu(false)}>
+                            My Bookings
+                          </MenuItemLink>
                         )}
 
                         {isSuperAdmin &&
                           SUPER_ADMIN_LINKS.map((item) => (
-                            <MenuItemLink key={item.to} to={item.to} onClick={() => setAdminMenu(false)}>{item.label}</MenuItemLink>
+                            <MenuItemLink key={item.to} to={item.to} onClick={() => setAdminMenu(false)}>
+                              {item.label}
+                            </MenuItemLink>
                           ))}
 
                         {isTheatreAdmin &&
                           THEATRE_ADMIN_LINKS.map((item) => (
-                            <MenuItemLink key={item.to} to={item.to} onClick={() => setAdminMenu(false)}>{item.label}</MenuItemLink>
+                            <MenuItemLink key={item.to} to={item.to} onClick={() => setAdminMenu(false)}>
+                              {item.label}
+                            </MenuItemLink>
                           ))}
 
                         <button
                           type="button"
                           onClick={async () => {
-                            try { await logout(); } catch (e) { console.error("[Navbar] logout failed:", e); }
+                            try { await logout(); } catch {}
                             finally {
                               setAdminMenu(false);
-                              setNotifOpen(false);
-                              safeNavigate(navigate, "/", { replace: true }) || navigate("/", { state: { __forceNav: Date.now() } });
+                              safeNavigate(navigate, "/", { replace: true });
                             }
                           }}
                           className="w-full text-left px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 rounded-xl font-semibold"
@@ -444,6 +335,7 @@ export default function Navbar() {
                 </div>
               )}
 
+              {/* Mobile menu button */}
               <IconBtn className="md:hidden" onClick={() => setOpen((v) => !v)}>
                 {open ? <X /> : <Menu />}
               </IconBtn>
@@ -451,8 +343,6 @@ export default function Navbar() {
           </div>
         </div>
       </div>
-
-      {location.pathname.startsWith("/admin") || location.pathname.startsWith("/theatre") ? <div className="h-0 md:h-0" /> : null}
     </header>
   );
 }
