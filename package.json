@@ -16,7 +16,7 @@
     "@stripe/react-stripe-js": "^2.9.0",
     "@stripe/stripe-js": "^1.54.2",
     "axios": "^1.6.0",
-    "event-source-polyfill": "^1.0.21",
+    "event-source-polyfill": "1.0.31",
     "framer-motion": "^12.23.24",
     "lucide-react": "^0.545.0",
     "qrcode": "^1.5.4",
