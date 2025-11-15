@@ -133,7 +133,7 @@ const SEND_ROLE_HEADER = String(import.meta.env?.VITE_SEND_ROLE_HEADER || "false
 
 /* ----------------------- Cookie-first / credentials flag ----------------- */
 // If VITE_COOKIE_AUTH=true then we enable withCredentials and prefer cookie-based refresh
-const COOKIE_AUTH = String(import.meta.env?.VITE_COOKIE_AUTH || "false").toLowerCase() === "true";
+const COOKIE_AUTH = String(import.meta.env.VITE_COOKIE_AUTH || "false").toLowerCase() === "true";
 
 /* ------------------------------ Axios instance --------------------------- */
 const api = axios.create({
