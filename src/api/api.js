@@ -12,7 +12,8 @@ function normalizeHost(h) {
 }
 export const BASE_URL = normalizeHost(RAW_BASE);
 const API_PREFIX = "/api";
-export const AXIOS_BASE = `${BASE_URL}${API_PREFIX}`;
+// Use origin-only for axios base so callers can include "/api/..." without duplication
+export const AXIOS_BASE = BASE_URL;
 
 // Heads-up for common typo in the backend hostname (o1m2 vs 0lm2)
 if (RAW_BASE.toLowerCase().includes("-0lm2.")) {
@@ -239,6 +240,22 @@ if (API_DEBUG) {
     }
   );
 }
+
+/* ----------------------- QUICK GUARD: strip accidental duplicate /api ----------------- */
+api.interceptors.request.use((cfg) => {
+  try {
+    if (cfg && typeof cfg.url === "string" && cfg.url.startsWith("/api/api/")) {
+      cfg.url = cfg.url.replace(/^\/api\/api\//, "/api/");
+    }
+    // also handle accidental leading double slashes like "//api/..."
+    if (cfg && typeof cfg.url === "string" && cfg.url.startsWith("//api/")) {
+      cfg.url = cfg.url.replace(/^\/+/, "/");
+    }
+  } catch (e) {
+    // swallow
+  }
+  return cfg;
+});
 
 /* ----------------------- Request interceptor (attach auth) --------------- */
 api.interceptors.request.use((config) => {
