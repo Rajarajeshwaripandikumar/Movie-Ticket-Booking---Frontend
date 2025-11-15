@@ -28,18 +28,7 @@ function normWanted(roles) {
 /* ------------------------------ Guard ------------------------------------ */
 /**
  * ProtectedRoute wrapper for React Router v6.
- *
- * Props:
- *  - roles: string | string[]  // required roles, optional
- *  - requireAuth: boolean      // whether auth is required (default true)
- *  - superOverrides: boolean   // SUPER_ADMIN bypass for admin routes (default true)
- *  - loginPath/adminLoginPath  // where to send unauthenticated users
- *  - adminHome/publicHome      // where to send unauthorized users
- *
- * Usage:
- * <Route element={<ProtectedRoute roles={['THEATRE_ADMIN']} />}>
- *   <Route path="/theatre/*" element={<TheatrePages />} />
- * </Route>
+ * (keeps same props you had)
  */
 export default function ProtectedRoute({
   children,
@@ -51,8 +40,21 @@ export default function ProtectedRoute({
   adminHome = "/admin",
   publicHome = "/",
 }) {
-  // prefer canonical flags from AuthContext
-  const { token, adminToken, role, roles: userRoles, isLoggedIn, initialized, loading } = useAuth();
+  // Prefer canonical flags from AuthContext
+  // NOTE: AuthContext should expose:
+  //   - isLoggedIn (boolean) -> true only after token/user validated
+  //   - loading (boolean) -> true while verifying/hydrating
+  //   - initialized (boolean|null|undefined) -> true once initial check done
+  const {
+    token,
+    adminToken,
+    role,
+    roles: userRoles,
+    isLoggedIn,
+    initialized,
+    loading,
+  } = useAuth();
+
   const location = useLocation();
 
   // normalize the requested roles
@@ -63,14 +65,26 @@ export default function ProtectedRoute({
     wanted.size > 0 &&
     Array.from(wanted).some((r) => /ADMIN|MANAGER|THEATRE|THEATER/.test(r || ""));
 
-  // If auth is still initializing, don't render anything (prevents flicker)
-  // AuthContext may expose `initialized` or `loading` — fall back to `false`.
-  const authInitializing = loading || (initialized === false);
+  /* ------------------ Initialization gating (make it conservative) ------------------
+   - We consider auth "still initializing" unless `initialized === true` OR
+     there is an explicit `loading` flag that is false and `isLoggedIn` is present.
+   - Treat undefined/null/false `initialized` as still initializing.
+   - This avoids making auth decisions based purely on token presence.
+  */
+  const authInitializing =
+    loading === true || typeof initialized === "undefined" || initialized === false;
 
-  if (authInitializing) return null;
+  // while initializing, render nothing (or a spinner) to avoid redirects
+  if (authInitializing) {
+    // You can replace null with a small spinner component if you want UI feedback.
+    return null;
+  }
 
-  // Active auth check: prefer isLoggedIn; fall back to token/adminToken
-  const authed = !!isLoggedIn || !!adminToken || !!token;
+  // Active auth check:
+  // Prefer a canonical isLoggedIn boolean (should be set only after validation).
+  // Falling back to tokens is a last resort — but we keep a defensive check.
+  const authed = !!isLoggedIn || (!!adminToken && adminToken !== "null") || (!!token && token !== "null");
+
   if (!authed) {
     // If auth is not required and no specific role is requested, allow public access
     if (!requireAuth && wanted.size === 0) return children ?? <Outlet />;
