@@ -1,5 +1,5 @@
 // src/pages/AdminTheaters.jsx — full updated (uses activeToken + safer API handling)
-// Updated: AbortController for loadTheaters, FormData uploads for create/update, revokeObjectURL cleanup
+// Patched: FormData Content-Type guard, safer tryGet params, file validation, duplicate-submit guards
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import api, { API_DEBUG } from "../api/api";
@@ -36,9 +36,7 @@ function Field({ as = "input", icon: Icon, className = "", label, children, ...p
   return (
     <div>
       {label && (
-        <label className="block text-[12px] font-semibold text-slate-600 mb-1">
-          {label}
-        </label>
+        <label className="block text-[12px] font-semibold text-slate-600 mb-1">{label}</label>
       )}
       <div className="flex items-center gap-2 border border-slate-300 rounded-xl bg-white px-3 py-2 focus-within:ring-2 focus-within:ring-[#0071DC]">
         {Icon && <Icon className="h-4 w-4 text-slate-700" />}
@@ -106,6 +104,13 @@ const ROLE = {
   USER: "USER",
 };
 
+/* small helper: return auth headers */
+function getAuthHeaders(token) {
+  const headers = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return headers;
+}
+
 /* ========================================================================= */
 
 export default function AdminTheaters() {
@@ -113,7 +118,7 @@ export default function AdminTheaters() {
   const { activeToken, user, isSuperAdmin: ctxIsSuper, initialized } = useAuth() || {};
   const isSuperAdmin =
     ctxIsSuper ||
-    (user && (user.role === ROLE.SUPER_ADMIN || user?.data?.role === ROLE.SUPER_ADMIN));
+    (user && (user.role === ROLE.SUPER_ADMIN || user?.data?.role === ROLE.SUPER_ADMIN || (Array.isArray(user.roles) && user.roles.includes(ROLE.SUPER_ADMIN))));
 
   const [theaters, setTheaters] = useState([]);
   const [listLoading, setListLoading] = useState(false);
@@ -157,12 +162,14 @@ export default function AdminTheaters() {
 
   /* tryGet supports `signal` and includes token header when available */
   async function tryGet(path, opts = {}, signal = undefined) {
-    const headers = opts.headers || {};
+    const headersFromOpts = opts.headers || {};
+    const headers = { ...headersFromOpts };
     if (activeToken) headers.Authorization = `Bearer ${activeToken}`;
-    const params = { ...opts, headers };
-    if (signal) params.signal = signal;
+    const requestOpts = { headers };
+    if (opts.params) requestOpts.params = opts.params;
+    if (signal) requestOpts.signal = signal;
     // api.getFresh expected to return various shapes, normalize in caller
-    return api.getFresh(path, params);
+    return api.getFresh(path, requestOpts);
   }
 
   /* ----------------------------- loadTheaters ----------------------------- */
@@ -308,6 +315,18 @@ export default function AdminTheaters() {
     const f = e.target.files?.[0];
     if (!f) return;
 
+    // Basic validation
+    if (f.size > 8 * 1024 * 1024) {
+      setMsg("Max image size 8MB");
+      setMsgType("error");
+      return;
+    }
+    if (!["image/jpeg", "image/png", "image/webp"].includes(f.type)) {
+      setMsg("Only JPG/PNG/WEBP allowed");
+      setMsgType("error");
+      return;
+    }
+
     // revoke previous blob URL if any
     if (preview && preview.startsWith("blob:")) {
       try {
@@ -335,14 +354,18 @@ export default function AdminTheaters() {
       return;
     }
 
+    if (loading) return; // guard double submit
     setLoading(true);
+
     try {
       const path = theaterBase || "/theaters";
-      const headers = {};
-      if (activeToken) headers.Authorization = `Bearer ${activeToken}`;
+      const headers = getAuthHeaders(activeToken);
 
       let res;
       if (pickedFile) {
+        // ensure axios will let browser set multipart boundary
+        try { if (api?.defaults?.headers?.post) delete api.defaults.headers.post["Content-Type"]; } catch {}
+
         const fd = new FormData();
         fd.append("name", name);
         fd.append("city", city);
@@ -380,14 +403,16 @@ export default function AdminTheaters() {
       return;
     }
 
+    if (loading) return;
     setLoading(true);
     try {
       const base = theaterBase || "/theaters";
-      const headers = {};
-      if (activeToken) headers.Authorization = `Bearer ${activeToken}`;
+      const headers = getAuthHeaders(activeToken);
 
       let res;
       if (pickedFile) {
+        try { if (api?.defaults?.headers?.post) delete api.defaults.headers.post["Content-Type"]; } catch {}
+
         const fd = new FormData();
         fd.append("name", name);
         fd.append("city", city);
@@ -426,8 +451,7 @@ export default function AdminTheaters() {
 
     try {
       const base = theaterBase || "/theaters";
-      const headers = {};
-      if (activeToken) headers.Authorization = `Bearer ${activeToken}`;
+      const headers = getAuthHeaders(activeToken);
 
       await api.delete(`${base}/${id}`, { headers });
       setTheaters((t) => t.filter((x) => x._id !== id));
@@ -586,9 +610,7 @@ export default function AdminTheaters() {
                 icon={Home}
               />
 
-              <label className="block text-xs font-semibold text-slate-600">
-                Amenities
-              </label>
+              <label className="block text-xs font-semibold text-slate-600">Amenities</label>
               <div className="flex flex-wrap gap-2">
                 {amenitiesList.map((a) => (
                   <span
