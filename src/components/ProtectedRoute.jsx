@@ -26,6 +26,21 @@ function normWanted(roles) {
 }
 
 /* ------------------------------ Guard ------------------------------------ */
+/**
+ * ProtectedRoute wrapper for React Router v6.
+ *
+ * Props:
+ *  - roles: string | string[]  // required roles, optional
+ *  - requireAuth: boolean      // whether auth is required (default true)
+ *  - superOverrides: boolean   // SUPER_ADMIN bypass for admin routes (default true)
+ *  - loginPath/adminLoginPath  // where to send unauthenticated users
+ *  - adminHome/publicHome      // where to send unauthorized users
+ *
+ * Usage:
+ * <Route element={<ProtectedRoute roles={['THEATRE_ADMIN']} />}>
+ *   <Route path="/theatre/*" element={<TheatrePages />} />
+ * </Route>
+ */
 export default function ProtectedRoute({
   children,
   roles, // string | string[]
@@ -36,24 +51,31 @@ export default function ProtectedRoute({
   adminHome = "/admin",
   publicHome = "/",
 }) {
-  // NOTE: your AuthContext exposes token, adminToken, isLoggedIn, role, roles
-  const { token, adminToken, role, roles: userRoles, isLoggedIn } = useAuth();
+  // prefer canonical flags from AuthContext
+  const { token, adminToken, role, roles: userRoles, isLoggedIn, initialized, loading } = useAuth();
   const location = useLocation();
 
+  // normalize the requested roles
   const wanted = useMemo(() => normWanted(roles), [roles]);
+
+  // guess whether requested roles are admin-like (used for choosing login target)
   const wantsAdmin =
     wanted.size > 0 &&
     Array.from(wanted).some((r) => /ADMIN|MANAGER|THEATRE|THEATER/.test(r || ""));
 
-  // If your context has a loading flag in future, use it. For now assume ready.
-  const loading = false;
+  // If auth is still initializing, don't render anything (prevents flicker)
+  // AuthContext may expose `initialized` or `loading` — fall back to `false`.
+  const authInitializing = loading || (initialized === false);
 
-  if (loading) return null;
+  if (authInitializing) return null;
 
-  // Active auth check: consider adminToken OR token OR context flag
+  // Active auth check: prefer isLoggedIn; fall back to token/adminToken
   const authed = !!isLoggedIn || !!adminToken || !!token;
   if (!authed) {
+    // If auth is not required and no specific role is requested, allow public access
     if (!requireAuth && wanted.size === 0) return children ?? <Outlet />;
+
+    // Redirect to login and preserve `from` so the login page can redirect back
     return (
       <Navigate
         to={wantsAdmin ? adminLoginPath : loginPath}
@@ -63,15 +85,21 @@ export default function ProtectedRoute({
     );
   }
 
-  // Normalize user roles (prefer userRoles array then role scalar)
-  const haveList =
-    Array.isArray(userRoles) && userRoles.length > 0 ? userRoles : role ? [role] : [];
-  const have = useMemo(() => new Set(haveList.map(normRole).filter(Boolean)), [haveList]);
+  // Build a normalized set of user roles from context values
+  const have = useMemo(() => {
+    const list =
+      Array.isArray(userRoles) && userRoles.length > 0
+        ? userRoles
+        : role
+        ? [role]
+        : [];
+    return new Set(list.map(normRole).filter(Boolean));
+  }, [role, userRoles]);
 
-  // No role required -> allow
+  // If no specific role required, allow access
   if (wanted.size === 0) return children ?? <Outlet />;
 
-  // SUPER_ADMIN override for admin routes
+  // SUPER_ADMIN override: allow SUPER_ADMIN access to admin-like areas
   if (superOverrides && have.has("SUPER_ADMIN")) {
     if (wantsAdmin) return children ?? <Outlet />;
   }
@@ -80,7 +108,7 @@ export default function ProtectedRoute({
   const canAccess = Array.from(wanted).some((w) => have.has(w));
   if (canAccess) return children ?? <Outlet />;
 
-  // Deny: sensible fallback route
+  // Deny: redirect user to sensible home based on their roles
   const isSomeAdmin = Array.from(have).some((r) => /ADMIN|THEAT(RE|ER)/.test(r));
   return <Navigate to={isSomeAdmin ? adminHome : publicHome} replace />;
 }
