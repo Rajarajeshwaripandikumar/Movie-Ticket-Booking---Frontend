@@ -292,15 +292,22 @@ export function AuthProvider({ children }) {
     setTimeout(() => window.location.replace(defaultLandingFor(finalRole)), 0);
   }, []);
 
-  /* Login (ADMIN) */
+  /* Login (ADMIN) — updated to return finalUser for deterministic frontend usage */
   const loginAdmin = useCallback(async (email, password) => {
     // try couple common admin login endpoints
     let res;
     try {
       res = await api.post("/auth/admin/login", { email, password });
-    } catch (err) {
-      res = await api.post("/auth/admin-login", { email, password });
+    } catch (err1) {
+      try {
+        res = await api.post("/auth/admin-login", { email, password });
+      } catch (err2) {
+        const e = err2 || err1;
+        if (e?.response) throw e;
+        throw new Error("Admin login failed");
+      }
     }
+
     const data = res?.data || {};
     const t = data?.adminToken || data?.token || null;
     const claims = decodeJwt(t) || (data?.user?.token ? decodeJwt(data.user.token) : null);
@@ -316,12 +323,17 @@ export function AuthProvider({ children }) {
     };
 
     if (t) {
+      // persist token & set axios header
       primeAuth(t, finalRole);
       setAdminToken(t);
       // optional: clear user token to avoid ambiguity
       setToken(null);
+      try {
+        localStorage.setItem(LS_KEYS.adminToken, t);
+        localStorage.setItem(LS_KEYS.role, finalRole);
+      } catch {}
     } else if (COOKIE_AUTH) {
-      // cookie-based: hydrate admin profile
+      // cookie-based: hydrate admin profile via /admin/me
       try {
         const me = await api.get("/admin/me");
         const u = me?.data?.user || me?.data || me;
@@ -330,24 +342,30 @@ export function AuthProvider({ children }) {
         setRole(r);
         setRoles([r]);
       } catch {
-        // ignore
+        // ignore if cookie not set or invalid
       }
     }
 
+    // Set context state
     setActiveSession("admin");
     setRole(finalRole);
     setRoles([finalRole]);
     setPerms(finalUser.perms);
     setUser(finalUser);
 
-    if (t) {
-      localStorage.setItem(LS_KEYS.adminToken, t);
-      localStorage.setItem(LS_KEYS.role, finalRole);
-    }
-    writeJSON(LS_KEYS.user, finalUser);
+    // persist user
+    try {
+      writeJSON(LS_KEYS.user, finalUser);
+    } catch {}
 
+    // mark initialized and redirect (keeps existing behaviour)
     setInitialized(true);
-    setTimeout(() => window.location.replace(defaultLandingFor(finalRole)), 0);
+    try {
+      setTimeout(() => window.location.replace(defaultLandingFor(finalRole)), 0);
+    } catch {}
+
+    // Return finalUser so callers (AdminLogin) can deterministically read role/theatreId
+    return finalUser;
   }, []);
 
   /* Logout */
