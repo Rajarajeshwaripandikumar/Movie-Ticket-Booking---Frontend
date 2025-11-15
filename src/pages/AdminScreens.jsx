@@ -1,4 +1,4 @@
-// src/pages/AdminScreens.jsx — Manage Screens (diagnostics & view-seats removed)
+// src/pages/AdminScreens.jsx — Manage Screens (clean, no diagnostics or view-seats)
 import { useEffect, useMemo, useState } from "react";
 import api, { getAuthFromStorage } from "../api/api";
 import { useAuth } from "../context/AuthContext";
@@ -115,23 +115,13 @@ async function fetchScreensForTheater(theaterId) {
     try {
       const res = await api.get(path, { params: { _ts: Date.now() } });
       const arr = extractScreenArray(res?.data);
-      console.debug(`[AdminScreens] tried ${path} -> status=${res.status} items=${Array.isArray(arr) ? arr.length : "no-array"}`);
       if (Array.isArray(arr)) return arr.map(normalizeScreen);
     } catch (err) {
       lastErr = err;
-      const st = err?.response?.status ?? "NO_STATUS";
-      console.warn(`[AdminScreens] ${path} failed:`, st, err?.response?.data ?? err.message ?? err);
     }
   }
   throw lastErr || new Error("Failed to fetch screens");
 }
-
-/* Canonical role mapper (simple) */
-const canonRole = (r = "") => {
-  let v = String(r).toUpperCase().replace("ROLE_", "").trim();
-  const map = { SUPERADMIN: "SUPER_ADMIN", THEATER_ADMIN: "THEATRE_ADMIN" };
-  return map[v] || v;
-};
 
 /* ------------------------------- page ------------------------------- */
 export default function AdminScreens() {
@@ -143,15 +133,26 @@ export default function AdminScreens() {
   const isLoggedIn = !!(auth.isLoggedIn || token);
 
   const rawRoles = auth.roles || auth.user?.roles || (auth.role ? [auth.role] : []);
-  const roles = useMemo(() => (Array.isArray(rawRoles) ? rawRoles.map(canonRole) : []), [rawRoles]);
+  const roles = useMemo(() => (Array.isArray(rawRoles) ? rawRoles : []), [rawRoles]);
   const isAdminLike = roles.some((r) => ["SUPER_ADMIN", "ADMIN", "THEATRE_ADMIN"].includes(r));
 
-  console.debug("[AdminScreens] auth summary:", {
-    tokenPresent: !!token,
-    tokenExcerpt: token ? (token.slice ? token.slice(0, 8) + "..." : "(token)") : null,
-    roles,
-    initialized: auth.initialized,
-  });
+  // If the auth context hasn't hydrated quickly enough, force axios to use storage token on mount.
+  useEffect(() => {
+    try {
+      // hydrate api token from localStorage/session storage to ensure requests include it immediately
+      const stored = getAuthFromStorage?.() || {};
+      const storedToken = stored?.token || localStorage.getItem("adminToken") || localStorage.getItem("token");
+      if (storedToken && api && typeof api.setAuthToken === "function") {
+        api.setAuthToken(storedToken);
+        // small console cue to confirm hydration
+        console.debug("[AdminScreens] forced api.setAuthToken from storage (partial preview):", storedToken?.slice?.(0, 8) ? `${storedToken.slice(0, 8)}...` : "(token)");
+      }
+    } catch (e) {
+      // ignore
+    }
+    // only run once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (loading) return null;
   if (!token || !isLoggedIn) return <Navigate to="/admin/login" replace />;
@@ -184,7 +185,6 @@ export default function AdminScreens() {
   async function refreshTheaters() {
     try {
       setMsg("");
-      // prefer admin endpoints
       const candidates = [
         "/admin/theaters",
         "/admin/theatres",
@@ -193,52 +193,36 @@ export default function AdminScreens() {
       ];
 
       // read token at call-time (prefers admin token if present)
-      const authToken = token || (auth && (auth.adminToken || auth.token)) || "";
+      const stored = getAuthFromStorage?.() || {};
+      const authToken = token || stored?.token || localStorage.getItem("adminToken") || localStorage.getItem("token") || "";
 
       let gotAnyArray = false;
       let lastErr = null;
-      // try endpoints in-order, log every response
       for (const p of candidates) {
         try {
-          console.debug("[AdminScreens][refresh] trying", p);
-          const { data, status } = await api.get(p, {
+          const resp = await api.get(p, {
             params: { _ts: Date.now() },
             headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
           });
 
-          console.debug(
-            "[AdminScreens][refresh] response from",
-            p,
-            "status=",
-            status,
-            "dataPreview=",
-            (() => {
-              try {
-                return JSON.stringify(data).slice(0, 500);
-              } catch (e) {
-                return String(data).slice(0, 500);
-              }
-            })()
-          );
+          // detect non-json / HTML login page responses
+          const preview = typeof resp.data === "string" ? resp.data.slice(0, 400) : JSON.stringify(resp.data || {}).slice(0, 400);
+          if (typeof resp.data === "string" && (preview.trim().startsWith("<") || /<html|<body|login|sign in|signin|please login/i.test(preview))) {
+            console.warn("[AdminScreens] Received likely HTML/login page instead of JSON for", p, "preview:", preview);
+          } else {
+            console.debug("[AdminScreens] response preview:", preview);
+          }
 
-          const arr = extractTheaterArray(data);
-          // if the endpoint returned an array (even empty) we accept it and set theaters
+          const arr = extractTheaterArray(resp?.data);
           if (Array.isArray(arr)) {
             setTheaters(arr);
             gotAnyArray = true;
-            // if we got a non-empty array we can stop early
             if (arr.length > 0) return;
-            // otherwise keep trying other endpoints in case some endpoints return populated lists
+            // otherwise continue trying other endpoints
           }
         } catch (e) {
           lastErr = e;
-          console.debug(
-            "[AdminScreens][refresh] endpoint failed",
-            p,
-            e?.response?.status ?? "NO_STATUS",
-            e?.response?.data ?? e?.message ?? e
-          );
-          // surface auth errors quickly
+          console.debug("[AdminScreens][refresh] endpoint failed", p, e?.response?.status ?? "NO_STATUS", e?.response?.data ?? e?.message ?? e);
           if (e?.response?.status === 401 || e?.response?.status === 403) {
             setMsg("Auth problem while loading theaters; ensure admin token is present.");
             setMsgType("error");
@@ -247,16 +231,11 @@ export default function AdminScreens() {
         }
       }
 
-      // If we reached here we tried all candidates.
       if (!gotAnyArray) {
         setMsg("Could not refresh theaters from backend.");
         setMsgType("error");
-        console.debug(
-          "[AdminScreens][refresh] no endpoint returned an array. lastErr:",
-          lastErr?.response?.data ?? lastErr?.message ?? lastErr
-        );
+        console.debug("[AdminScreens][refresh] no endpoint returned an array. lastErr:", lastErr?.response?.data ?? lastErr?.message ?? lastErr);
       } else {
-        // we got at least one array (possibly empty) — ensure message cleared
         setMsg("");
         setMsgType("info");
       }
@@ -267,11 +246,9 @@ export default function AdminScreens() {
     }
   }
 
-  /* Load all theaters on mount (use improved refreshTheaters) */
+  /* Load all theaters on mount */
   useEffect(() => {
-    (async () => {
-      await refreshTheaters();
-    })();
+    refreshTheaters();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -328,8 +305,7 @@ export default function AdminScreens() {
       return;
     }
 
-    const r = Number(rows),
-      c = Number(cols);
+    const r = Number(rows), c = Number(cols);
     if (!Number.isFinite(r) || !Number.isFinite(c) || r <= 0 || c <= 0) {
       setMsg("Rows/Columns must be positive.");
       setMsgType("error");
@@ -341,11 +317,10 @@ export default function AdminScreens() {
 
     try {
       if (selectedScreen === NEW) {
-        // prefer admin endpoint
         const candidates = [
           `/admin/theaters/${selectedTheater}/screens`,
           `/admin/theatres/${selectedTheater}/screens`,
-          `/theaters/${selectedTheater}/screens`, // last-resort scoped public
+          `/theaters/${selectedTheater}/screens`,
         ];
         let ok = false;
         for (const p of candidates) {
@@ -627,7 +602,6 @@ export default function AdminScreens() {
                                 <button
                                   className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border bg-white"
                                   onClick={() => {
-                                    // quick actions per-screen: select
                                     setSelectedTheater(t._id || t.id);
                                     setSelectedScreen(s._id || s.id);
                                   }}
