@@ -48,7 +48,13 @@ const fmtINR = (n) =>
     ? new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n)
     : "";
 
-const dateTime = (s) => new Date(s).toLocaleString("en-IN");
+const dateTime = (s) => {
+  try {
+    return new Date(s).toLocaleString("en-IN");
+  } catch {
+    return String(s || "");
+  }
+};
 
 /* -------------------------------- Page -------------------------------- */
 export default function AdminPricing() {
@@ -59,35 +65,52 @@ export default function AdminPricing() {
   const [msg, setMsg] = useState("");
   const [msgType, setMsgType] = useState("info");
   const [loading, setLoading] = useState(false);
+  const [loadingShowtimes, setLoadingShowtimes] = useState(false);
 
-  const selectedShow = useMemo(
-    () => showtimes.find((s) => s._id === selectedId),
-    [showtimes, selectedId]
-  );
+  const selectedShow = useMemo(() => showtimes.find((s) => s._id === selectedId), [showtimes, selectedId]);
 
   useEffect(() => {
     if (token) loadShowtimes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   async function loadShowtimes() {
+    setLoadingShowtimes(true);
+    setMsg("");
     try {
-      const { data } = await api.get("/admin/showtimes");
-      setShowtimes(Array.isArray(data) ? data : []);
-      if (data?.length) {
-        setSelectedId(data[0]._id);
-        setBasePrice(String(data[0].basePrice));
+      // Prefer admin endpoint; backend may return { data: [...] } or array
+      const res = await api.get("/admin/showtimes");
+      const data = res?.data ?? res;
+      const list = Array.isArray(data) ? data : data?.data ?? data?.showtimes ?? [];
+      setShowtimes(Array.isArray(list) ? list : []);
+      if (Array.isArray(list) && list.length) {
+        const first = list[0];
+        setSelectedId(first._id ?? first.id ?? "");
+        setBasePrice(String(first?.basePrice ?? ""));
+      } else {
+        setSelectedId("");
+        setBasePrice("");
       }
       setMsg("");
     } catch (err) {
-      console.error(err);
+      console.error("[AdminPricing] loadShowtimes failed:", err);
       setMsgType("error");
-      setMsg("Failed to load showtimes.");
+      setMsg(err?.response?.data?.message || "Failed to load showtimes.");
+      setShowtimes([]);
+      setSelectedId("");
+      setBasePrice("");
+    } finally {
+      setLoadingShowtimes(false);
     }
   }
 
   async function updatePricing(e) {
     e.preventDefault();
-    if (!selectedId) return;
+    if (!selectedId) {
+      setMsgType("error");
+      setMsg("Please select a showtime.");
+      return;
+    }
 
     const price = Number(basePrice);
     if (Number.isNaN(price) || price < 1) {
@@ -105,7 +128,7 @@ export default function AdminPricing() {
       setMsg("Pricing updated successfully!");
       await loadShowtimes(); // refresh dropdown values
     } catch (err) {
-      console.error(err);
+      console.error("[AdminPricing] updatePricing failed:", err);
       setMsgType("error");
       setMsg(err?.response?.data?.message || "Failed to update pricing.");
     } finally {
@@ -135,25 +158,26 @@ export default function AdminPricing() {
                   value={selectedId}
                   onChange={(e) => {
                     setSelectedId(e.target.value);
-                    const s = showtimes.find((x) => x._id === e.target.value);
+                    const s = showtimes.find((x) => (x._id ?? x.id) === e.target.value);
                     setBasePrice(s?.basePrice ?? "");
                   }}
                 >
-                  <option value="">-- Select --</option>
+                  <option value="">{loadingShowtimes ? "Loading showtimes…" : "-- Select --"}</option>
                   {showtimes.map((s) => (
-                    <option key={s._id} value={s._id}>
-                      {s.movie?.title} — {s.city} — {dateTime(s.startTime)} — {fmtINR(s.basePrice)}
+                    <option key={s._id ?? s.id} value={s._id ?? s.id}>
+                      {(s.movie?.title || s.movie?.name || "Untitled") + " — " + (s.city || s.location || "—") + " — " + dateTime(s.startTime) + " — " + fmtINR(Number(s.basePrice ?? 0))}
                     </option>
                   ))}
                 </Field>
-                <SecondaryBtn type="button" onClick={loadShowtimes}>
+
+                <SecondaryBtn type="button" onClick={loadShowtimes} disabled={loadingShowtimes}>
                   <RefreshCcw className="h-4 w-4" /> Refresh
                 </SecondaryBtn>
               </div>
 
               {selectedShow && (
                 <p className="mt-2 text-xs text-slate-600 flex items-center gap-2">
-                  <CalendarClock className="h-4 w-4" /> {selectedShow.movie?.title} • {dateTime(selectedShow.startTime)}
+                  <CalendarClock className="h-4 w-4" /> {selectedShow.movie?.title || "—"} • {dateTime(selectedShow.startTime)}
                 </p>
               )}
             </div>
@@ -165,17 +189,19 @@ export default function AdminPricing() {
                 <span className="inline-grid place-items-center h-10 w-10 border border-slate-300 rounded-xl bg-slate-50">
                   <CircleDollarSign className="h-5 w-5 text-slate-700" />
                 </span>
-                <Field type="number" min={1} step="1" value={basePrice} onChange={(e) => setBasePrice(e.target.value)} />
+                <Field
+                  type="number"
+                  min={1}
+                  step="1"
+                  value={basePrice}
+                  onChange={(e) => setBasePrice(e.target.value)}
+                />
               </div>
             </div>
 
             {/* Message */}
             {msg && (
-              <Card className={`p-3 font-semibold ${
-                msgType === "success"
-                  ? "bg-emerald-50 border-emerald-200 text-emerald-700"
-                  : "bg-rose-50 border-rose-200 text-rose-700"
-              }`}>
+              <Card className={`p-3 font-semibold ${msgType === "success" ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-rose-50 border-rose-200 text-rose-700"}`}>
                 {msg}
               </Card>
             )}
@@ -184,7 +210,11 @@ export default function AdminPricing() {
               <PrimaryBtn type="submit" disabled={loading || !selectedId} className="flex-1">
                 {loading ? "Updating…" : "Save Pricing"}
               </PrimaryBtn>
-              <SecondaryBtn type="button" onClick={() => setBasePrice(selectedShow?.basePrice ?? "")}>
+              <SecondaryBtn
+                type="button"
+                onClick={() => setBasePrice(selectedShow?.basePrice ?? "")}
+                disabled={!selectedShow}
+              >
                 Reset
               </SecondaryBtn>
             </div>
