@@ -216,25 +216,12 @@ export default function AdminScreens() {
     }
   }, [isTheatreAdmin, theatreIdFromJWT, selectedTheater]);
 
-  /* Load all theaters (fallbacks) */
+  /* Load all theaters (admin-only: force admin endpoint) */
   useEffect(() => {
     (async () => {
       try {
-        // Try the explicit admin endpoint first (preferential).
-        // Use /api/admin/theaters to match your backend's mount.
-        // Also include an absolute URL to your deployed backend as a last-resort debug fallback.
-        const candidates = [
-          "/api/admin/theaters",
-          "/admin/theaters",
-          "/api/admin/theatres",
-          "/admin/theatres",
-          "/api/theaters",
-          "/theaters",
-          "/api/theaters/mine",
-          "/theaters/mine",
-          // Absolute fallback (only for diagnostics) - adjust if you have another backend URL
-          "https://movie-ticket-booking-backend-o1m2.onrender.com/api/admin/theaters",
-        ];
+        // Force admin endpoint only — ensures SUPER_ADMIN receives full list.
+        const candidates = ["/api/admin/theaters"];
         let list = [];
         let lastErr = null;
         for (const p of candidates) {
