@@ -80,12 +80,11 @@ export default function AdminLogin() {
 
     setBusy(true);
     try {
-      // await the login call — if it resolves but returns undefined,
-      // we'll fall back to reading localStorage / AuthContext state.
-      const returned = await loginAdmin(email, password);
+      // Attempt admin login. Updated loginAdmin returns the final user object.
+      const returnedUser = await loginAdmin(email, password);
 
-      // Debugging logs — inspect these in the browser console
-      console.debug("[AdminLogin] loginAdmin returned:", returned);
+      // Debugging logs — inspect these in the browser console if something goes wrong
+      console.debug("[AdminLogin] loginAdmin returned user:", returnedUser);
       console.debug("[AdminLogin] localStorage.token:", localStorage.getItem("token"));
       console.debug("[AdminLogin] localStorage.adminToken:", localStorage.getItem("adminToken"));
       console.debug("[AdminLogin] localStorage.user:", localStorage.getItem("user"));
@@ -93,33 +92,32 @@ export default function AdminLogin() {
       // prefer redirect target from router state (user attempted to access protected route)
       const fromPath = location.state?.from?.pathname;
 
-      // Try to derive role & theatreId from returned value first, else from localStorage
-      const userFromReturn = returned || (localStorage.getItem("user") && JSON.parse(localStorage.getItem("user")));
-      const roleRaw = userFromReturn?.role ?? userFromReturn?.roles?.[0] ?? "";
-      const role = String(roleRaw || "").toUpperCase();
-      const theatreId = userFromReturn?.theatreId ?? userFromReturn?.theaterId ?? null;
+      // Determine role and theatreId from returnedUser (preferred) or fallback to localStorage
+      const userObj =
+        returnedUser ||
+        (localStorage.getItem("user") ? JSON.parse(localStorage.getItem("user")) : null) ||
+        null;
 
-      // canonical admin landing page — use /admin/screens so it matches AdminIndex logic
+      const roleRaw = userObj?.role ?? (userObj?.roles ? userObj.roles[0] : null) ?? "";
+      const role = String(roleRaw || "").toUpperCase();
+      const theatreId = userObj?.theatreId ?? userObj?.theaterId ?? null;
+
+      // canonical admin landing page
       const canonicalAdminLanding = "/admin/screens";
 
       // decide fallback:
       // 1) if router state has a 'from', prefer it
       // 2) else if super admin / admin -> canonicalAdminLanding
-      // 3) else if theatre admin and we know a theater id -> use theatre-specific page (optional)
+      // 3) else if theatre admin and we know a theater id -> use theatre-specific page
       // 4) else -> homepage
       let fallback = "/";
       if (fromPath) fallback = fromPath;
       else if (role === "SUPER_ADMIN" || role === "ADMIN") fallback = canonicalAdminLanding;
       else if (role === "THEATRE_ADMIN") fallback = theatreId ? `/theatre/view/${theatreId}` : "/theatre/my";
 
-      // small timeout to allow AuthContext to finish any internal redirect first
-      // but guard with safeNavigate to avoid repeated same-path navigation
-      setTimeout(() => {
-        // debug which path we will navigate to
-        console.debug("[AdminLogin] Performing fallback navigate to:", fallback, "current:", window.location.pathname);
-        safeNavigate(navigate, fallback, { replace: true });
-      }, 120);
-
+      // perform deterministic navigation immediately (no race with AuthContext)
+      console.debug("[AdminLogin] Navigating to:", fallback, "role:", role, "theatreId:", theatreId);
+      safeNavigate(navigate, fallback, { replace: true });
     } catch (err) {
       const msg = err?.response?.data?.message || err?.message || "Login failed";
       console.error("[AdminLogin] login failed:", err);
