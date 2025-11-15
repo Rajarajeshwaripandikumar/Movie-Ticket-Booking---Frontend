@@ -1,4 +1,4 @@
-// src/api/api.js — updated (refresh-token, cookie-first option, retries, helpers)
+// src/api/api.js — full updated (includes DEV debug interceptors + startup hydration preview)
 import axios from "axios";
 
 /* -------------------------------- BASE URL -------------------------------- */
@@ -191,6 +191,54 @@ api.interceptors.request.use((config) => {
   } catch {}
   return config;
 });
+
+/* ----------------- DEV DEBUG INTERCEPTORS (added) ----------------- */
+if (API_DEBUG) {
+  api.interceptors.request.use((cfg) => {
+    try {
+      console.debug("[api:DEBUG] OUTGOING", {
+        method: String(cfg.method || "get").toLowerCase(),
+        url: cfg.baseURL ? `${cfg.baseURL}${cfg.url || ""}` : cfg.url,
+        headers: { ...(cfg.headers || {}) },
+        withCredentials: cfg.withCredentials,
+        params: cfg.params,
+      });
+    } catch (e) {}
+    return cfg;
+  });
+
+  api.interceptors.response.use(
+    (res) => {
+      try {
+        console.debug("[api:DEBUG] RESPONSE", {
+          url: res.config?.url,
+          status: res.status,
+          headers: res.headers,
+          dataPreview:
+            typeof res.data === "object"
+              ? JSON.stringify(res.data).slice(0, 300)
+              : String(res.data).slice(0, 300),
+        });
+      } catch (e) {}
+      return res;
+    },
+    (err) => {
+      try {
+        console.debug("[api:DEBUG] RESPONSE ERROR", {
+          url: err?.config?.url,
+          status: err?.response?.status,
+          respHeaders: err?.response?.headers,
+          respDataPreview:
+            err?.response?.data && typeof err.response.data === "object"
+              ? JSON.stringify(err.response.data).slice(0, 300)
+              : String(err?.response?.data).slice(0, 300),
+          message: err?.message,
+        });
+      } catch (e) {}
+      return Promise.reject(err);
+    }
+  );
+}
 
 /* ----------------------- Request interceptor (attach auth) --------------- */
 api.interceptors.request.use((config) => {
@@ -463,11 +511,18 @@ export function primeAuth(token, role) {
   }
 }
 
-/* ------------------------- Startup hydration (NEW) ------------------------ */
+/* ------------------------- Startup hydration (NEW + debug preview) ------------------------ */
 (() => {
   try {
     const { token } = getAuthFromStorage();
-    if (token) api.setAuthToken(token);
+    if (token) {
+      api.setAuthToken(token);
+      if (API_DEBUG) {
+        try {
+          console.debug("[api] startup hydration set token preview:", token?.slice?.(0, 40) + "...");
+        } catch {}
+      }
+    }
   } catch {}
 })();
 
@@ -482,4 +537,3 @@ api.getFresh = async (url, cfg = {}) => {
 
 export default api;
 export { canonRole, getAuthFromStorage, COOKIE_AUTH, API_DEBUG };
-
