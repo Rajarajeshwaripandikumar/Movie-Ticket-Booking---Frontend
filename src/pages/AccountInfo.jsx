@@ -1,8 +1,8 @@
 // src/pages/AccountInfo.jsx — Walmart / District Style (clean, rounded, blue accents)
 import React, { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import api from "../api/api";
-import useNotifications from "../hooks/useNotifications";
+import api, { makeAbsoluteImageUrl } from "../api/api";
+// removed useNotifications import because your hook returns controls not notify()
 
 /* --------------------------- Walmart primitives --------------------------- */
 const Card = ({ children, className = "", as: Tag = "div", ...rest }) => (
@@ -82,10 +82,18 @@ const initials = (name) =>
     .slice(0, 2)
     .join("") || "U").toUpperCase();
 
+/* Simple toast/emitter for local notifications (replace with your toast system) */
+function emitToast(message, level = "info") {
+  try {
+    window.dispatchEvent(new CustomEvent("app:toast", { detail: { message, level } }));
+  } catch {}
+}
+
 /* ------------------------------ Component ------------------------------ */
 export default function AccountInfo() {
   const { user, setUser, refreshProfile, logout } = useAuth() || {};
-  const { notify } = useNotifications() || { notify: () => {} };
+  // don't call useNotifications() here — it returns controls (close/reconnect/etc.)
+  // const { notify } = useNotifications() || { notify: () => {} };
 
   const [form, setForm] = useState({ name: "", phone: "", preferences: {} });
   const [loading, setLoading] = useState(false);
@@ -111,7 +119,7 @@ export default function AccountInfo() {
   useEffect(() => {
     if (!user) return;
     setForm(baseline);
-  }, [user]);
+  }, [user, baseline]);
 
   if (!user)
     return (
@@ -140,20 +148,22 @@ export default function AccountInfo() {
     setLoading(true);
     try {
       const res = await api.put("/profile", { name, phone, preferences: form.preferences || {} });
-      const updatedUser = res?.data?.user;
+      const updatedUser = res?.data?.user || res?.data;
 
       if (updatedUser) {
         setUser(updatedUser);
-        localStorage.setItem("user", JSON.stringify(updatedUser));
+        try {
+          localStorage.setItem("user", JSON.stringify(updatedUser));
+        } catch {}
       }
 
       await refreshProfile?.();
       setMsg("Saved.");
-      notify("Profile saved.", "success");
+      emitToast("Profile saved.", "success");
     } catch (e) {
       const message = e?.response?.data?.message || "Failed to save";
       setErr(message);
-      notify(message, "error");
+      emitToast(message, "error");
     } finally {
       setLoading(false);
     }
@@ -167,10 +177,10 @@ export default function AccountInfo() {
     try {
       await refreshProfile?.();
       setMsg("Refreshed.");
-      notify("Profile refreshed.", "success");
+      emitToast("Profile refreshed.", "success");
     } catch (e) {
       setErr("Failed to refresh profile.");
-      notify("Failed to refresh profile.", "error");
+      emitToast("Failed to refresh profile.", "error");
     }
   }
 
@@ -183,7 +193,7 @@ export default function AccountInfo() {
 
     setPwLoading(true);
     try {
-      // FIX → backend route is: POST /api/profile/change-password
+      // backend route expects POST /api/profile/change-password (server mounts /api)
       await api.post("/profile/change-password", {
         currentPassword: pwCurrent,
         newPassword: pwNew,
@@ -192,12 +202,12 @@ export default function AccountInfo() {
       setPwModalOpen(false);
       setPwCurrent("");
       setPwNew("");
-      notify("Password updated.", "success");
+      emitToast("Password updated.", "success");
       setMsg("Password changed.");
     } catch (e) {
       const message = e?.response?.data?.message || "Failed to change password";
       setErr(message);
-      notify(message, "error");
+      emitToast(message, "error");
     } finally {
       setPwLoading(false);
     }
@@ -211,23 +221,27 @@ export default function AccountInfo() {
           <div className="flex items-center gap-4">
             <div className="w-16 h-16 rounded-lg bg-[#0071DC]/10 flex items-center justify-center text-xl font-bold text-[#0071DC]">
               {user.avatar ? (
-                <img src={user.avatar} className="w-full h-full object-cover rounded-lg" />
+                <img
+                  src={makeAbsoluteImageUrl(user.avatar)}
+                  alt="avatar"
+                  className="w-full h-full object-cover rounded-lg"
+                />
               ) : (
                 <span>{initials(user.name || user.email || "U")}</span>
               )}
             </div>
 
             <div className="flex-1">
-              <h2 className="text-3xl md:text-4xl font-extrabold tracking-tight text-slate-900">
-                Account Info
-              </h2>
+              <h2 className="text-3xl md:text-4xl font-extrabold tracking-tight text-slate-900">Account Info</h2>
               <p className="text-sm text-slate-600 mt-1">Manage your profile & settings.</p>
             </div>
 
             <SecondaryBtn
               onClick={() => {
                 logout?.();
-                localStorage.removeItem("user");
+                try {
+                  localStorage.removeItem("user");
+                } catch {}
               }}
             >
               Logout
@@ -236,7 +250,9 @@ export default function AccountInfo() {
 
           {/* Messages */}
           <div className="mt-6">
-            {msg && <Card className="mb-4 px-4 py-2 bg-emerald-50 border-emerald-200 text-emerald-700">{msg}</Card>}
+            {msg && (
+              <Card className="mb-4 px-4 py-2 bg-emerald-50 border-emerald-200 text-emerald-700">{msg}</Card>
+            )}
             {err && <Card className="mb-4 px-4 py-2 bg-rose-50 border-rose-200 text-rose-700">{err}</Card>}
           </div>
 
@@ -275,7 +291,9 @@ export default function AccountInfo() {
             {/* Member since */}
             <div>
               <label className="block text-[12px] font-semibold text-slate-600">Member since</label>
-              <div className="mt-1 text-slate-900">{new Date(user.createdAt).toLocaleString()}</div>
+              <div className="mt-1 text-slate-900">
+                {user.createdAt ? new Date(user.createdAt).toLocaleString() : "-"}
+              </div>
             </div>
 
             {/* Buttons */}
@@ -312,20 +330,10 @@ export default function AccountInfo() {
 
             <div className="space-y-3">
               {/* Current */}
-              <Field
-                label="Current password"
-                type="password"
-                value={pwCurrent}
-                onChange={setPwCurrent}
-              />
+              <Field label="Current password" type="password" value={pwCurrent} onChange={setPwCurrent} />
 
               {/* New */}
-              <Field
-                label="New password"
-                type="password"
-                value={pwNew}
-                onChange={setPwNew}
-              />
+              <Field label="New password" type="password" value={pwNew} onChange={setPwNew} />
             </div>
 
             <div className="mt-5 flex gap-3 justify-end">
