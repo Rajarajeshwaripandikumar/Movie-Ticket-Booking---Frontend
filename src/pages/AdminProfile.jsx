@@ -58,7 +58,7 @@ function SecondaryBtn({ children, className = "", ...props }) {
 
 /* -------------------------------- Component -------------------------------- */
 export default function AdminProfile() {
-  const { adminToken, token, role } = useAuth() || {};
+  const { adminToken, token, role, activeSession } = useAuth() || {};
   const sessionToken = adminToken || token || null;
 
   const r = String(role || "").toUpperCase();
@@ -89,9 +89,16 @@ export default function AdminProfile() {
 
   async function fetchProfile() {
     try {
-      // ✅ backend exposes /api/auth/me (not /admin/me)
-      const { data } = await api.get("/auth/me");
-      const u = data.user || data;
+      // Prefer admin endpoint when adminToken or active admin session is present
+      const preferAdmin = !!adminToken || activeSession === "admin";
+      const path = preferAdmin ? "/admin/me" : "/auth/me";
+
+      const res = await api.get(path);
+      const data = res?.data ?? res;
+      const u = data.user || data || null;
+      if (!u) {
+        throw new Error("Profile response missing user");
+      }
       setUser(u);
       setName(u.name || "");
       setEmail(u.email || "");
@@ -99,7 +106,7 @@ export default function AdminProfile() {
     } catch (e) {
       console.error("fetchProfile error", e?.response || e);
       setMsgType("error");
-      setMsg(e?.response?.data?.message || "Failed to fetch profile");
+      setMsg(e?.response?.data?.message || e.message || "Failed to fetch profile");
     }
   }
 
@@ -108,29 +115,43 @@ export default function AdminProfile() {
     setLoading(true);
     setMsg("");
     try {
-      // Your backend does not currently expose an update-profile endpoint.
-      // Try a likely path first, then fallback, else inform user.
-      let res;
-      try {
-        res = await api.put("/auth/profile", { name, email });
-      } catch (err1) {
-        if (err1?.response?.status === 404) {
-          // not implemented on backend; surface a friendly message
-          setMsgType("info");
-          setMsg("Profile update is not available yet. Ask the super admin to enable it.");
-          setLoading(false);
-          return;
+      // Try common update endpoints. If backend doesn't support it, show friendly message.
+      const tryPaths = ["/admin/profile", "/auth/profile", "/auth/update", "/profile"];
+      let res = null;
+      let ok = false;
+
+      for (const p of tryPaths) {
+        try {
+          res = await api.put(p, { name, email });
+          ok = true;
+          break;
+        } catch (err) {
+          // Continue to next candidate if 404 or not implemented
+          if (err?.response?.status === 404 || err?.response?.status === 405) {
+            continue;
+          }
+          throw err;
         }
-        throw err1;
       }
-      const data = res?.data || {};
-      setUser(data.user || { ...(user || {}), name, email });
+
+      if (!ok) {
+        setMsgType("info");
+        setMsg("Profile update is not available on the server. Ask the backend team to enable PUT /api/auth/profile.");
+        setLoading(false);
+        return;
+      }
+
+      const data = res?.data ?? {};
+      const updated = data.user || { ...(user || {}), name, email };
+      setUser(updated);
+      setName(updated.name || "");
+      setEmail(updated.email || "");
       setMsgType("success");
       setMsg(data.message || "Profile updated");
     } catch (e) {
       console.error("saveProfile err", e?.response || e);
       setMsgType("error");
-      setMsg(e?.response?.data?.message || "Failed to update profile");
+      setMsg(e?.response?.data?.message || e.message || "Failed to update profile");
     } finally {
       setLoading(false);
     }
@@ -141,19 +162,51 @@ export default function AdminProfile() {
     setLoading(true);
     setMsg("");
     try {
-      // ✅ backend route exists: /api/auth/change-password
-      const { data } = await api.post("/auth/change-password", {
-        currentPassword,
-        newPassword,
-      });
+      if (!currentPassword || !newPassword) {
+        setMsgType("error");
+        setMsg("Please provide current and new password.");
+        setLoading(false);
+        return;
+      }
+      if (newPassword.length < 8) {
+        setMsgType("error");
+        setMsg("New password must be at least 8 characters.");
+        setLoading(false);
+        return;
+      }
+
+      // Prefer admin change endpoint when admin session
+      const preferAdmin = !!adminToken || activeSession === "admin";
+      const pathCandidates = preferAdmin ? ["/admin/change-password", "/auth/change-password"] : ["/auth/change-password", "/change-password"];
+
+      let res = null;
+      let ok = false;
+      for (const p of pathCandidates) {
+        try {
+          res = await api.post(p, { currentPassword, newPassword });
+          ok = true;
+          break;
+        } catch (err) {
+          if (err?.response?.status === 404 || err?.response?.status === 405) continue;
+          throw err;
+        }
+      }
+
+      if (!ok) {
+        setMsgType("info");
+        setMsg("Password change endpoint not available. Ask backend to add POST /api/auth/change-password.");
+        setLoading(false);
+        return;
+      }
+
       setMsgType("success");
-      setMsg(data.message || "Password changed");
+      setMsg(res?.data?.message || "Password changed");
       setCurrentPassword("");
       setNewPassword("");
     } catch (e) {
       console.error("changePassword err", e?.response || e);
       setMsgType("error");
-      setMsg(e?.response?.data?.message || "Failed to change password");
+      setMsg(e?.response?.data?.message || e.message || "Failed to change password");
     } finally {
       setLoading(false);
     }
