@@ -518,8 +518,9 @@ export default function AdminMoviesPage() {
 
       for (const p of candidates) {
         try {
-          if (API_DEBUG) console.debug("[AdminMovies] trying", p);
-          const resp = await api.getFresh(p, { params: { q, limit: 50 } }); // api.getFresh returns res.data
+          if (API_DEBUG) console.debug("[AdminMovies] trying", p, "q:", q);
+          // pass q only if present — many endpoints accept q, but harmless if ignored
+          const resp = await api.getFresh(p, { params: q ? { q, limit: 50 } : { limit: 50 } });
           // resp may be an array or an object with movies/data
           const tmp =
             (Array.isArray(resp) && resp) ||
@@ -532,13 +533,28 @@ export default function AdminMoviesPage() {
             resp ||
             [];
 
-          if (Array.isArray(tmp) && tmp.length) {
-            list = tmp;
+          // treat an actual array (even empty) or an object containing an array as success
+          if (Array.isArray(tmp) || (tmp && typeof tmp === "object")) {
+            // normalize to array if possible; prefer arrays
+            if (Array.isArray(tmp)) {
+              list = tmp;
+            } else if (Array.isArray(tmp?.items)) {
+              list = tmp.items;
+            } else if (Array.isArray(tmp?.movies)) {
+              list = tmp.movies;
+            } else if (Array.isArray(resp?.data)) {
+              list = resp.data;
+            } else {
+              // if it's an object but not an array, try to coerce into single-item list
+              list = Array.isArray(tmp) ? tmp : [];
+            }
+
             detected = p;
-            if (API_DEBUG) console.debug("[AdminMovies] success at", p, "count:", tmp.length);
+            if (API_DEBUG) console.debug("[AdminMovies] endpoint responded at", p, "items:", list.length);
+            // treat endpoint as detected even if list is empty
             break;
           } else if (API_DEBUG) {
-            console.debug("[AdminMovies] no items at", p, "resp-preview:", typeof resp === "object" ? JSON.stringify(resp).slice(0, 200) : String(resp));
+            console.debug("[AdminMovies] no usable items at", p, "resp-preview:", typeof resp === "object" ? JSON.stringify(resp).slice(0, 200) : String(resp));
           }
         } catch (err) {
           if (API_DEBUG) console.warn("[AdminMovies] error at", p, err?.response?.status || err?.message || err);
@@ -548,13 +564,11 @@ export default function AdminMoviesPage() {
       setMovies((Array.isArray(list) ? list : []).map(normalizeMovie));
 
       // decide admin base for writes:
-      // If we detected an admin endpoint, prefer /movies/admin as write base.
       if (detected) {
         setMovieListPath(detected);
         if (detected.includes("admin")) {
           setMovieAdminBase("/movies/admin");
         } else {
-          // keep safe default
           setMovieAdminBase("/movies/admin");
         }
       } else {
@@ -590,7 +604,6 @@ export default function AdminMoviesPage() {
         return;
       }
       const resp = await api.get(`/movies/${id}`, { headers });
-      // axios response: resp.data is server body
       const body = resp?.data ?? {};
       const serverMovie = body?.data || body?.movie || body;
       setEditing(normalizeMovie(serverMovie));
