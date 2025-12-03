@@ -1,0 +1,11 @@
+[build]
+  command = "npm ci && node -e \"console.log('Node',process.version)\" && npx vite --version && npx rollup --version && DEBUG=vite:* npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
