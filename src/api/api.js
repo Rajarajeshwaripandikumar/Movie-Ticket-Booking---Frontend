@@ -54,24 +54,18 @@ let currentAuthToken = null;
 function applyAuthToken(token) {
   currentAuthToken = token || null;
   if (token) {
-    if (api.defaults && api.defaults.headers && api.defaults.headers.common) {
+    if (api.defaults?.headers?.common) {
       api.defaults.headers.common.Authorization = `Bearer ${token}`;
     }
-  } else if (api.defaults && api.defaults.headers && api.defaults.headers.common) {
+  } else if (api.defaults?.headers?.common) {
     delete api.defaults.headers.common.Authorization;
   }
 }
 
-/**
- * Allow callers (AuthContext) to set/reset token globally
- */
 api.setAuthToken = (token) => {
   applyAuthToken(token);
 };
 
-/**
- * Helper used by AuthContext.login / loginAdmin to seed localStorage + axios
- */
 export function primeAuth(token, role) {
   try {
     if (token) {
@@ -82,15 +76,11 @@ export function primeAuth(token, role) {
     if (role) {
       localStorage.setItem("role", String(role));
     }
-  } catch {
-    // ignore
-  }
+  } catch {}
+
   applyAuthToken(token);
 }
 
-/**
- * Helper to read token / role / user from localStorage if needed
- */
 export function getAuthFromStorage() {
   try {
     const token = localStorage.getItem("token");
@@ -103,9 +93,6 @@ export function getAuthFromStorage() {
   }
 }
 
-/**
- * Normalize Axios/API errors into a human-readable message
- */
 export function extractApiError(err, fallback = "Something went wrong") {
   if (!err) return fallback;
 
@@ -132,7 +119,6 @@ api.interceptors.request.use(
       const base = String(config.baseURL || api.defaults.baseURL || "");
       const baseEndsWithApi = base.replace(/\/+$/, "").endsWith("/api");
 
-      // Avoid double /api/api when caller uses "/api/..." paths
       if (
         typeof config.url === "string" &&
         baseEndsWithApi &&
@@ -141,8 +127,6 @@ api.interceptors.request.use(
         config.url = config.url.replace(/^\/api/, "");
       }
 
-      // Inject JWT from localStorage if present (fallback to currentAuthToken)
-      // Prefer adminToken if present (admin login) else user token
       let tokenToUse = currentAuthToken;
       let usingAdminToken = false;
 
@@ -156,9 +140,7 @@ api.interceptors.request.use(
         } else if (userToken) {
           tokenToUse = userToken;
         }
-      } catch {
-        // ignore storage errors
-      }
+      } catch {}
 
       if (tokenToUse) {
         config.headers = config.headers || {};
@@ -189,7 +171,6 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (res) => res,
   (err) => {
-    // Swallow/quietly handle cancellations
     if (err?.code === "ERR_CANCELED" || axios.isCancel(err)) {
       if (debug) {
         console.warn("[api] request canceled", {
@@ -203,25 +184,20 @@ api.interceptors.response.use(
     const status = err?.response?.status;
 
     if (status === 401) {
-      // Clear stored auth on unauthorized
       try {
         localStorage.removeItem("token");
         localStorage.removeItem("user");
         localStorage.removeItem("role");
         localStorage.removeItem("adminToken");
-      } catch {
-        // ignore
-      }
+      } catch {}
+
       applyAuthToken(null);
 
       if (debug) console.warn("[api] 401 — cleared stored token");
 
-      // 🔔 Notify AuthContext listener
       try {
         window.dispatchEvent(new Event("api:unauthorized"));
-      } catch {
-        // ignore
-      }
+      } catch {}
     }
 
     if (debug) {
@@ -229,7 +205,7 @@ api.interceptors.response.use(
         status,
         url: err?.config?.url,
         data: err?.response?.data,
-        code: err?.code, // extra visibility for network/CORS errors
+        code: err?.code,
         message: err?.message,
       });
     }
@@ -239,22 +215,53 @@ api.interceptors.response.use(
 );
 
 /* -------------------------------------------------------------------------- */
-/*                         Safe helper methods (data only)                    */
+/*                                SSE URL Fix                                 */
 /* -------------------------------------------------------------------------- */
 
 /**
- * safeGet: unwraps `data` and swallows most errors.
- * - On success: returns `response.data`
- * - On cancel: rethrows (so AbortError can be handled by caller if needed)
- * - On other errors: returns `fallback` (default `null`)
+ * Build SSE (Server-Sent Events) URL for notifications.
+ * Supports:
+ * - adminToken OR user token
+ * - scope=user/admin
+ * - seed to prevent caching
  */
+export const getSSEUrl = (scope = "user") => {
+  try {
+    const userToken = localStorage.getItem("token");
+    const adminToken = localStorage.getItem("adminToken");
+
+    let token =
+      scope === "admin"
+        ? adminToken || userToken
+        : userToken || adminToken;
+
+    if (!token) return null;
+
+    const root = API_BASE_URL.replace(/\/api$/, "");
+    const seed = Date.now();
+
+    const params = new URLSearchParams({
+      token,
+      scope,
+      seed: String(seed),
+    });
+
+    return `${root}/api/notifications/stream?${params.toString()}`;
+  } catch {
+    return null;
+  }
+};
+
+/* -------------------------------------------------------------------------- */
+/*                         Safe helper methods (data only)                    */
+/* -------------------------------------------------------------------------- */
+
 api.safeGet = async (url, config = {}, fallback = null) => {
   try {
     const res = await api.get(url, config);
     return res.data;
   } catch (err) {
     if (err?.code === "ERR_CANCELED" || axios.isCancel(err)) {
-      // let caller decide what to do with cancellation
       throw err;
     }
     if (debug) {
@@ -269,23 +276,19 @@ api.safeGet = async (url, config = {}, fallback = null) => {
   }
 };
 
-// Helpers if you ever want them later:
 api.safePost = async (url, body, config = {}, fallback = null) => {
   try {
     const res = await api.post(url, body, config);
     return res.data;
   } catch (err) {
-    if (err?.code === "ERR_CANCELED" || axios.isCancel(err)) {
-      throw err;
-    }
-    if (debug) {
+    if (err?.code === "ERR_CANCELED" || axios.isCancel(err)) throw err;
+    if (debug)
       console.warn("[api.safePost] error", {
         url,
         code: err?.code,
         status: err?.response?.status,
         message: err?.message,
       });
-    }
     return fallback;
   }
 };
@@ -295,17 +298,14 @@ api.safeDelete = async (url, config = {}, fallback = null) => {
     const res = await api.delete(url, config);
     return res.data;
   } catch (err) {
-    if (err?.code === "ERR_CANCELED" || axios.isCancel(err)) {
-      throw err;
-    }
-    if (debug) {
+    if (err?.code === "ERR_CANCELED" || axios.isCancel(err)) throw err;
+    if (debug)
       console.warn("[api.safeDelete] error", {
         url,
         code: err?.code,
         status: err?.response?.status,
         message: err?.message,
       });
-    }
     return fallback;
   }
 };
@@ -314,49 +314,20 @@ api.safeDelete = async (url, config = {}, fallback = null) => {
 /*                         Export Helper Constants                            */
 /* -------------------------------------------------------------------------- */
 
-/**
- * Export a clean API base URL (no trailing slash)
- * e.g. "http://localhost:8080/api" or "/api"
- */
 export const API_BASE_URL = baseURL.replace(/\/+$/, "");
-
-/**
- * Convenience: base origin without `/api` suffix
- * e.g. "http://localhost:8080"
- */
 export const BASE_URL = API_BASE_URL.replace(/\/api$/, "");
 
-/**
- * Small helper to build URLs off the API base
- *   apiUrl("/notifications/stream") -> "http://localhost:8080/api/notifications/stream"
- */
 export const apiUrl = (path = "") => {
   const p = String(path || "");
   if (!p) return API_BASE_URL;
   return `${API_BASE_URL}${p.startsWith("/") ? p : `/${p}`}`;
 };
 
-/**
- * Convert a possibly-relative image URL into an absolute one
- * e.g. '/uploads/foo.jpg' -> 'http://localhost:8080/uploads/foo.jpg'
- */
 export const makeAbsoluteImageUrl = (url) => {
   if (!url) return null;
-  if (/^https?:\/\//i.test(url)) return url; // already absolute
+  if (/^https?:\/\//i.test(url)) return url;
   if (url.startsWith("/")) return `${BASE_URL}${url}`;
   return `${BASE_URL}/${url}`;
-};
-
-/**
- * Utility: build SSE stream URL for current user
- * Returns e.g. "http://localhost:8080/api/notifications/stream?token=<jwt>"
- */
-export const getSSEUrl = () => {
-  const token = localStorage.getItem("token");
-  if (!token) return null;
-
-  const root = API_BASE_URL.replace(/\/api$/, "");
-  return `${root}/api/notifications/stream?token=${token}`;
 };
 
 /* -------------------------------------------------------------------------- */
@@ -378,7 +349,6 @@ export const moviesApi = {
   list: (params) => api.get("/movies", { params }),
   getById: (id) => api.get(`/movies/${id}`),
 
-  // Admin-only on backend
   create: (data) => api.post("/movies", data),
   update: (id, data) => api.patch(`/movies/${id}`, data),
   remove: (id) => api.delete(`/movies/${id}`),
@@ -389,8 +359,8 @@ export const moviesApi = {
 /* -------------------------------------------------------------------------- */
 
 export const showtimesApi = {
-  list: (params) => api.get("/showtimes", { params }), // movieId, theaterId, screenId, city, date
-  getById: (id) => api.get(`/showtimes/${id}`), // returns showtime + seats
+  list: (params) => api.get("/showtimes", { params }),
+  getById: (id) => api.get(`/showtimes/${id}`),
 
   create: (data) => api.post("/showtimes", data),
   update: (id, data) => api.patch(`/showtimes/${id}`, data),
@@ -399,7 +369,7 @@ export const showtimesApi = {
   listMyTheatre: () => api.get("/showtimes/my-theatre"),
 
   availability: (params) => api.get("/showtimes/availability", { params }),
-  moviesByCityDate: (params) => api.get("/showtimes/movies", { params }), // city, date
+  moviesByCityDate: (params) => api.get("/showtimes/movies", { params }),
   cities: () => api.get("/showtimes/cities"),
 };
 
@@ -408,7 +378,7 @@ export const showtimesApi = {
 /* -------------------------------------------------------------------------- */
 
 export const theatersApi = {
-  list: (params) => api.get("/theaters", { params }), // q, city, page, limit
+  list: (params) => api.get("/theaters", { params }),
   getById: (id) => api.get(`/theaters/${id}`),
 
   getScreensForTheater: (theaterId) =>
@@ -484,7 +454,7 @@ export const ordersApi = {
     }),
 
   listMine: (params) => api.get("/orders/me", { params }),
-  listAdmin: (params) => api.get("/orders", { params }), // admin-only
+  listAdmin: (params) => api.get("/orders", { params }),
 };
 
 /* -------------------------------------------------------------------------- */
@@ -494,7 +464,7 @@ export const ordersApi = {
 export const paymentsApi = {
   createOrder: (data) => api.post("/payments/create-order", data),
   verifyPayment: (data) => api.post("/payments/verify-payment", data),
-  mockSuccess: (data) => api.post("/payments/mock-success", data), // dev only
+  mockSuccess: (data) => api.post("/payments/mock-success", data),
 };
 
 /* -------------------------------------------------------------------------- */
