@@ -57,11 +57,7 @@ function normalizeRole(raw) {
 
     // Map variants to THEATER_ADMIN (American spelling – matches backend)
     if (/_MANAGER$/.test(v)) v = "THEATER_ADMIN";
-    if (
-      ["THEATER_ADMIN", "THEATRE_OWNER", "THEATER_OWNER", "THEATRE_ADMIN"].includes(
-        v
-      )
-    ) {
+    if (["THEATER_ADMIN", "THEATRE_OWNER", "THEATER_OWNER", "THEATRE_ADMIN"].includes(v)) {
       v = "THEATER_ADMIN";
     }
 
@@ -254,23 +250,15 @@ export function AuthProvider({ children }) {
     setInitialized(true);
   }, []);
 
-  /* ---------------- Derived flags (SAFE) ---------------- */
-  const isLoggedIn = !!initialized && (!!activeToken || COOKIE_AUTH);
-  const isSuperAdmin = role === "SUPER_ADMIN";
-  const isAdmin = role === "ADMIN";
-  const isTheatreAdmin = role === "THEATER_ADMIN";
-  const isAdminLike = isAdmin || isSuperAdmin || isTheatreAdmin;
-
   /* Listener: API unauthorized (fired by api.js when 401 occurs) */
   useEffect(() => {
     function onUnauthorized() {
-      // any 401 from api.js will funnel through here
       logout();
     }
     window.addEventListener("api:unauthorized", onUnauthorized);
     return () =>
       window.removeEventListener("api:unauthorized", onUnauthorized);
-  }, [logout]);
+  }, []);
 
   /* Login (USER) */
   const login = useCallback(async (email, password, roleHint) => {
@@ -430,13 +418,10 @@ export function AuthProvider({ children }) {
       } catch {}
     }
 
-    // 🔥 Redirect to the correct login page based on last session / role
     try {
-      const target =
-        activeSession === "admin" || isAdminLike ? "/admin/login" : "/login";
-      setTimeout(() => window.location.replace(target), 0);
+      setTimeout(() => window.location.replace("/"), 0);
     } catch {}
-  }, [activeSession, isAdminLike]);
+  }, []);
 
   /* Refresh profile */
   const refreshProfile = useCallback(
@@ -474,6 +459,13 @@ export function AuthProvider({ children }) {
     },
     [activeToken, perms, logout]
   );
+
+  /* ---------------- Derived flags (SAFE) ---------------- */
+  const isLoggedIn = !!initialized && (!!activeToken || COOKIE_AUTH);
+  const isSuperAdmin = role === "SUPER_ADMIN";
+  const isAdmin = role === "ADMIN";
+  const isTheatreAdmin = role === "THEATER_ADMIN";
+  const isAdminLike = isAdmin || isSuperAdmin || isTheatreAdmin;
 
   /* ---------------- Safe redirect after explicit login ---------------- */
   useEffect(() => {
