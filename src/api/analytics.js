@@ -2,16 +2,25 @@
 import api, { apiUrl } from "./api";
 
 /* -------------------------------------------------------------------------- */
-/* Token helper (reads from the same places your api.js expects)              */
+/* Token helper: match api.js behaviour (adminToken preferred when present)   */
 /* -------------------------------------------------------------------------- */
-function getToken() {
+function getAuthToken() {
   try {
-    const raw = localStorage.getItem("auth") || sessionStorage.getItem("auth");
-    if (raw) {
-      const a = JSON.parse(raw);
-      return a?.token || a?.user?.token || null;
+    const adminToken = localStorage.getItem("adminToken");
+    const userToken = localStorage.getItem("token");
+
+    if (adminToken) return adminToken;
+    if (userToken) return userToken;
+
+    // Legacy fallbacks (if you still have old keys)
+    const rawAuth =
+      localStorage.getItem("auth") || sessionStorage.getItem("auth");
+    if (rawAuth) {
+      const a = JSON.parse(rawAuth);
+      if (a?.token) return a.token;
+      if (a?.user?.token) return a.user.token;
     }
-    // fallbacks
+
     return (
       localStorage.getItem("auth_token") ||
       localStorage.getItem("authToken") ||
@@ -95,14 +104,19 @@ export async function fetchOccupancy(days = 30, options = {}) {
 
 /* -------------------------------------------------------------------------- */
 /* SSE stream (EventSource cannot set headers; we pass ?token=)               */
-/* Backend middleware in app.js promotes ?token to Authorization header.      */
+/* Backend middleware promotes ?token to Authorization header.                */
 /* -------------------------------------------------------------------------- */
 export function openAnalyticsStream(extraParams = {}) {
-  const token = getToken();
+  const token = getAuthToken();
   const url = new URL(apiUrl("/analytics/stream"));
+
   if (token) url.searchParams.set("token", token);
+
   for (const [k, v] of Object.entries(extraParams || {})) {
-    if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
+    if (v !== undefined && v !== null) {
+      url.searchParams.set(k, String(v));
+    }
   }
+
   return new EventSource(url.toString());
 }
