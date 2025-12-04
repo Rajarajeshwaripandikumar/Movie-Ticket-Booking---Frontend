@@ -101,20 +101,6 @@ const getEffectiveRole = (auth) => {
   return auth.isLoggedIn ? "USER" : null;
 };
 
-/* --------------------------- Navigation watcher --------------------------- */
-function NavigationWatcher() {
-  const location = useLocation();
-  useEffect(() => {
-    // eslint-disable-next-line no-console
-    console.warn(
-      "[NavigationWatcher] navigated to:",
-      location.pathname,
-      new Date().toISOString()
-    );
-  }, [location.pathname]);
-  return null;
-}
-
 /* ------------------------- Guarded auth components ------------------------ */
 /**
  * Generic auth + role guard.
@@ -289,7 +275,7 @@ export default function App() {
           <GlobalBackdrop />
         </div>
 
-        <NavigationWatcher />
+        {/* NavigationWatcher removed */}
 
         <div className="max-w-6xl mx-auto p-4">
           <Routes>
