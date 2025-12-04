@@ -270,7 +270,8 @@ export function AuthProvider({ children }) {
     window.addEventListener("api:unauthorized", onUnauthorized);
     return () =>
       window.removeEventListener("api:unauthorized", onUnauthorized);
-  }, [logout]);
+    // 🔥 IMPORTANT: leave dependency array EMPTY to avoid TDZ error
+  }, []); // <-- no [logout] here
 
   /* Login (USER) */
   const login = useCallback(async (email, password, roleHint) => {
@@ -340,7 +341,6 @@ export function AuthProvider({ children }) {
 
   /* Login (ADMIN) — use /auth/admin/login and mark admin session */
   const loginAdmin = useCallback(async (email, password) => {
-    // 1) Call dedicated admin endpoint
     const res = await api.post("/auth/admin/login", {
       email,
       password,
@@ -377,7 +377,6 @@ export function AuthProvider({ children }) {
       throw new Error("You do not have admin access.");
     }
 
-    // 2) Store token as admin token (and mirror to user token)
     if (t) {
       primeAuth(t, finalRole);
       setAdminToken(t);
@@ -388,7 +387,6 @@ export function AuthProvider({ children }) {
       } catch {}
     }
 
-    // 3) Mark this as an admin session
     setActiveSession("admin");
     setRole(finalRole);
     setRoles([finalRole]);
@@ -430,7 +428,7 @@ export function AuthProvider({ children }) {
       } catch {}
     }
 
-    // 🔥 Redirect to the correct login page based on last session / role
+    // Redirect to the correct login page based on last session / role
     try {
       const target =
         activeSession === "admin" || isAdminLike ? "/admin/login" : "/login";
@@ -444,7 +442,6 @@ export function AuthProvider({ children }) {
       try {
         if (!activeToken && !COOKIE_AUTH) return null;
 
-        // backend only has /auth/me
         const path = "/auth/me";
         const res = await api.get(path);
         const u = res?.data?.user || res?.data || null;
