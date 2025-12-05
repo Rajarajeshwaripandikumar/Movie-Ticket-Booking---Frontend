@@ -92,26 +92,20 @@ export default function LoginPage() {
     try {
       await login(form.email, form.password, "USER");
 
-      // get the updated role from localStorage
       const userRole = localStorage.getItem("role")?.toUpperCase();
 
-      // If navigating from a protected page
       if (from && from !== "/login" && from !== "/admin/login") {
         navigate(from, { replace: true });
         return;
       }
 
-      // Role based redirect
       if (userRole === "SUPER_ADMIN" || userRole === "ADMIN") {
         navigate("/admin", { replace: true });
-      } 
-      else if (userRole === "THEATRE_ADMIN") {
+      } else if (userRole === "THEATRE_ADMIN") {
         navigate("/theatre/my", { replace: true });
-      } 
-      else {
+      } else {
         navigate("/bookings", { replace: true });
       }
-
     } catch (error) {
       setErr(error?.response?.data?.message || error?.message || "Invalid credentials");
     } finally {
@@ -149,16 +143,17 @@ export default function LoginPage() {
 
   /* -------------------------------- RENDER -------------------------------- */
   return (
-    <main className="min-h-screen w-screen bg-slate-50 text-slate-900 flex items-center justify-center p-6">
+    <main className="min-h-screen w-full bg-slate-50 text-slate-900 flex items-center justify-center px-4 py-6">
       <Card className="w-full max-w-[560px] p-6 sm:p-7">
         <h2 className="text-xl sm:text-2xl font-extrabold tracking-tight text-center mb-2">
           {showForgot ? "Reset Password" : "Sign In"}
         </h2>
         <p className="text-sm text-slate-600 text-center mb-4">
-          {showForgot ? "Enter your email to receive reset instructions." : "Welcome back — please enter your credentials."}
+          {showForgot
+            ? "Enter your email to receive reset instructions."
+            : "Welcome back — please enter your credentials."}
         </p>
 
-        {/* Messages */}
         {msg && <Card className="mb-4 p-3 bg-emerald-50 border-emerald-200 text-emerald-700 font-semibold">{msg}</Card>}
         {err && <Card className="mb-4 p-3 bg-rose-50 border-rose-200 text-rose-700 font-semibold">{err}</Card>}
 
